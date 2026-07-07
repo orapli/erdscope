@@ -1,0 +1,5 @@
+.claude/
+mastodon/
+*.html
+__pycache__/
+HANDOFF.md
