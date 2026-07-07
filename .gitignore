@@ -1,5 +1,6 @@
 .claude/
 mastodon/
 *.html
+!docs/*.html
 __pycache__/
 HANDOFF.md

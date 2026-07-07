@@ -8,6 +8,16 @@ keys). Application code (Rails / Prisma / Django) can optionally be layered on t
 add association semantics the database cannot express (`has_many :through`,
 polymorphic, ...).
 
+## Demo
+
+**[Try the live demo →](https://orapli.github.io/erdscope/)** — a small e-commerce
+schema with comments, indexes, real FKs and an inferred relation. Everything below
+is one self-contained HTML file.
+
+[![erdscope demo](docs/screenshot.svg)](https://orapli.github.io/erdscope/)
+
+Regenerate it anytime with `python3 docs/gen_demo.py`.
+
 ## Usage
 
 ```bash
