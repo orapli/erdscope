@@ -406,6 +406,31 @@ class TestOverlayAndInference(unittest.TestCase):
         # the abstract base class itself must not become a bogus table
         self.assertNotIn('base_records', self.tables)
 
+    def test_abstract_class_detection_scoped_to_its_own_class_not_whole_file(self):
+        # multi_class_file.rb declares SharedBase (abstract) AND Gadget
+        # (concrete, using SharedBase) in the SAME file. The abstract-class
+        # regex must be scoped to SharedBase's own body — if it were read
+        # from the whole file instead, Gadget would incorrectly inherit
+        # "abstract" too and get silently dropped, the exact failure this
+        # base-class resolution was built to fix in the first place.
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.assertIn('gadgets', self.tables)
+        names = {a['name'] for a in self.tables['gadgets']['associations']}
+        self.assertIn('user', names)
+        self.assertNotIn('shared_bases', self.tables)
+
+    def test_sti_subclass_shares_parent_table_not_a_phantom_one(self):
+        # admin.rb: `class Admin < User` — User is a *concrete* model
+        # (posts.rb's User has real associations, no abstract_class), so
+        # this is Rails single-table inheritance: Admin shares users' table
+        # rather than getting its own. Admin's own association
+        # (belongs_to :department) must land on `users`, not a phantom
+        # `admins` table that doesn't exist in the real schema.
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.assertNotIn('admins', self.tables)
+        names = {a['name'] for a in self.tables['users']['associations']}
+        self.assertIn('department', names)
+
     def test_commented_out_table_name_does_not_win(self):
         # commented_table_name.rb has `# self.table_name = 'should_not_be_used'`
         # — the self.table_name regex must run on comment-stripped source,

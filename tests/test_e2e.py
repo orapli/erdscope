@@ -253,6 +253,21 @@ class TestClientJS(unittest.TestCase):
         self.page.wait_for_timeout(100)
         self.assertEqual(sorted(self.page.evaluate('[...selectedTables]')), ['comments', 'posts'])
 
+    def test_stray_shift_click_on_empty_canvas_does_not_clear_selection(self):
+        # shift is "additive" everywhere else (shift-click a node adds it);
+        # a shift-click on empty canvas with no real drag — under the
+        # marquee's 3px threshold — must be a no-op too, not a destructive
+        # clear of whatever was already selected
+        self.page.click('[data-name="posts"]')
+        self.assertEqual(self.page.evaluate('[...selectedTables]'), ['posts'])
+        self.page.keyboard.down('Shift')
+        self.page.mouse.move(20, 20)
+        self.page.mouse.down()
+        self.page.mouse.up()  # no movement at all -> well under the 3px threshold
+        self.page.keyboard.up('Shift')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('[...selectedTables]'), ['posts'])
+
     def test_group_drag_moves_whole_selection_together(self):
         self.page.click('[data-name="posts"]')
         self.page.click('[data-name="comments"]', modifiers=['Shift'])

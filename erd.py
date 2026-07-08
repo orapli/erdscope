@@ -370,13 +370,20 @@ def parse_models(models_dir, tables, table_map=None):
         if 'concerns' in path.parts:  # separator-agnostic (works on Windows too)
             continue
         clean = re.sub(r'#[^\n]*', '', content)
-        for cm in re.finditer(r'class\s+([\w:]+)\s*<\s*([\w:]+)', clean):
+        # a file can define more than one class (e.g. an abstract BaseRecord
+        # alongside a concrete model using it) — scope each match's "body"
+        # to the text between it and the next class declaration (or EOF) so
+        # self.abstract_class/table_name/associations aren't accidentally
+        # read from a sibling class earlier or later in the same file
+        matches = list(re.finditer(r'class\s+([\w:]+)\s*<\s*([\w:]+)', clean))
+        for i, cm in enumerate(matches):
+            body = clean[cm.end():matches[i+1].start() if i+1 < len(matches) else len(clean)]
             # self.abstract_class = true (e.g. a shared BaseRecord) still
             # counts as a valid base for the transitive check below, but
             # isn't itself a real, queryable model with its own table
-            abstract = re.search(r'self\.abstract_class\s*=\s*true', clean) is not None
+            abstract = re.search(r'self\.abstract_class\s*=\s*true', body) is not None
             class_info[cm.group(1)] = {'base': cm.group(2), 'content': content,
-                                       'clean': clean, 'abstract': abstract}
+                                       'body': body, 'abstract': abstract}
 
     # a class counts as a real model if it (transitively) inherits from
     # ApplicationRecord/ActiveRecord::Base — not just a literal, direct
@@ -392,29 +399,49 @@ def parse_models(models_dir, tables, table_map=None):
                 model_names.add(name)
                 changed = True
 
-    for class_name in sorted(model_names):
-        if class_info[class_name]['abstract']:
-            continue
-        content, clean = class_info[class_name]['content'], class_info[class_name]['clean']
+    def sti_root(name):
+        # Rails STI: a class whose base is a *concrete* (non-abstract) model
+        # shares that model's table rather than getting its own — walk up
+        # while the base is itself a known, concrete model; stop at the
+        # first abstract base (a real "custom base class", not STI) or at
+        # a base outside class_info (ApplicationRecord/ActiveRecord::Base)
+        cur, seen = name, set()
+        while cur not in seen:
+            seen.add(cur)
+            base = class_info[cur]['base']
+            if base not in class_info or class_info[base]['abstract']:
+                return cur
+            cur = base
+        return cur
+
+    def resolve_table_name(class_name):
         if class_name in table_map:
             # explicit override wins over everything — the escape hatch for
             # cases static analysis genuinely can't reach, e.g. table_name
             # set inside a concern that itself lives in a gem, not the app
-            table_name = table_map[class_name]
-        else:
-            # comment-stripped `clean`, not raw `content` — a commented-out
-            # `# self.table_name = 'old'` must not win over (or stand in
-            # for) the real, active assignment
-            tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", clean)
-            if not tn_m:
-                for inc_m in re.finditer(r'include\s+([\w:]+)', clean):
-                    mod_content = module_src.get(inc_m.group(1).rsplit('::', 1)[-1])
-                    if mod_content:
-                        mod_clean = re.sub(r'#[^\n]*', '', mod_content)
-                        tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", mod_clean)
-                        if tn_m:
-                            break
-            table_name = tn_m.group(1) if tn_m else class_to_table(class_name)
+            return table_map[class_name]
+        # comment-stripped `body`, not raw `content` — a commented-out
+        # `# self.table_name = 'old'` must not win over (or stand in for)
+        # the real, active assignment
+        body = class_info[class_name]['body']
+        tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", body)
+        if not tn_m:
+            for inc_m in re.finditer(r'include\s+([\w:]+)', body):
+                mod_content = module_src.get(inc_m.group(1).rsplit('::', 1)[-1])
+                if mod_content:
+                    mod_clean = re.sub(r'#[^\n]*', '', mod_content)
+                    tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", mod_clean)
+                    if tn_m:
+                        break
+        return tn_m.group(1) if tn_m else class_to_table(class_name)
+
+    for class_name in sorted(model_names):
+        if class_info[class_name]['abstract']:
+            continue
+        body = class_info[class_name]['body']
+        # an STI subclass (base is a concrete model) shares its root
+        # ancestor's table — it must not get a phantom table of its own
+        table_name = resolve_table_name(sti_root(class_name))
         if table_name not in tables:
             # model exists but the table is not in any schema file
             # (library-managed table, another database, ...)
@@ -422,7 +449,7 @@ def parse_models(models_dir, tables, table_map=None):
                                   'primary_key': None, 'schema_missing': True}
         for m2 in re.finditer(
             r'(has_many|has_one|belongs_to|has_and_belongs_to_many)\s+:(\w+)((?:[^#\n]|,[ \t]*\n)*)',
-            clean
+            body
         ):
             assoc_type, sym, opts = m2.group(1), m2.group(2), m2.group(3)
             through_m = re.search(r'through:\s*:(\w+)', opts)
@@ -1438,6 +1465,7 @@ const ringDepth = {}; // tableName -> depth (0=center, 1=ring1, ...)
 let vx=0, vy=0, vs=1;
 let isPanning=false, panSX, panSY, panVX, panVY;
 let isMarqueeSelecting=false, marqueeStart=null; // world coords; shift-drag on empty canvas
+let marqueeStartCX=0, marqueeStartCY=0; // client coords, for the same-units-as-dragMoved 3px threshold
 let marqueeJustSelected=false; // suppresses the "click on empty canvas clears selection"
                                 // handler for the click event that follows the marquee's
                                 // own mouseup — same trick dragMoved uses for node drags
@@ -3298,6 +3326,7 @@ svg.addEventListener('mousedown', e=>{
   if(e.shiftKey){
     isMarqueeSelecting=true;
     marqueeStart=svgPt(e.clientX,e.clientY);
+    marqueeStartCX=e.clientX; marqueeStartCY=e.clientY;
     return;
   }
   isPanning=true; panSX=e.clientX; panSY=e.clientY; panVX=vx; panVY=vy;
@@ -3381,8 +3410,10 @@ window.addEventListener('mouseup', e=>{
     const x0=Math.min(marqueeStart.x,cur.x), x1=Math.max(marqueeStart.x,cur.x);
     const y0=Math.min(marqueeStart.y,cur.y), y1=Math.max(marqueeStart.y,cur.y);
     // require an actual drag (not just a shift-click) before touching the
-    // selection, so a stray shift-click on empty canvas doesn't do anything
-    if(x1-x0>3 || y1-y0>3){
+    // selection — same 3px-of-client-pixels threshold dragMoved uses
+    // (checking world-space extent instead would make the threshold
+    // zoom-dependent: too twitchy zoomed out, too strict zoomed in)
+    if(Math.hypot(e.clientX-marqueeStartCX, e.clientY-marqueeStartCY)>=3){
       getDisplayTables().forEach(t=>{
         const p=nodePos[t], s=nodeSize[t]||calcSize(t);
         if(!p) return;
@@ -3421,6 +3452,11 @@ svg.addEventListener('wheel', e=>{
 
 svg.addEventListener('click', e=>{
   if(marqueeJustSelected){ marqueeJustSelected=false; return; } // end of a marquee, not a click
+  // shift is "additive" everywhere else (shift-click a node adds it rather
+  // than replacing the selection) — a stray shift-click on empty canvas
+  // (below the marquee's drag threshold) should be a no-op the same way,
+  // not a destructive clear
+  if(e.shiftKey) return;
   if(e.target===svg||e.target===erMain) selectOnly(null);
 });
 
