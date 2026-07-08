@@ -1942,10 +1942,18 @@ function edgeCard(edge){
 
 let edgeObstacles=[]; // display tables, set right before edges are drawn
 
+// control points sit at this fraction along the baseline (both ends), offset
+// by the full bend amount. Pulling them in toward the endpoints (vs. e.g.
+// .35) flattens the curve's mid-section — for a wide obstacle sitting between
+// two nodes, the curve needs to hold most of its bend across that whole
+// width, not just peak briefly at the very center — so a wide obstacle
+// clears at a noticeably smaller (less sweeping) bend.
+const CURVE_T=0.2;
+
 // count how many non-endpoint nodes the sampled curve passes through
 function bendBlocked(edge, src, tgt, nx, ny, bend){
-  const c1={x:src.x+(tgt.x-src.x)*.35+nx*bend, y:src.y+(tgt.y-src.y)*.35+ny*bend};
-  const c2={x:tgt.x-(tgt.x-src.x)*.35+nx*bend, y:tgt.y-(tgt.y-src.y)*.35+ny*bend};
+  const c1={x:src.x+(tgt.x-src.x)*CURVE_T+nx*bend, y:src.y+(tgt.y-src.y)*CURVE_T+ny*bend};
+  const c2={x:tgt.x-(tgt.x-src.x)*CURVE_T+nx*bend, y:tgt.y-(tgt.y-src.y)*CURVE_T+ny*bend};
   let blocked=0;
   for(const t of edgeObstacles){
     if(t===edge.source||t===edge.target) continue;
@@ -1963,7 +1971,12 @@ function bendBlocked(edge, src, tgt, nx, ny, bend){
 }
 
 function pickBend(edge, src, tgt, nx, ny, base){
-  const cands=[base, 60,-60, 110,-110, 170,-170, 240,-240].filter((v,i,a)=>a.indexOf(v)===i);
+  // escalate in fine (20px) steps rather than big jumps (the old 60/110/170/240
+  // ladder could overshoot a lot — e.g. a same-row "skip one node" edge only
+  // needing ~140px of clearance would jump straight to 240, producing a much
+  // wider arc than necessary) — take the smallest detour that actually clears
+  const cands=[base];
+  for(let m=20; m<=240; m+=20) cands.push(m,-m);
   let best=base, bestN=Infinity;
   for(const b of cands){
     const n=bendBlocked(edge, src, tgt, nx, ny, b);
@@ -2008,8 +2021,8 @@ function drawEdge(parent, edge) {
   // obstacle avoidance: try increasing perpendicular bends until the curve
   // stops passing under other nodes (so relations stay visible)
   const bend=pickBend(edge, src, tgt, nx, ny, edge.assocs.length>1?24:0);
-  const cx1=src.x+dx*.35+nx*bend, cy1=src.y+dy*.35+ny*bend;
-  const cx2=tgt.x-dx*.35+nx*bend, cy2=tgt.y-dy*.35+ny*bend;
+  const cx1=src.x+dx*CURVE_T+nx*bend, cy1=src.y+dy*CURVE_T+ny*bend;
+  const cx2=tgt.x-dx*CURVE_T+nx*bend, cy2=tgt.y-dy*CURVE_T+ny*bend;
   g.appendChild(svgEl('path',{
     d:`M ${src.x} ${src.y} C ${cx1} ${cy1},${cx2} ${cy2},${tgt.x} ${tgt.y}`,
     'marker-start':`url(#${mk(edge.source)})`,
