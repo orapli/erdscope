@@ -492,6 +492,7 @@ const ringDepth = {}; // tableName -> depth (0=center, 1=ring1, ...)
 let vx=0, vy=0, vs=1;
 let isPanning=false, panSX, panSY, panVX, panVY;
 let isMarqueeSelecting=false, marqueeStart=null; // world coords; shift-drag on empty canvas
+let marqueeStartCX=0, marqueeStartCY=0; // client coords, for the same-units-as-dragMoved 3px threshold
 let marqueeJustSelected=false; // suppresses the "click on empty canvas clears selection"
                                 // handler for the click event that follows the marquee's
                                 // own mouseup — same trick dragMoved uses for node drags
@@ -699,8 +700,9 @@ function calcSize(name) {
 // (DFS over the visible subgraph, starting from the alphabetical first).
 // keeps chains like account – list_accounts – lists adjacent.
 // Overview layout: each connected component is split into rows by BFS depth
-// from its highest-degree table (same shape as hubSpokeLayout's rings, just
-// laid out as rows instead of circles). Every edge therefore connects the
+// from its highest-degree table (concentric rings, laid out as rows instead
+// of circles — a circular ring wastes the four corners of a rectangular
+// viewport). Every edge therefore connects the
 // same row or an adjacent one — the old width-wrapped rows could put two
 // connected tables many rows apart, or split a dense cluster across one row
 // with no adjacency, forcing edges into long detour arcs around whatever
@@ -711,7 +713,7 @@ function calcSize(name) {
 // incremental group placement break rows up at this width.
 const MAX_ROW_W=1700;
 
-function gridLayout(tables) {
+function gridLayout(tables, preferredHub) {
   const gapX=40, gapY=60, gap=90;
   const tset=new Set(tables);
   // small views: order rows by neighbor position for short, near-vertical
@@ -743,7 +745,10 @@ function gridLayout(tables) {
   }
 
   function layoutComponent(comp){
-    const hub=comp.slice().sort((a,b)=>(adj.get(b).size-adj.get(a).size)||a.localeCompare(b))[0];
+    // focus mode wants the focused table itself at the center, not
+    // whichever node happens to have the highest degree within it
+    const hub=(preferredHub && comp.includes(preferredHub)) ? preferredHub
+      : comp.slice().sort((a,b)=>(adj.get(b).size-adj.get(a).size)||a.localeCompare(b))[0];
     const depMap=new Map([[hub,0]]);
     let frontier=[hub];
     while(frontier.length){
@@ -755,6 +760,10 @@ function gridLayout(tables) {
       });
       frontier=next;
     }
+    // feeds the ring-1/2/3 header tint in focus mode (how far a table is
+    // from the focused one) — only meaningful for the focused component,
+    // not the general overview
+    if(hub===preferredHub) depMap.forEach((d,t)=>{ ringDepth[t]=d; });
     const byDepth={};
     depMap.forEach((d,t)=>{ (byDepth[d]=byDepth[d]||[]).push(t); });
 
@@ -941,124 +950,20 @@ function viewAspect(){
   return Math.max(1, Math.min(2.4, R.width / R.height));
 }
 
-// Hub-and-spoke layout: center + concentric rings by BFS depth
-function hubSpokeLayout(tables, center) {
-  const tset = new Set(tables);
-  if (!tset.has(center)) return;
-
-  // BFS from center within the visible table set
-  const depMap = new Map([[center, 0]]);
-  let frontier = [center];
-  while (frontier.length > 0) {
-    const next = [];
-    for (const name of frontier) {
-      (DATA.tables[name]?.associations || []).forEach(a => {
-        if (tset.has(a.target) && !depMap.has(a.target)) {
-          depMap.set(a.target, (depMap.get(name)||0) + 1); next.push(a.target);
-        }
-      });
-      for (const [n, t] of Object.entries(DATA.tables)) {
-        if (tset.has(n) && !depMap.has(n) && t.associations.some(a => a.target === name)) {
-          depMap.set(n, (depMap.get(name)||0) + 1); next.push(n);
-        }
-      }
-    }
-    frontier = next;
-  }
-  // Disconnected tables get max depth+1
-  tables.forEach(t => { if (!depMap.has(t)) depMap.set(t, 99); });
-
-  // Update ringDepth for CSS tinting
-  Object.keys(ringDepth).forEach(k => delete ringDepth[k]);
-  depMap.forEach((d, t) => { ringDepth[t] = d; });
-
-  // Group by depth
-  const byDepth = {};
-  depMap.forEach((d, t) => { (byDepth[d] = byDepth[d] || []).push(t); });
-
-  // Place center
-  nodePos[center] = {x:0, y:0};
-
-  // Place each ring — radius adapts to node sizes so large tables
-  // (e.g. accounts with 50+ columns) don't cover the center node.
-  // Rings are ellipses stretched to the viewport aspect: wide screens
-  // spread tables sideways instead of stacking them vertically.
-  // Outer-ring members are ordered by the angle of their already-placed
-  // neighbors (radial tree): edges stay short and cross the figure less.
-  const ringGap = 70, circGap = 30;
-  const asp = viewAspect();
-  const twoPi = 2*Math.PI;
-  const ext = t => { const s = nodeSize[t] || calcSize(t); return Math.hypot(s.w, s.h)/2; };
-
-  // adjacency (both directions, non-polymorphic) for angular alignment
-  const adj = new Map();
-  const link = (a,b) => { if(!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); };
-  for (const [n, t] of Object.entries(DATA.tables)) {
-    (t.associations||[]).forEach(a => {
-      if (a.polymorphic || !DATA.tables[a.target]) return;
-      link(n, a.target); link(a.target, n);
-    });
-  }
-
-  const placedAngle = new Map();
-  let prevR = 0, prevExt = ext(center);
-  Object.keys(byDepth).map(Number).filter(d => d > 0).sort((a,b) => a-b).forEach(d => {
-    const ring = byDepth[d];
-    const maxExt = Math.max(...ring.map(ext));
-    // circumference needed so ring members don't collide with each other
-    const circ = ring.reduce((s,t) => { const sz = nodeSize[t]||calcSize(t); return s + (sz.w+sz.h)/2 + circGap; }, 0);
-    const ringR = Math.max(230, prevR + prevExt + maxExt + ringGap, circ/(twoPi*asp));
-
-    let order = ring.slice(), start = 0;
-    if (d > 1) {
-      // preferred angle = circular mean of placed neighbors' angles
-      const pref = new Map(ring.map(t => {
-        const ns = [...(adj.get(t)||[])].filter(n => placedAngle.has(n));
-        if (!ns.length) return [t, null];
-        let sx=0, sy=0;
-        ns.forEach(n => { sx+=Math.cos(placedAngle.get(n)); sy+=Math.sin(placedAngle.get(n)); });
-        return [t, Math.atan2(sy, sx)];
-      }));
-      order.sort((a,b) => {
-        const pa=pref.get(a), pb=pref.get(b);
-        if (pa===null && pb===null) return 0;
-        if (pa===null) return 1;
-        if (pb===null) return -1;
-        return pa-pb;
-      });
-      start = pref.get(order[0]) ?? 0;
-    }
-    order.forEach((t, i) => {
-      const angle = start + twoPi*i/order.length;
-      placedAngle.set(t, angle);
-      nodePos[t] = {x: ringR*asp*Math.cos(angle), y: ringR*Math.sin(angle)};
-    });
-    prevR = ringR; prevExt = maxExt;
-  });
-}
-
 function layoutAll(tables, edges) {
   tables.forEach(n => { nodeSize[n] = calcSize(n); });
   const newTables = tables.filter(t => !nodePos[t]);
   if (newTables.length === 0) return;
 
   if (newTables.length === tables.length) {
-    if (focusedTable && tables.includes(focusedTable)) {
-      hubSpokeLayout(tables, focusedTable);
-      // For small focused sets, hub-spoke alone is sufficient;
-      // larger ones get refined by the force sim below
-      if (tables.length <= 15) return;
-      const n = tables.length;
-      const K     = n<=35 ? 165 : 220;
-      const attrK = n<=35 ? 0.85 : 0.55;
-      runForce(tables, edges, Math.max(60, Math.min(220, 280-n)), K, attrK);
-      return;
-    }
-    // overview: rectangle-native shelf-packed rows (connectivity order +
-    // barycenter crossing reduction) — fills the viewport without a
-    // circular layout's corner waste. No force sim (it inflates the
-    // layout into an unreadable circle).
-    gridLayout(tables);
+    // same rectangle-native shelf-packed layout as the overview (BFS depth
+    // rows + barycenter crossing reduction) — a circular hub-spoke ring
+    // wastes the four corners of a rectangular viewport, which used to
+    // make the "focused" view noticeably more zoomed-out than the plain
+    // overview of the same tables, exactly backwards from the point of
+    // focusing. Passing focusedTable as the preferred hub keeps it front
+    // and center the way a dedicated hub-spoke layout did.
+    gridLayout(tables, focusedTable);
     return;
   }
 
@@ -1189,51 +1094,6 @@ function layoutAll(tables, edges) {
   });
 }
 
-function runForce(tables, edges, iters, K, attrK) {
-  const nodes = tables.map(id => ({id, ...nodePos[id], ...nodeSize[id]}));
-  const byId  = Object.fromEntries(nodes.map(n => [n.id, n]));
-
-  for (let it = 0; it < iters; it++) {
-    const cool = Math.pow(1 - it/iters, 1.5);
-    nodes.forEach(n => { n.fx=0; n.fy=0; });
-
-    for (let i=0; i<nodes.length; i++) {
-      for (let j=i+1; j<nodes.length; j++) {
-        const a=nodes[i], b=nodes[j];
-        let dx=b.x-a.x, dy=b.y-a.y;
-        const d2=dx*dx+dy*dy;
-        if (d2<.01){dx=Math.random()*2-1;dy=Math.random()*2-1;}
-        const d=Math.sqrt(d2+.01);
-        const minDist=(a.w+b.w)/2+50;
-        const rep=K*K*1.5/d+(d<minDist?(minDist-d)*6:0);
-        const fx=rep*dx/d, fy=rep*dy/d;
-        a.fx-=fx; a.fy-=fy; b.fx+=fx; b.fy+=fy;
-        // rectangles overlapping: push apart along the shallower axis
-        // (point-based repulsion lets tall nodes stack vertically)
-        const ox=(a.w+b.w)/2+30-Math.abs(dx), oy=(a.h+b.h)/2+30-Math.abs(dy);
-        if(ox>0&&oy>0){
-          if(ox<oy){ const s=dx>=0?1:-1, f=ox*3; a.fx-=f*s; b.fx+=f*s; }
-          else     { const s=dy>=0?1:-1, f=oy*3; a.fy-=f*s; b.fy+=f*s; }
-        }
-      }
-    }
-    edges.forEach(e=>{
-      const a=byId[e.source], b=byId[e.target];
-      if (!a||!b) return;
-      const dx=b.x-a.x, dy=b.y-a.y;
-      const d=Math.max(1,Math.sqrt(dx*dx+dy*dy));
-      const att=d/K*attrK;
-      const fx=att*dx/d, fy=att*dy/d;
-      a.fx+=fx; a.fy+=fy; b.fx-=fx; b.fy-=fy;
-    });
-    nodes.forEach(n=>{
-      const disp=Math.sqrt(n.fx*n.fx+n.fy*n.fy);
-      if(disp>0){const step=Math.min(disp,cool*55+.5);n.x+=n.fx/disp*step;n.y+=n.fy/disp*step;}
-    });
-  }
-  nodes.forEach(n => { nodePos[n.id]={x:n.x,y:n.y}; });
-}
-
 // ── Focus mode position management ────────────────────────────────────────
 function enterFocusMode() {
   // Save full-view positions
@@ -1255,7 +1115,7 @@ function exitFocusMode() {
 
 // re-render; with auto-tidy on, the overview is re-packed first so the
 // layout always tracks the current display set
-function refreshView(){
+function refreshView(forceFit){
   if(!focusedTable && autoLayout){
     const ts=getDisplayTables();
     ts.forEach(t=>delete nodePos[t]);
@@ -1267,8 +1127,11 @@ function refreshView(){
   // actually move it out of view — checking one more table in the list, or
   // any change with Auto-tidy off (existing positions are untouched, new
   // ones incrementally placed near their connections), usually leaves the
-  // diagram right where the user was already looking
-  if(!isDisplayInView()) requestAnimationFrame(fitView);
+  // diagram right where the user was already looking. Entering/leaving
+  // focus is a deliberate context switch, not an incidental display-set
+  // tweak, so it always fits — otherwise the old viewport can happen to
+  // already "contain" the new, smaller focused layout and never zoom in.
+  if(forceFit || !isDisplayInView()) requestAnimationFrame(fitView);
 }
 
 // is the current display set's bounding box (already) inside the viewport,
@@ -1752,7 +1615,7 @@ function focusTable(name) {
   manualExpanded.clear(); // ⊕ deep-dives reset when the focus target changes
   if(!wasInFocus) enterFocusMode();
   else switchFocusTable();
-  refreshView();
+  refreshView(true);
   showDetails(); renderTableList();
   updateDepthCtrl(); updateFocusUI();
   if(!wasInFocus) showToast(`Focused: ${name} — double-click or Esc to exit`);
@@ -1763,7 +1626,7 @@ function clearFocus(){
   focusedTable=null; selectedTables=new Set(); selectionAnchor=null;
   manualExpanded.clear();
   exitFocusMode();
-  refreshView();
+  refreshView(true);
   showDetails(); renderTableList();
   updateDepthCtrl(); updateFocusUI();
   showToast('Focus cleared — back to the overview');
@@ -2352,6 +2215,7 @@ svg.addEventListener('mousedown', e=>{
   if(e.shiftKey){
     isMarqueeSelecting=true;
     marqueeStart=svgPt(e.clientX,e.clientY);
+    marqueeStartCX=e.clientX; marqueeStartCY=e.clientY;
     return;
   }
   isPanning=true; panSX=e.clientX; panSY=e.clientY; panVX=vx; panVY=vy;
@@ -2435,8 +2299,10 @@ window.addEventListener('mouseup', e=>{
     const x0=Math.min(marqueeStart.x,cur.x), x1=Math.max(marqueeStart.x,cur.x);
     const y0=Math.min(marqueeStart.y,cur.y), y1=Math.max(marqueeStart.y,cur.y);
     // require an actual drag (not just a shift-click) before touching the
-    // selection, so a stray shift-click on empty canvas doesn't do anything
-    if(x1-x0>3 || y1-y0>3){
+    // selection — same 3px-of-client-pixels threshold dragMoved uses
+    // (checking world-space extent instead would make the threshold
+    // zoom-dependent: too twitchy zoomed out, too strict zoomed in)
+    if(Math.hypot(e.clientX-marqueeStartCX, e.clientY-marqueeStartCY)>=3){
       getDisplayTables().forEach(t=>{
         const p=nodePos[t], s=nodeSize[t]||calcSize(t);
         if(!p) return;
@@ -2475,6 +2341,11 @@ svg.addEventListener('wheel', e=>{
 
 svg.addEventListener('click', e=>{
   if(marqueeJustSelected){ marqueeJustSelected=false; return; } // end of a marquee, not a click
+  // shift is "additive" everywhere else (shift-click a node adds it rather
+  // than replacing the selection) — a stray shift-click on empty canvas
+  // (below the marquee's drag threshold) should be a no-op the same way,
+  // not a destructive clear
+  if(e.shiftKey) return;
   if(e.target===svg||e.target===erMain) selectOnly(null);
 });
 

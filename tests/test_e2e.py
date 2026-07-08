@@ -451,6 +451,36 @@ class TestClientJS(unittest.TestCase):
         self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
                          'exiting focus mode must not resurrect the pre-focus undo history either')
 
+    def test_entering_focus_always_fits_the_viewport(self):
+        # regression: refreshView()'s "skip fitView if the content is
+        # already in view" optimization (added for a different fix) could
+        # accidentally also apply when entering/switching focus — if the
+        # old (overview) viewport happened to already contain the new,
+        # smaller focused layout's bounding box, the zoom never actually
+        # moved in, defeating the entire point of "focusing"
+        self.page.evaluate('vx=-99999; vy=-99999; vs=3; setTransform();')
+        before = self.page.evaluate('({vx, vy, vs})')
+        # focusTable() directly — the node itself is off-screen at this
+        # transform (that's the point), so a real double-click can't hit it
+        self.page.evaluate("focusTable('posts')")
+        self.page.wait_for_timeout(100)
+        after = self.page.evaluate('({vx, vy, vs})')
+        self.assertNotEqual(before, after,
+                            'entering focus must always re-fit the viewport, not leave a '
+                            'clearly-unrelated prior transform in place')
+        # and the focused table must actually be on screen afterward
+        pos = self.page.evaluate('({...nodePos.posts})')
+        view = self.page.evaluate('({vx, vy, vs})')
+        rect = self.page.evaluate('''() => {
+            const r = document.querySelector('svg').getBoundingClientRect();
+            return {width:r.width, height:r.height};
+        }''')
+        sx = view['vx'] + pos['x'] * view['vs']
+        sy = view['vy'] + pos['y'] * view['vs']
+        self.assertTrue(0 <= sx <= rect['width'] and 0 <= sy <= rect['height'],
+                        f'focused table should be visible on screen, got screen pos ({sx},{sy}) '
+                        f'in a {rect["width"]}x{rect["height"]} viewport')
+
 
 # Regression fixture for the "same-row skip" family of layout bugs: 'hub' is
 # the highest-degree table (becomes the row-0 hub), its three direct children
