@@ -603,5 +603,43 @@ class TestLocalStorageWriteFailureIsNonFatal(unittest.TestCase):
             page.close()
 
 
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestPngExportOversizedCanvas(unittest.TestCase):
+    """A canvas exceeding the browser's dimension/area limit makes
+    toBlob() yield null with no exception of its own — that used to reach
+    a bare `URL.createObjectURL(pngBlob)` / `new ClipboardItem(...)` with a
+    null blob and throw, leaving exportToPNG's promise unresolved forever
+    (no toast, no error, just a permanently "stuck" export)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def test_null_blob_shows_a_toast_instead_of_hanging(self):
+        page = self.browser.new_page()
+        try:
+            page.add_init_script(
+                'HTMLCanvasElement.prototype.toBlob = function(cb) { cb(null); };')
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.evaluate('exportToPNG()')
+            page.wait_for_timeout(200)
+            self.assertTrue(page.evaluate("document.getElementById('toast').classList.contains('show')"),
+                            'a toast should appear instead of the export silently hanging')
+            self.assertIn('too large', page.evaluate("document.getElementById('toast').textContent"))
+        finally:
+            page.close()
+
+
 if __name__ == '__main__':
     unittest.main()

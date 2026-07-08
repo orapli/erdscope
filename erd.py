@@ -3135,8 +3135,15 @@ function exportToMermaid(){
 async function exportToPNG(){
   const built=buildExportSvg();
   if(!built) return;
-  const scale=2, W=Math.ceil(built.vw*scale), H=Math.ceil(built.vh*scale);
-  built.svg.setAttribute('width',W); built.svg.setAttribute('height',H); // 2x raster
+  // browsers cap canvas dimensions (commonly ~16384px/side, tighter on
+  // Safari/mobile) — an oversized canvas makes toBlob() silently yield
+  // null with no error of its own. Scale down from the ideal 2x rather
+  // than fail outright on a large diagram; MAX_DIM is a conservative
+  // floor that should be safe everywhere.
+  const MAX_DIM=8000;
+  const scale=Math.max(0.1, Math.min(2, MAX_DIM/built.vw, MAX_DIM/built.vh));
+  const W=Math.ceil(built.vw*scale), H=Math.ceil(built.vh*scale);
+  built.svg.setAttribute('width',W); built.svg.setAttribute('height',H);
   const svgStr=new XMLSerializer().serializeToString(built.svg);
   const blob=new Blob([svgStr],{type:'image/svg+xml;charset=utf-8'});
   const url=URL.createObjectURL(blob);
@@ -3144,20 +3151,30 @@ async function exportToPNG(){
   await new Promise(resolve=>{
     const img=new Image();
     img.onload=()=>{
-      const canvas=document.createElement('canvas');
-      canvas.width=W; canvas.height=H;
-      const ctx=canvas.getContext('2d');
-      ctx.drawImage(img,0,0,W,H); // background stays transparent
-      URL.revokeObjectURL(url);
-      canvas.toBlob(pngBlob=>{
-        const pngUrl=URL.createObjectURL(pngBlob);
-        if(navigator.clipboard?.write){
-          navigator.clipboard.write([new ClipboardItem({'image/png':pngBlob})])
-            .then(()=>showToast('Copied to clipboard ✓'))
-            .catch(()=>downloadPNG(pngUrl));
-        } else { downloadPNG(pngUrl); }
+      try{
+        const canvas=document.createElement('canvas');
+        canvas.width=W; canvas.height=H;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,0,0,W,H); // background stays transparent
+        URL.revokeObjectURL(url);
+        canvas.toBlob(pngBlob=>{
+          if(!pngBlob){
+            showToast('Export failed: diagram too large to rasterize — try SVG export instead');
+            resolve(); return;
+          }
+          const pngUrl=URL.createObjectURL(pngBlob);
+          if(navigator.clipboard?.write){
+            navigator.clipboard.write([new ClipboardItem({'image/png':pngBlob})])
+              .then(()=>showToast('Copied to clipboard ✓'))
+              .catch(()=>downloadPNG(pngUrl));
+          } else { downloadPNG(pngUrl); }
+          resolve();
+        },'image/png');
+      }catch(err){
+        URL.revokeObjectURL(url);
+        showToast('Export failed: diagram too large to rasterize — try SVG export instead');
         resolve();
-      },'image/png');
+      }
     };
     img.onerror=()=>{URL.revokeObjectURL(url);showToast('Export failed');resolve();};
     img.src=url;
