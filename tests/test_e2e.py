@@ -258,10 +258,30 @@ class TestClientJS(unittest.TestCase):
         # a shift-click on empty canvas with no real drag — under the
         # marquee's 3px threshold — must be a no-op too, not a destructive
         # clear of whatever was already selected
+        rect = self.page.evaluate('''() => {
+            const r = document.querySelector('svg').getBoundingClientRect();
+            return {left:r.left, top:r.top, right:r.right, bottom:r.bottom};
+        }''')
+        # right-middle of the SVG's own visible viewport: clear of the
+        # (fit-viewed, so left/center-weighted) fixture's nodes, the legend
+        # overlay (top-left), and the toolbar (bottom edge) — verified by
+        # the plain-click sanity check right below, not just assumed
+        cx, cy = rect['right'] - 100, (rect['top'] + rect['bottom']) / 2
+
+        # sanity check: this point must be real empty canvas — a *plain*
+        # click there should clear the selection, or this test would pass
+        # vacuously (asserting a no-op happened at a point that never did
+        # anything to begin with)
+        self.page.click('[data-name="posts"]')
+        self.assertEqual(self.page.evaluate('[...selectedTables]'), ['posts'])
+        self.page.mouse.click(cx, cy)
+        self.assertEqual(self.page.evaluate('[...selectedTables]'), [],
+                         'test setup: a plain click at this point must clear the selection')
+
         self.page.click('[data-name="posts"]')
         self.assertEqual(self.page.evaluate('[...selectedTables]'), ['posts'])
         self.page.keyboard.down('Shift')
-        self.page.mouse.move(20, 20)
+        self.page.mouse.move(cx, cy)
         self.page.mouse.down()
         self.page.mouse.up()  # no movement at all -> well under the 3px threshold
         self.page.keyboard.up('Shift')

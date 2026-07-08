@@ -431,6 +431,19 @@ class TestOverlayAndInference(unittest.TestCase):
         names = {a['name'] for a in self.tables['users']['associations']}
         self.assertIn('department', names)
 
+    def test_table_map_on_an_sti_subclass_still_wins(self):
+        # table_map is the documented "static analysis genuinely can't
+        # reach this" escape hatch — an explicit override on the STI
+        # subclass itself must still take precedence over sti_root's
+        # automatic table-sharing, not be silently ignored by it
+        erd.merge_code_semantics(self.tables, FIXTURE, table_map={'Admin': 'admin_accounts'})
+        self.assertIn('admin_accounts', self.tables)
+        names = {a['name'] for a in self.tables['admin_accounts']['associations']}
+        self.assertIn('department', names)
+        # and it must not also have leaked into users
+        self.assertNotIn('department',
+                         {a['name'] for a in self.tables['users']['associations']})
+
     def test_commented_out_table_name_does_not_win(self):
         # commented_table_name.rb has `# self.table_name = 'should_not_be_used'`
         # — the self.table_name regex must run on comment-stripped source,

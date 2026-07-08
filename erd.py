@@ -440,8 +440,12 @@ def parse_models(models_dir, tables, table_map=None):
             continue
         body = class_info[class_name]['body']
         # an STI subclass (base is a concrete model) shares its root
-        # ancestor's table — it must not get a phantom table of its own
-        table_name = resolve_table_name(sti_root(class_name))
+        # ancestor's table — it must not get a phantom table of its own.
+        # A table_map entry on the subclass itself still wins, though —
+        # that's the explicit, deliberate override escape hatch, and it
+        # should stay the one thing that always takes precedence
+        table_name = resolve_table_name(
+            class_name if class_name in table_map else sti_root(class_name))
         if table_name not in tables:
             # model exists but the table is not in any schema file
             # (library-managed table, another database, ...)
