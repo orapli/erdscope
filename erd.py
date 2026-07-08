@@ -3606,13 +3606,19 @@ requestAnimationFrame(fitView);
 # ---------------------------------------------------------------------------
 # CLI flags mirrored by config keys of the same name -> (default value if
 # neither config nor CLI supplies one). `relations` is config-only (no CLI
-# equivalent — a list of individual FK declarations doesn't fit a flag) and
-# `database` is deliberately excluded: it's the one thing kept CLI-only, so a
-# checked-in config file can never carry a credential-bearing URL.
+# equivalent — a list of individual FK declarations doesn't fit a flag).
 CONFIG_DEFAULTS = {
     'output': 'erd.html', 'models': None, 'excel': None, 'max_rows': 15,
     'only': None, 'exclude': None, 'infer_fk': False, 'table_map': {},
 }
+# Connection fields, broken apart rather than one mysql:// URL string —
+# there's deliberately no password/url field: a single URL is one string
+# away from someone pasting in a password, but there's no literal field to
+# accidentally fill in when the pieces are separate. One config file per
+# database (e.g. erdscope.staging.json / erdscope.prod.json) is the
+# intended way to point --config at different targets.
+CONFIG_CONNECTION_KEYS = {'host', 'port', 'user', 'database'}
+CONFIG_PASSWORD_KEYS = {'password', 'passwd', 'pwd', 'url', 'database_url'}
 
 def load_config(args):
     """Load the config file: --config PATH if given, else auto-discovered
@@ -3656,13 +3662,59 @@ def load_config(args):
             sys.exit(f'Error: failed to parse {path} as YAML: {e}')
     if not isinstance(config, dict):
         sys.exit(f'Error: {path} must contain a JSON/YAML object at the top level')
-    if 'database' in config:
-        sys.exit(f'Error: {path} must not contain a "database" key — the DB URL is '
-                 f'CLI-only, to keep credentials out of a file that might get committed')
-    unknown = set(config) - set(CONFIG_DEFAULTS) - {'relations'}
+    password_keys = CONFIG_PASSWORD_KEYS & set(config)
+    if password_keys:
+        sys.exit(f'Error: {path} has {", ".join(sorted(password_keys))} — passwords '
+                 f'(or a full connection URL, which could carry one) are not supported '
+                 f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
+                 f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
+    unknown = set(config) - set(CONFIG_DEFAULTS) - {'relations'} - CONFIG_CONNECTION_KEYS
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
     return config
+
+_SAFE_HOST_OR_USER = re.compile(r'[\w.\-]+')
+
+def assemble_config_url(config):
+    """Build a mysql:// URL from the config's host/port/user/database fields,
+    or None if `database` wasn't given (no connection info in the config at
+    all). Each part is validated against a safe charset before being pasted
+    into the URL string — host/user containing `/`, `@`, or `:` would
+    silently shift what urlparse reads as the host/port/path when the
+    assembled string is re-parsed downstream (verified empirically: a host
+    of "x@evil" produces a URL whose username becomes "x" and whose actual
+    host becomes "evil"), and there is no decoding step anywhere downstream
+    to undo percent-encoding, so quoting isn't a fix either."""
+    db = config.get('database')
+    if db is None:  # absent, or explicitly blank (e.g. a bare `database:` in YAML)
+        return None
+    if not re.fullmatch(r'\w+', str(db)):
+        sys.exit(f'Error: config `database` {db!r} is not a valid database name')
+    host = config.get('host') or '127.0.0.1'
+    if not _SAFE_HOST_OR_USER.fullmatch(str(host)):
+        sys.exit(f'Error: config `host` {host!r} has unsupported characters (letters/'
+                 f'digits/./- only here — IPv6 and other exotic hosts need the CLI '
+                 f'argument instead, not the config file)')
+    port = config.get('port', 3306)
+    if isinstance(port, bool) or (isinstance(port, float) and not port.is_integer()):
+        sys.exit(f'Error: config `port` {port!r} is not a valid port number')
+    try:
+        port = int(port)
+        if not (1 <= port <= 65535):
+            raise ValueError
+    except (TypeError, ValueError):
+        sys.exit(f'Error: config `port` {port!r} is not a valid port number')
+    auth = ''
+    if config.get('user') is not None:
+        user = str(config['user'])
+        if ':' in user:
+            sys.exit('Error: config `user` must not contain a password (no "user:pass" '
+                     'syntax) — passwords are not supported in the config file')
+        if not _SAFE_HOST_OR_USER.fullmatch(user):
+            sys.exit(f'Error: config `user` {user!r} has unsupported characters '
+                     f'(letters/digits/./- only)')
+        auth = f'{user}@'
+    return f'mysql://{auth}{host}:{port}/{db}'
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -3672,10 +3724,11 @@ def main():
         description='Generate an interactive ER diagram from a live database, '
                     'optionally enriched with association semantics parsed from '
                     'application code (Rails / Prisma / Django)')
-    p.add_argument('database', metavar='mysql://user@host:port/dbname',
-                   help='Database connection URL (required, CLI-only — never put this in '
-                        'a config file). Use MYSQL_PWD or ~/.my.cnf for the password; '
-                        'a read-only account is recommended')
+    p.add_argument('database', metavar='mysql://user@host:port/dbname', nargs='?',
+                   help='Database connection URL. Can also be assembled from '
+                        '`host`/`port`/`user`/`database` in the config file (no password '
+                        'field there — use MYSQL_PWD, ~/.my.cnf, or the interactive '
+                        'prompt). A read-only account is recommended')
     # SUPPRESS on every config-mirrorable flag so we can tell "explicitly
     # passed on the CLI" (attribute present) from "left to the config file /
     # built-in default" (attribute absent) — see the merge loop below.
@@ -3706,20 +3759,23 @@ def main():
                         "accepted, e.g. --table-map 'Widget=crm_widgets,Foo=bar_table'")
     p.add_argument('--config', metavar='PATH',
                    help='Config file (JSON, or YAML if PyYAML is installed) providing '
-                        'defaults for the options above plus `relations` (manual FK '
-                        'declarations — see README). An explicit CLI flag always wins '
-                        'over the same key in the config. Auto-discovered as '
-                        '.erdscope.json/.yml/.yaml in the current directory if not given')
+                        'defaults for the options above, plus the DB connection as '
+                        'host/port/user/database (no password field — see README) and '
+                        '`relations` (manual FK declarations). An explicit CLI flag or '
+                        'argument always wins over the same key in the config. '
+                        'Auto-discovered as .erdscope.json/.yml/.yaml in the current '
+                        'directory if not given')
     p.add_argument('--no-config', action='store_true',
                    help='Skip config auto-discovery even if .erdscope.* exists in the cwd')
     args = p.parse_args()
 
-    url = args.database
-    if not url.startswith('mysql://'):
-        sys.exit('Error: a database URL is required (currently mysql:// only), '
-                 'e.g. mysql://readonly@127.0.0.1:3306/myapp_production')
-
     config = load_config(args)
+    url = args.database or assemble_config_url(config)
+    if not url or not url.startswith('mysql://'):
+        sys.exit('Error: a database URL is required (currently mysql:// only) — pass it '
+                 'as the CLI argument, or set `database` (and optionally host/user/port) '
+                 'in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp_production')
+
     if hasattr(args, 'table_map'):
         tm = {}
         for arg in args.table_map:
@@ -3735,8 +3791,9 @@ def main():
         if not hasattr(args, key):  # not explicitly passed on the CLI
             setattr(args, key, config.get(key, default))
     relations = config.get('relations', [])
-    if not isinstance(relations, list):
-        sys.exit('Error: config `relations` must be a list')
+    if not isinstance(relations, list) or any(not isinstance(r, dict) for r in relations):
+        sys.exit('Error: config `relations` must be a list of objects '
+                 '({table, column, references, ...})')
 
     tables = parse_mysql(url)
     print(f'Fetched {len(tables)} tables from MySQL', file=sys.stderr)

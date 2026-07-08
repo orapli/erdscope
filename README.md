@@ -63,11 +63,22 @@ itself is made.
 
 Once the flag list above gets long, put it in a file instead — `.erdscope.json` next to
 where you run the tool is picked up automatically (no `--config` needed). JSON works
-with zero dependencies; YAML works too if PyYAML happens to be installed. Every key
-mirrors a CLI option above (snake_case), plus one config-only key, `relations`:
+with zero dependencies; YAML works too if PyYAML happens to be installed. Most keys
+mirror a CLI option above (snake_case); `host`/`port`/`user`/`database` (the DB
+connection) and `relations` (manual FK declarations) are config-only, with no CLI flag
+equivalent:
 
 ```jsonc
 {
+  // connection, broken into parts rather than one mysql:// URL string —
+  // there's no password field, on purpose (see below). One file per
+  // database (erdscope.staging.json, erdscope.prod.json, ...) is the
+  // intended way to point --config at different targets.
+  "host": "127.0.0.1",
+  "port": 3306,
+  "user": "readonly",
+  "database": "myapp_production",
+
   "output": "erd.html",
   "models": "../myapp",
   "max_rows": 15,
@@ -89,9 +100,11 @@ mirrors a CLI option above (snake_case), plus one config-only key, `relations`:
 ```
 
 An explicit CLI flag always wins over the same config key, replacing it entirely
-(list-valued keys like `only` are not merged with the config's). The database URL is
-deliberately **not** a config key — it's CLI-only, so a config file that ends up
-committed can never carry a credential-bearing connection string.
+(list-valued keys like `only` are not merged with the config's). There's deliberately
+no `password`/`url` key — `host`/`port`/`user`/`database` are separate fields specifically
+so there's nowhere to paste a password into. Leave it out of the config the same way
+you would the CLI: `MYSQL_PWD`, `~/.my.cnf`, or the interactive prompt. If the CLI
+argument is given, it wins over the config's connection fields entirely.
 
 See [`erdscope.example.yml`](erdscope.example.yml) for a fully annotated sample (based
 on the live demo's schema) with every key explained and the situational ones commented

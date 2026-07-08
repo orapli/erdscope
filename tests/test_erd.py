@@ -761,13 +761,23 @@ class TestLoadConfig(unittest.TestCase):
             self.addCleanup(os.chdir, orig)
             self.assertEqual(erd.load_config(self._args()), {'max_rows': 42})
 
-    def test_database_key_forbidden(self):
+    def test_connection_fields_allowed(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
-            path.write_text('{"database": "mysql://x@host/db"}')
-            with self.assertRaises(SystemExit) as cm:
-                erd.load_config(self._args(config=str(path)))
-        self.assertIn('database', str(cm.exception))
+            path.write_text('{"host": "127.0.0.1", "port": 3307, '
+                            '"user": "readonly", "database": "myapp_production"}')
+            config = erd.load_config(self._args(config=str(path)))
+        self.assertEqual(config['host'], '127.0.0.1')
+        self.assertEqual(config['database'], 'myapp_production')
+
+    def test_password_key_rejected(self):
+        for key in ('password', 'passwd', 'pwd', 'url', 'database_url'):
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'my.json'
+                path.write_text(json.dumps({key: 'whatever'}))
+                with self.assertRaises(SystemExit) as cm:
+                    erd.load_config(self._args(config=str(path)))
+            self.assertIn(key, str(cm.exception))
 
     def test_unknown_key_exits(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -849,6 +859,12 @@ class TestMainConfigIntegration(unittest.TestCase):
         names = {a['name'] for a in data['tables']['comments']['associations']}
         self.assertIn('thread', names)
 
+    def test_relations_entry_that_is_not_an_object_exits_cleanly(self):
+        Path('.erdscope.json').write_text(json.dumps({'relations': ['oops']}))
+        with self.assertRaises(SystemExit) as cm:
+            self._run()
+        self.assertIn('relations', str(cm.exception))
+
     def test_cli_only_fully_replaces_config_only_not_merged(self):
         Path('.erdscope.json').write_text(json.dumps({'only': ['posts', 'comments', 'users']}))
         self._run('--only', 'tags')
@@ -881,6 +897,131 @@ class TestMainConfigIntegration(unittest.TestCase):
         data = self._load_output()
         self.assertIn('crm_widgets', data['tables'])
         self.assertNotIn('widgets', data['tables'])
+
+    def test_url_assembled_from_config_connection_fields(self):
+        seen = []
+        erd.parse_mysql = lambda url: (seen.append(url) or db_tables())
+        Path('.erdscope.json').write_text(json.dumps({
+            'host': '127.0.0.1', 'port': 3307, 'user': 'readonly', 'database': 'myapp_production',
+        }))
+        sys.argv = ['erd.py']  # no CLI positional at all — config supplies the connection
+        erd.main()
+        self.assertEqual(seen, ['mysql://readonly@127.0.0.1:3307/myapp_production'])
+
+    def test_cli_url_wins_over_config_connection_fields(self):
+        seen = []
+        erd.parse_mysql = lambda url: (seen.append(url) or db_tables())
+        Path('.erdscope.json').write_text(json.dumps({
+            'host': 'from-config', 'database': 'from_config_db',
+        }))
+        sys.argv = ['erd.py', 'mysql://cli-wins@example/db']
+        erd.main()
+        self.assertEqual(seen, ['mysql://cli-wins@example/db'])
+
+    def test_missing_connection_info_exits_with_clear_message(self):
+        sys.argv = ['erd.py']
+        with self.assertRaises(SystemExit) as cm:
+            erd.main()
+        self.assertIn('database URL is required', str(cm.exception))
+
+    def test_yaml_config_carries_connection_fields(self):
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest('PyYAML not installed')
+        seen = []
+        erd.parse_mysql = lambda url: (seen.append(url) or db_tables())
+        Path('.erdscope.yml').write_text('host: dbhost\nuser: readonly\ndatabase: shop\n')
+        sys.argv = ['erd.py']
+        erd.main()
+        self.assertEqual(seen, ['mysql://readonly@dbhost:3306/shop'])
+
+
+class TestAssembleConfigUrl(unittest.TestCase):
+    """assemble_config_url() builds the mysql:// URL from config connection
+    fields — each part is validated against a safe charset first, since
+    pasting an unvalidated host/user into the URL string is unsafe: a `/`,
+    `@`, or `:` in one of them silently shifts what urlparse reads as the
+    host/port/path once the assembled string is re-parsed downstream."""
+    def test_no_database_key_returns_none(self):
+        self.assertIsNone(erd.assemble_config_url({}))
+
+    def test_full_assembly(self):
+        url = erd.assemble_config_url(
+            {'host': '10.0.0.5', 'port': 3307, 'user': 'readonly', 'database': 'shop'})
+        self.assertEqual(url, 'mysql://readonly@10.0.0.5:3307/shop')
+
+    def test_host_defaults_to_localhost_when_only_database_given(self):
+        url = erd.assemble_config_url({'database': 'shop'})
+        self.assertEqual(url, 'mysql://127.0.0.1:3306/shop')
+
+    def test_port_defaults_to_3306(self):
+        url = erd.assemble_config_url({'host': 'dbhost', 'database': 'shop'})
+        self.assertEqual(url, 'mysql://dbhost:3306/shop')
+
+    def test_no_user_omits_auth_segment(self):
+        url = erd.assemble_config_url({'host': 'dbhost', 'database': 'shop'})
+        self.assertNotIn('@', url)
+
+    def test_user_with_slash_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'user': 'read/only'})
+        self.assertIn('user', str(cm.exception))
+
+    def test_user_with_at_sign_rejected(self):
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'user': 'a@b'})
+
+    def test_user_with_space_rejected(self):
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'user': 'my user'})
+
+    def test_user_with_password_syntax_rejected_with_specific_message(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'user': 'readonly:hunter2'})
+        self.assertIn('password', str(cm.exception).lower())
+
+    def test_host_with_at_sign_rejected(self):
+        # a raw "user@evil"-style host would otherwise silently redistribute
+        # across the assembled URL's user/host/port fields when re-parsed
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'host': 'x@evil', 'database': 'shop'})
+        self.assertIn('host', str(cm.exception))
+
+    def test_host_with_slash_rejected(self):
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'host': 'x/evil', 'database': 'shop'})
+
+    def test_non_integer_port_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'port': 'notaport'})
+        self.assertIn('port', str(cm.exception))
+
+    def test_out_of_range_port_rejected(self):
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'port': 99999})
+
+    def test_invalid_database_name_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'host': 'h', 'database': 'shop; drop table x'})
+        self.assertIn('database', str(cm.exception))
+
+    def test_blank_database_treated_as_absent_not_as_the_string_none(self):
+        # a bare `database:` line in YAML parses to None — must not silently
+        # become the literal string "None" in the assembled URL
+        self.assertIsNone(erd.assemble_config_url({'database': None}))
+
+    def test_blank_host_falls_back_to_default_not_the_string_none(self):
+        url = erd.assemble_config_url({'host': None, 'database': 'shop'})
+        self.assertEqual(url, 'mysql://127.0.0.1:3306/shop')
+
+    def test_boolean_port_rejected(self):
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'port': True})
+
+    def test_non_integral_float_port_rejected(self):
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'host': 'h', 'database': 'shop', 'port': 3306.9})
 
 
 if __name__ == '__main__':

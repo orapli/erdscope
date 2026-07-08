@@ -6,7 +6,17 @@
 # no --config needed. YAML comments like this one only work if PyYAML is
 # installed — .erdscope.json (no comments, since JSON has none) always works
 # with zero dependencies. An explicit CLI flag always overrides the same key
-# here. The database URL is never allowed in this file — it's CLI-only.
+# here (including the DB connection, if you pass the URL directly on the CLI).
+#
+# One file per database (erdscope.staging.yml, erdscope.prod.yml, ...) is the
+# intended way to point --config at different targets. There's deliberately
+# no password field — host/port/user/database are separate on purpose, so
+# there's nowhere to paste a password into. Leave it out here the same way
+# you would on the CLI: MYSQL_PWD, ~/.my.cnf, or the interactive prompt.
+host: 127.0.0.1
+port: 3306
+user: readonly
+database: demo_shop
 
 output: erd.html
 max_rows: 15
