@@ -226,6 +226,51 @@ class TestClientJS(unittest.TestCase):
                                 msg='the rest of the selection should move by the same delta')
         self.assertAlmostEqual(dy_posts, dy_comments, places=3)
 
+    def test_drag_updates_only_edges_touching_the_dragged_node(self):
+        # regression for a perf fix: dragging used to recompute and redraw
+        # every edge on every mousemove. Now only edges touching the dragged
+        # node are re-routed; the rest of the diagram's edges must be left
+        # completely alone (same DOM element, same path) and no edges must
+        # go missing or get duplicated.
+        edge_count_before = self.page.evaluate('document.querySelectorAll(".er-edge").length')
+        untouched_path_before = self.page.evaluate(
+            '''document.querySelector('.er-edge[data-source="comments"][data-target="users"] path,'
+            + '.er-edge[data-source="users"][data-target="comments"] path').getAttribute('d')''')
+        moved_path_before = self.page.evaluate(
+            '''document.querySelector('.er-edge[data-source="posts"][data-target="users"] path,'
+            + '.er-edge[data-source="users"][data-target="posts"] path').getAttribute('d')''')
+
+        before = self.page.evaluate('({...nodePos.posts})')
+        rect = self.page.evaluate('''() => {
+            const r = document.querySelector('svg').getBoundingClientRect();
+            return {left:r.left, top:r.top};
+        }''')
+        view = self.page.evaluate('({vx, vy, vs})')
+        to_client = lambda wx, wy: (rect['left'] + view['vx'] + wx * view['vs'],
+                                     rect['top'] + view['vy'] + wy * view['vs'])
+        sx, sy = to_client(before['x'], before['y'])
+        tx, ty = to_client(before['x'] + 400, before['y'] + 400)
+        self.page.mouse.move(sx, sy)
+        self.page.mouse.down()
+        self.page.keyboard.down('Alt')
+        self.page.mouse.move(tx, ty, steps=8)
+        self.page.keyboard.up('Alt')
+        self.page.mouse.up()
+
+        edge_count_after = self.page.evaluate('document.querySelectorAll(".er-edge").length')
+        untouched_path_after = self.page.evaluate(
+            '''document.querySelector('.er-edge[data-source="comments"][data-target="users"] path,'
+            + '.er-edge[data-source="users"][data-target="comments"] path').getAttribute('d')''')
+        moved_path_after = self.page.evaluate(
+            '''document.querySelector('.er-edge[data-source="posts"][data-target="users"] path,'
+            + '.er-edge[data-source="users"][data-target="posts"] path').getAttribute('d')''')
+
+        self.assertEqual(edge_count_before, edge_count_after, 'no edge should go missing or duplicate')
+        self.assertEqual(untouched_path_before, untouched_path_after,
+                         "an edge not touching the dragged node shouldn't be redrawn at all")
+        self.assertNotEqual(moved_path_before, moved_path_after,
+                            "the dragged node's own edge must still track its new position")
+
     def test_distribute_horizontal_equalizes_gaps(self):
         for name in ('posts', 'comments', 'likes'):
             self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])

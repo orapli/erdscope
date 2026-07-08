@@ -72,7 +72,13 @@ def mysql_query_rows(url, sql):
                         for r in cur.fetchall()]
         finally:
             conn.close()
-    cmd = ['mysql', '--batch', '--raw', '--skip-column-names',
+    # No --raw: table/column comments are free-text and commonly contain
+    # tabs or newlines, which --raw's disabled escaping would otherwise
+    # leave as literal bytes in the tab-separated stream — corrupting the
+    # field count on split('\t') and splitting records early on splitlines().
+    # Without --raw, mysql escapes \0 \b \n \r \t \\ and represents NULL as
+    # the literal two-char marker \N, all unescaped below.
+    cmd = ['mysql', '--batch', '--skip-column-names',
            '--default-character-set=utf8mb4', '-h', host, '-P', str(port)]
     if u.username:
         cmd += ['-u', u.username]
@@ -87,8 +93,32 @@ def mysql_query_rows(url, sql):
                  '(pip install pymysql, or install a MySQL client)')
     if r.returncode != 0:
         sys.exit(f'Error: mysql query failed: {r.stderr.strip()}')
-    return [tuple('' if v == 'NULL' else v for v in line.split('\t'))
+    return [tuple(_unescape_mysql_field(v) for v in line.split('\t'))
             for line in r.stdout.splitlines()]
+
+_MYSQL_TSV_ESCAPES = {'0': '\0', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', '\\': '\\'}
+
+def _unescape_mysql_field(s):
+    """Undo mysql --batch (non-raw) tab-output escaping. \\N alone means
+    SQL NULL (mapped to '' — same convention the PyMySQL path already uses
+    for None); elsewhere \\0 \\b \\n \\r \\t \\\\ decode to their literal
+    characters. A single left-to-right pass (not chained .replace() calls)
+    is required: independent replacements can misfire on adjacent escapes,
+    e.g. an escaped backslash immediately followed by an escaped tab."""
+    if s == '\\N':
+        return ''
+    if '\\' not in s:
+        return s
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == '\\' and i + 1 < n and s[i + 1] in _MYSQL_TSV_ESCAPES:
+            out.append(_MYSQL_TSV_ESCAPES[s[i + 1]])
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
 
 def mysql_ir(table_rows, col_rows, fk_rows, index_rows):
     """Build the IR from information_schema rows (pure; unit-testable).
@@ -1358,6 +1388,12 @@ let isPanning=false, panSX, panSY, panVX, panVY;
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
 let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
 let dragUndoSnapshot=null; // nodePos captured at mousedown, committed to undoStack only if the drag actually moved something
+// the display set/edge list can't change mid-drag (only checkbox/auto-expand
+// changes do that), so it's computed once at mousedown instead of on every
+// mousemove — recomputing getDisplayTables() (which can BFS auto-expand
+// roots) and getDisplayEdges() per mouse event is the main cost of dragging
+// on a large diagram
+let dragEdgeCache=null;
 
 // Layout undo/redo: position-only history (not selection/checkbox state —
 // changing which tables are displayed is treated as expected, not something
@@ -2326,6 +2362,7 @@ function drawNode(parent, name) {
     dragGroupStart = {};
     dragSet.forEach(t => { dragGroupStart[t] = {...(nodePos[t]||{x:0,y:0})}; });
     dragUndoSnapshot = snapshotPos(); // committed on mouseup only if the drag actually moved something
+    dragEdgeCache = getDisplayEdges(getDisplayTables());
     const pt=svgPt(e.clientX,e.clientY);
     isDragging=true; dragMoved=false; dragName=name;
     dragCX=e.clientX; dragCY=e.clientY;
@@ -2384,12 +2421,20 @@ const CURVE_T=0.2;
 function bendBlocked(edge, src, tgt, nx, ny, bend){
   const c1={x:src.x+(tgt.x-src.x)*CURVE_T+nx*bend, y:src.y+(tgt.y-src.y)*CURVE_T+ny*bend};
   const c2={x:tgt.x-(tgt.x-src.x)*CURVE_T+nx*bend, y:tgt.y-(tgt.y-src.y)*CURVE_T+ny*bend};
+  // a cubic Bezier always lies within the bounding box of its 4 control
+  // points (convex hull property) — an obstacle whose box doesn't overlap
+  // this one *cannot* be crossed by the curve, so it's safe to skip the
+  // expensive 13-point sampling below for it. Cheap early-out that matters
+  // most on large diagrams, where pickBend calls this ~25x per edge.
+  const cbx0=Math.min(src.x,c1.x,c2.x,tgt.x), cbx1=Math.max(src.x,c1.x,c2.x,tgt.x);
+  const cby0=Math.min(src.y,c1.y,c2.y,tgt.y), cby1=Math.max(src.y,c1.y,c2.y,tgt.y);
   let blocked=0;
   for(const t of edgeObstacles){
     if(t===edge.source||t===edge.target) continue;
     const p=nodePos[t], s=nodeSize[t];
     if(!p||!s) continue;
     const x0=p.x-s.w/2-8, x1=p.x+s.w/2+8, y0=p.y-s.h/2-8, y1=p.y+s.h/2+8;
+    if(x1<cbx0||x0>cbx1||y1<cby0||y0>cby1) continue;
     for(let i=1;i<14;i++){
       const q=i/14, u=1-q;
       const px=u*u*u*src.x+3*u*u*q*c1.x+3*u*q*q*c2.x+q*q*q*tgt.x;
@@ -3159,7 +3204,20 @@ window.addEventListener('mousemove', e=>{
       });
     });
     const eL=document.getElementById('edge-layer');
-    if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
+    // only re-route edges whose endpoint actually moved — the rest of the
+    // diagram's edges are untouched by this drag, and re-running pickBend's
+    // obstacle search for all of them on every mousemove is the main cost
+    // of dragging on a diagram with many edges. A full, guaranteed-correct
+    // redraw still happens once on mouseup.
+    if(eL && dragEdgeCache){
+      dragEdgeCache.forEach(e2=>{
+        if(!dragSet.has(e2.source) && !dragSet.has(e2.target)) return;
+        eL.querySelectorAll(`[data-source="${CSS.escape(e2.source)}"][data-target="${CSS.escape(e2.target)}"]`)
+          .forEach(el=>el.remove());
+        drawEdge(eL, e2);
+      });
+      updateEdgeHighlight();
+    }
     return;
   }
   if(!isPanning) return;
@@ -3176,7 +3234,7 @@ window.addEventListener('mouseup', e=>{
       updateUndoRedoUI();
     }
     dragUndoSnapshot=null;
-    dragSet=new Set(); dragGroupStart={};
+    dragSet=new Set(); dragGroupStart={}; dragEdgeCache=null;
     // dragMoved stays set: the click event fires after mouseup and must see it.
     // If no click follows (released outside the node/window), clear it on the
     // next task so it can't swallow a later legitimate click.
@@ -3619,6 +3677,18 @@ CONFIG_DEFAULTS = {
 # intended way to point --config at different targets.
 CONFIG_CONNECTION_KEYS = {'host', 'port', 'user', 'database'}
 CONFIG_PASSWORD_KEYS = {'password', 'passwd', 'pwd', 'url', 'database_url'}
+# Expected type per key, checked at load time — YAML/JSON scalars are
+# exactly where a config typo goes undetected otherwise: max_rows as the
+# string "fifteen" would reach the JS as a bare identifier (ReferenceError,
+# dead viewer); `only` as a bare string instead of a list gets iterated
+# character-by-character by fnmatch (silently matches everything, filter
+# does nothing); infer_fk as the string "false" is truthy. host/port/user/
+# database get their own, more detailed checks in assemble_config_url().
+CONFIG_TYPES = {
+    'output': str, 'models': str, 'excel': str, 'max_rows': int,
+    'only': list, 'exclude': list, 'infer_fk': bool, 'table_map': dict,
+    'relations': list,
+}
 
 def load_config(args):
     """Load the config file: --config PATH if given, else auto-discovered
@@ -3671,7 +3741,30 @@ def load_config(args):
     unknown = set(config) - set(CONFIG_DEFAULTS) - {'relations'} - CONFIG_CONNECTION_KEYS
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
+    _check_config_types(config, path)
     return config
+
+def _check_config_types(config, path):
+    for key, expected in CONFIG_TYPES.items():
+        if key not in config:
+            continue
+        val = config[key]
+        # bool is a subclass of int in Python, so an explicit isinstance(int)
+        # check would let `max_rows: true` through as 1 — and the reverse,
+        # `infer_fk: 1`, needs the same explicit guard to be rejected
+        ok = (isinstance(val, bool) if expected is bool else
+              isinstance(val, int) and not isinstance(val, bool) if expected is int else
+              isinstance(val, expected))
+        if not ok:
+            sys.exit(f'Error: {path} `{key}` must be a {expected.__name__}, got {val!r}')
+    for key in ('only', 'exclude'):
+        if key in config and any(not isinstance(x, str) for x in config[key]):
+            sys.exit(f'Error: {path} `{key}` must be a list of strings')
+    if 'table_map' in config and any(not isinstance(v, str) for v in config['table_map'].values()):
+        sys.exit(f'Error: {path} `table_map` values must all be strings')
+    if 'relations' in config and any(not isinstance(r, dict) for r in config['relations']):
+        sys.exit(f'Error: {path} `relations` must be a list of objects '
+                 '({table, column, references, ...})')
 
 _SAFE_HOST_OR_USER = re.compile(r'[\w.\-]+')
 
@@ -3790,10 +3883,7 @@ def main():
     for key, default in CONFIG_DEFAULTS.items():
         if not hasattr(args, key):  # not explicitly passed on the CLI
             setattr(args, key, config.get(key, default))
-    relations = config.get('relations', [])
-    if not isinstance(relations, list) or any(not isinstance(r, dict) for r in relations):
-        sys.exit('Error: config `relations` must be a list of objects '
-                 '({table, column, references, ...})')
+    relations = config.get('relations', [])  # shape already validated by load_config()
 
     tables = parse_mysql(url)
     print(f'Fetched {len(tables)} tables from MySQL', file=sys.stderr)
@@ -3845,11 +3935,17 @@ def _finish(tables, args, title_name):
             sys.exit('Error: no tables left after --only/--exclude filtering')
         print(f'Filtered: {len(tables)} tables', file=sys.stderr)
 
-    data_json = json.dumps({'tables': tables}, ensure_ascii=False)
+    # Substitute the other placeholders BEFORE inserting DATA_JSON, and
+    # escape `</` in the JSON — otherwise a table/column comment containing
+    # a literal "__TITLE__"/"__MAX_ROWS__" would get rewritten by the later
+    # .replace() calls, and one containing "</script>" would prematurely
+    # close the script tag and blank the whole page. Both are realistic:
+    # comments are free-text and come straight from the database.
+    data_json = json.dumps({'tables': tables}, ensure_ascii=False).replace('</', '<\\/')
     html = (HTML_TEMPLATE
-            .replace('__DATA_JSON__', data_json)
             .replace('__MAX_ROWS__', str(args.max_rows))
-            .replace('__TITLE__', f'{title_name} — ERD'))
+            .replace('__TITLE__', f'{title_name} — ERD')
+            .replace('__DATA_JSON__', data_json))
 
     out = Path(args.output)
     out.write_text(html, encoding='utf-8')

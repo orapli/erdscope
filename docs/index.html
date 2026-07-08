@@ -475,6 +475,12 @@ let isPanning=false, panSX, panSY, panVX, panVY;
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
 let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
 let dragUndoSnapshot=null; // nodePos captured at mousedown, committed to undoStack only if the drag actually moved something
+// the display set/edge list can't change mid-drag (only checkbox/auto-expand
+// changes do that), so it's computed once at mousedown instead of on every
+// mousemove — recomputing getDisplayTables() (which can BFS auto-expand
+// roots) and getDisplayEdges() per mouse event is the main cost of dragging
+// on a large diagram
+let dragEdgeCache=null;
 
 // Layout undo/redo: position-only history (not selection/checkbox state —
 // changing which tables are displayed is treated as expected, not something
@@ -1443,6 +1449,7 @@ function drawNode(parent, name) {
     dragGroupStart = {};
     dragSet.forEach(t => { dragGroupStart[t] = {...(nodePos[t]||{x:0,y:0})}; });
     dragUndoSnapshot = snapshotPos(); // committed on mouseup only if the drag actually moved something
+    dragEdgeCache = getDisplayEdges(getDisplayTables());
     const pt=svgPt(e.clientX,e.clientY);
     isDragging=true; dragMoved=false; dragName=name;
     dragCX=e.clientX; dragCY=e.clientY;
@@ -1501,12 +1508,20 @@ const CURVE_T=0.2;
 function bendBlocked(edge, src, tgt, nx, ny, bend){
   const c1={x:src.x+(tgt.x-src.x)*CURVE_T+nx*bend, y:src.y+(tgt.y-src.y)*CURVE_T+ny*bend};
   const c2={x:tgt.x-(tgt.x-src.x)*CURVE_T+nx*bend, y:tgt.y-(tgt.y-src.y)*CURVE_T+ny*bend};
+  // a cubic Bezier always lies within the bounding box of its 4 control
+  // points (convex hull property) — an obstacle whose box doesn't overlap
+  // this one *cannot* be crossed by the curve, so it's safe to skip the
+  // expensive 13-point sampling below for it. Cheap early-out that matters
+  // most on large diagrams, where pickBend calls this ~25x per edge.
+  const cbx0=Math.min(src.x,c1.x,c2.x,tgt.x), cbx1=Math.max(src.x,c1.x,c2.x,tgt.x);
+  const cby0=Math.min(src.y,c1.y,c2.y,tgt.y), cby1=Math.max(src.y,c1.y,c2.y,tgt.y);
   let blocked=0;
   for(const t of edgeObstacles){
     if(t===edge.source||t===edge.target) continue;
     const p=nodePos[t], s=nodeSize[t];
     if(!p||!s) continue;
     const x0=p.x-s.w/2-8, x1=p.x+s.w/2+8, y0=p.y-s.h/2-8, y1=p.y+s.h/2+8;
+    if(x1<cbx0||x0>cbx1||y1<cby0||y0>cby1) continue;
     for(let i=1;i<14;i++){
       const q=i/14, u=1-q;
       const px=u*u*u*src.x+3*u*u*q*c1.x+3*u*q*q*c2.x+q*q*q*tgt.x;
@@ -2276,7 +2291,20 @@ window.addEventListener('mousemove', e=>{
       });
     });
     const eL=document.getElementById('edge-layer');
-    if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
+    // only re-route edges whose endpoint actually moved — the rest of the
+    // diagram's edges are untouched by this drag, and re-running pickBend's
+    // obstacle search for all of them on every mousemove is the main cost
+    // of dragging on a diagram with many edges. A full, guaranteed-correct
+    // redraw still happens once on mouseup.
+    if(eL && dragEdgeCache){
+      dragEdgeCache.forEach(e2=>{
+        if(!dragSet.has(e2.source) && !dragSet.has(e2.target)) return;
+        eL.querySelectorAll(`[data-source="${CSS.escape(e2.source)}"][data-target="${CSS.escape(e2.target)}"]`)
+          .forEach(el=>el.remove());
+        drawEdge(eL, e2);
+      });
+      updateEdgeHighlight();
+    }
     return;
   }
   if(!isPanning) return;
@@ -2293,7 +2321,7 @@ window.addEventListener('mouseup', e=>{
       updateUndoRedoUI();
     }
     dragUndoSnapshot=null;
-    dragSet=new Set(); dragGroupStart={};
+    dragSet=new Set(); dragGroupStart={}; dragEdgeCache=null;
     // dragMoved stays set: the click event fires after mouseup and must see it.
     // If no click follows (released outside the node/window), clear it on the
     // next task so it can't swallow a later legitimate click.

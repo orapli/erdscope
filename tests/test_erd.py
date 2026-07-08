@@ -102,6 +102,61 @@ class TestInflector(unittest.TestCase):
         self.assertEqual(erd.class_to_table('Admin::AuditLog'), 'audit_logs')
 
 
+class TestUnescapeMysqlField(unittest.TestCase):
+    """The mysql-CLI fallback path runs without --raw specifically so
+    comments containing tabs/newlines don't corrupt the tab-separated
+    output's field count or record boundaries. These test the unescaping
+    that makes that work."""
+    def test_null_marker(self):
+        self.assertEqual(erd._unescape_mysql_field('\\N'), '')
+
+    def test_tab_unescaped(self):
+        self.assertEqual(erd._unescape_mysql_field('a\\tb'), 'a\tb')
+
+    def test_newline_unescaped(self):
+        self.assertEqual(erd._unescape_mysql_field('line1\\nline2'), 'line1\nline2')
+
+    def test_carriage_return_unescaped(self):
+        self.assertEqual(erd._unescape_mysql_field('a\\rb'), 'a\rb')
+
+    def test_escaped_backslash_not_confused_with_following_escape(self):
+        # raw bytes: a, \, \, t, b — an escaped literal backslash followed by
+        # a literal 't', NOT an escaped tab. Independent chained .replace()
+        # calls get this wrong; a single left-to-right pass doesn't.
+        self.assertEqual(erd._unescape_mysql_field('a\\\\tb'), 'a\\tb')
+
+    def test_plain_string_unchanged(self):
+        self.assertEqual(erd._unescape_mysql_field('plain text'), 'plain text')
+
+    def test_literal_string_null_is_not_the_marker(self):
+        # only the exact two-char field \N means SQL NULL — a real comment
+        # whose text happens to be the word NULL must survive as data
+        self.assertEqual(erd._unescape_mysql_field('NULL'), 'NULL')
+
+    def test_mysql_cli_fallback_survives_tab_and_newline_in_a_field(self):
+        # integration-level: mysql_query_rows must not pass --raw (which
+        # would leave a real tab/newline in a comment as a literal byte,
+        # corrupting split('\t') and splitlines()), and must unescape the
+        # \t/\n it gets back instead
+        import subprocess as subprocess_mod
+        orig_run = subprocess_mod.run
+        # multi-line, tab-containing comment plus a NULL column, exactly as
+        # mysql --batch (non-raw) would escape them in real TSV output
+        fake_stdout = 'users\tid\t\\N\ncomments\tbody\thas a\\ttab and\\nnewline\n'
+        seen_cmds = []
+        def fake_run(cmd, **kw):
+            seen_cmds.append(cmd)
+            return subprocess_mod.CompletedProcess(cmd, 0, stdout=fake_stdout, stderr='')
+        subprocess_mod.run = fake_run
+        self.addCleanup(setattr, subprocess_mod, 'run', orig_run)
+        rows = erd.mysql_query_rows('mysql://readonly@127.0.0.1:3306/testdb', 'SELECT 1')
+        self.assertNotIn('--raw', seen_cmds[0])
+        self.assertEqual(rows, [
+            ('users', 'id', ''),
+            ('comments', 'body', 'has a\ttab and\nnewline'),
+        ])
+
+
 class TestParseMysqlUrl(unittest.TestCase):
     def test_missing_database_name_exits(self):
         with self.assertRaises(SystemExit) as cm:
@@ -647,6 +702,39 @@ class TestGeneration(unittest.TestCase):
         self.assertEqual(data['tables']['users']['comment'], 'User accounts')
         self.assertTrue(data['tables']['users']['indexes'])
 
+    def test_comment_with_script_close_tag_does_not_break_the_page(self):
+        # a table/column comment is free-text from the database — one
+        # containing a literal "</script>" must not be able to prematurely
+        # close the embedded <script> block and blank the whole page
+        tables = db_tables()
+        tables['users']['comment'] = 'nested </script><script>alert(1)</script> payload'
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'out.html'
+            erd._finish(tables, self._args(output=str(out)), 'testdb')
+            html = out.read_text(encoding='utf-8')
+        # the literal closing sequence must never appear unescaped in the
+        # output — only the escaped <\/script> form is safe to embed
+        self.assertNotIn('</script><script>alert', html)
+        # exactly one real </script> (the template's own, closing the block)
+        self.assertEqual(html.count('</script>'), 1)
+        m = re.search(r'^const DATA = (.+);$', html, re.MULTILINE)
+        data = json.loads(m.group(1))
+        self.assertIn('</script>', data['tables']['users']['comment'])  # round-trips intact
+
+    def test_comment_containing_template_placeholder_text_is_not_corrupted(self):
+        # __TITLE__/__MAX_ROWS__ substitution must happen before DATA_JSON
+        # is spliced in, or a comment containing that literal text would
+        # get silently rewritten by the later .replace() calls
+        tables = db_tables()
+        tables['users']['comment'] = 'contains the literal text __TITLE__ and __MAX_ROWS__'
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'out.html'
+            erd._finish(tables, self._args(output=str(out)), 'testdb')
+            html = out.read_text(encoding='utf-8')
+        data = json.loads(re.search(r'^const DATA = (.+);$', html, re.MULTILINE).group(1))
+        self.assertEqual(data['tables']['users']['comment'],
+                         'contains the literal text __TITLE__ and __MAX_ROWS__')
+
     def test_only_exclude(self):
         tables = db_tables()
         with tempfile.TemporaryDirectory() as tmp:
@@ -820,6 +908,81 @@ class TestLoadConfig(unittest.TestCase):
             path.write_text('max_rows: 25\nonly:\n  - a\n  - b\n')
             config = erd.load_config(self._args(config=str(path)))
         self.assertEqual(config, {'max_rows': 25, 'only': ['a', 'b']})
+
+
+class TestConfigTypeValidation(unittest.TestCase):
+    """load_config() checks key names are known; these tests are about the
+    separate, later check that each value has the right *type* — a config
+    typo here previously reached the browser as a silent failure (a string
+    max_rows became a bare JS identifier -> ReferenceError; a string `only`
+    got iterated character-by-character by fnmatch, matching everything)."""
+    def _load(self, obj):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.json'
+            path.write_text(json.dumps(obj))
+            return erd.load_config(SimpleNamespace(config=str(path), no_config=False))
+
+    def test_max_rows_as_string_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._load({'max_rows': 'fifteen'})
+        self.assertIn('max_rows', str(cm.exception))
+
+    def test_max_rows_as_bool_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._load({'max_rows': True})
+
+    def test_max_rows_as_int_accepted(self):
+        self.assertEqual(self._load({'max_rows': 30})['max_rows'], 30)
+
+    def test_only_as_bare_string_rejected(self):
+        # a bare string instead of a list would otherwise be iterated
+        # character-by-character by fnmatch, silently matching every table
+        with self.assertRaises(SystemExit) as cm:
+            self._load({'only': 'user*'})
+        self.assertIn('only', str(cm.exception))
+
+    def test_only_with_non_string_element_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._load({'only': ['user*', 5]})
+
+    def test_exclude_as_bare_string_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._load({'exclude': '*_logs'})
+
+    def test_infer_fk_as_string_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._load({'infer_fk': 'false'})  # truthy as a Python bool otherwise
+        self.assertIn('infer_fk', str(cm.exception))
+
+    def test_infer_fk_as_int_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._load({'infer_fk': 1})
+
+    def test_infer_fk_bool_accepted(self):
+        self.assertEqual(self._load({'infer_fk': True})['infer_fk'], True)
+
+    def test_table_map_as_list_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._load({'table_map': ['Widget=crm_widgets']})
+        self.assertIn('table_map', str(cm.exception))
+
+    def test_table_map_with_non_string_value_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._load({'table_map': {'Widget': 5}})
+
+    def test_relations_as_dict_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._load({'relations': {'table': 'x'}})
+        self.assertIn('relations', str(cm.exception))
+
+    def test_relations_with_non_object_entry_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._load({'relations': ['not-an-object']})
+
+    def test_output_as_non_string_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._load({'output': 123})
+        self.assertIn('output', str(cm.exception))
 
 
 class TestMainConfigIntegration(unittest.TestCase):
