@@ -10,6 +10,7 @@ tests/fixture_django cover the --models overlay parsers.
 """
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -99,6 +100,77 @@ class TestInflector(unittest.TestCase):
         self.assertEqual(erd.class_to_table('User'), 'users')
         self.assertEqual(erd.class_to_table('Person'), 'people')
         self.assertEqual(erd.class_to_table('Admin::AuditLog'), 'audit_logs')
+
+
+class TestParseMysqlUrl(unittest.TestCase):
+    def test_missing_database_name_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.parse_mysql('mysql://readonly@127.0.0.1:3306/')
+        self.assertIn('database name', str(cm.exception))
+
+    def test_non_word_database_name_exits(self):
+        with self.assertRaises(SystemExit):
+            erd.parse_mysql('mysql://readonly@127.0.0.1:3306/db;drop table x')
+
+    def test_valid_url_queries_information_schema_for_db(self):
+        seen = []
+        orig = erd.mysql_query_rows
+        erd.mysql_query_rows = lambda url, sql: (seen.append(sql) or [])
+        try:
+            erd.parse_mysql('mysql://readonly@127.0.0.1:3306/myapp_production')
+        finally:
+            erd.mysql_query_rows = orig
+        self.assertEqual(len(seen), 4)  # tables, columns, FKs, indexes
+        self.assertTrue(all("TABLE_SCHEMA='myapp_production'" in q for q in seen))
+
+    def _parse_with_stubs(self, url, isatty, getpass_return='should-not-be-called'):
+        """Run parse_mysql with mysql_query_rows/isatty/getpass stubbed out.
+        Stub restoration is registered via addCleanup; MYSQL_PWD is left
+        exactly as parse_mysql leaves it so tests can assert on it — callers
+        own their own MYSQL_PWD setup/teardown."""
+        orig_query = erd.mysql_query_rows
+        orig_isatty = sys.stdin.isatty
+        orig_getpass = erd.getpass.getpass
+        self.addCleanup(lambda: setattr(erd, 'mysql_query_rows', orig_query))
+        self.addCleanup(lambda: setattr(sys.stdin, 'isatty', orig_isatty))
+        self.addCleanup(lambda: setattr(erd.getpass, 'getpass', orig_getpass))
+        erd.mysql_query_rows = lambda url, sql: []
+        sys.stdin.isatty = lambda: isatty
+
+        def fake_getpass(prompt=''):
+            self._getpass_prompt = prompt
+            return getpass_return
+        erd.getpass.getpass = fake_getpass
+        erd.parse_mysql(url)
+
+    def test_password_prompt_skipped_when_mysql_pwd_already_set(self):
+        os.environ['MYSQL_PWD'] = 'preset'
+        self.addCleanup(os.environ.pop, 'MYSQL_PWD', None)
+        self._parse_with_stubs('mysql://readonly@127.0.0.1:3306/db', isatty=True)
+        # getpass would have recorded a prompt if called; confirm it wasn't
+        self.assertFalse(hasattr(self, '_getpass_prompt'))
+        self.assertEqual(os.environ['MYSQL_PWD'], 'preset')  # left untouched
+
+    def test_password_prompt_skipped_when_not_interactive(self):
+        os.environ.pop('MYSQL_PWD', None)
+        self._parse_with_stubs('mysql://readonly@127.0.0.1:3306/db', isatty=False)
+        self.assertFalse(hasattr(self, '_getpass_prompt'))
+        self.assertNotIn('MYSQL_PWD', os.environ)
+
+    def test_password_prompted_when_interactive_and_unset(self):
+        os.environ.pop('MYSQL_PWD', None)
+        self.addCleanup(os.environ.pop, 'MYSQL_PWD', None)
+        self._parse_with_stubs('mysql://readonly@127.0.0.1:3306/db',
+                                isatty=True, getpass_return='hunter2')
+        self.assertIn('readonly@127.0.0.1', self._getpass_prompt)
+        self.assertEqual(os.environ.get('MYSQL_PWD'), 'hunter2')
+
+    def test_password_prompt_skipped_when_url_has_explicit_empty_password(self):
+        # mysql://user:@host/db — an explicit empty password should be
+        # respected as "no password", not treated as "unset, please prompt"
+        os.environ.pop('MYSQL_PWD', None)
+        self._parse_with_stubs('mysql://readonly:@127.0.0.1:3306/db', isatty=True)
+        self.assertFalse(hasattr(self, '_getpass_prompt'))
 
 
 class TestMySQLIr(unittest.TestCase):

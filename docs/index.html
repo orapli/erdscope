@@ -103,6 +103,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 #er-svg{width:100%;height:100%;cursor:grab;display:block}
 #er-svg.panning{cursor:grabbing}
 #er-svg.node-drag{cursor:grabbing}
+.snap-guide{stroke:#ef4444;stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;pointer-events:none}
+body.dark .snap-guide{stroke:#f87171}
 
 /* ── toolbar ── */
 #diagram-toolbar{position:absolute;bottom:12px;right:12px;display:flex;gap:4px;align-items:center}
@@ -190,6 +192,18 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .atarget .add-target{color:#64748b;cursor:pointer;text-decoration:none;border-bottom:1px dashed #cbd5e1}
 .atarget .add-target:hover{color:#1d4ed8;border-bottom-color:#1d4ed8}
 
+/* ── multi-select align/distribute panel ── */
+.msel-btns{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.msel-btns .diag-btn{width:100%;font-size:11px;justify-content:flex-start;padding:0 10px}
+.msel-btns .diag-btn:disabled{opacity:.4;cursor:not-allowed}
+.msel-btns .diag-btn:disabled:hover{background:white}
+.msel-list{display:flex;flex-direction:column;gap:3px}
+.msel-chip{display:flex;align-items:center;justify-content:space-between;gap:6px;
+  padding:4px 8px;border-radius:4px;background:#f8fafc}
+.msel-cn{font-family:monospace;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msel-remove{border:none;background:none;color:#94a3b8;cursor:pointer;font-size:11px;flex-shrink:0;padding:0 2px}
+.msel-remove:hover{color:#ef4444}
+
 /* ── toast ── */
 #toast{position:fixed;bottom:56px;left:50%;transform:translateX(-50%);
   background:#1e293b;color:#f8fafc;padding:8px 16px;border-radius:8px;
@@ -271,9 +285,9 @@ body.dark #focus-bar button{background:#0f172a;border-color:#1e40af;color:#93c5f
 body.dark #hidden-bar{background:#450a0a;border-color:#7f1d1d;color:#fca5a5}
 body.dark #canvas-empty{color:#64748b}
 body.dark .detail-name{color:#e2e8f0;border-color:#e2e8f0}
-body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry{background:#1e293b}
+body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry,body.dark .msel-chip{background:#1e293b}
 body.dark .idx-name{color:#e2e8f0}
-body.dark .col-cn,body.dark .aname{color:#e2e8f0}
+body.dark .col-cn,body.dark .aname,body.dark .msel-cn{color:#e2e8f0}
 body.dark .empty-state{color:#64748b}
 body.dark .er-node .n-bg{fill:#1e293b;stroke:#334155}
 body.dark .er-node .n-alt{fill:#263447}
@@ -359,7 +373,8 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <div class="lr" style="color:#94a3b8">✓ = expansion root (checked)　dashed frame = shown by auto-expand</div>
         <div class="lr" style="color:#94a3b8">faint dotted = relation inferred from FK column name</div>
         <div class="lhint">Framework association names (has_many etc.) appear in the right pane<br>
-          Diagram: click = select, double-click = focus, drag = move<br>
+          Diagram: click = select, shift/ctrl-click = multi-select, double-click = focus, drag = move (whole selection if multi-selected)<br>
+          2+ selected: align/distribute buttons appear in the right pane<br>
           List: click = locate in diagram, double-click = focus<br>
           Esc: exit focus</div>
       </div>
@@ -425,7 +440,8 @@ function svgEl(tag, a={}) {
 let excludedTables = new Set(); // unchecked in list = not shown in overview
 let hiddenTables   = new Set(); // fully banned: never shown, even by auto-expand
 let focusedTable   = null;
-let selectedTable  = null;
+let selectedTables = new Set(); // multi-select for align/distribute; single click = size 1
+let selectionAnchor = null;     // last explicit selection target — drives the single-table detail view
 let autoExpand     = false;
 let expandDepth    = 1;  // 1|2|3|0(=unlimited)
 let expandDir      = 'both'; // 'both' | 'out' (depends on) | 'in' (depended by)
@@ -446,6 +462,7 @@ const ringDepth = {}; // tableName -> depth (0=center, 1=ring1, ...)
 let vx=0, vy=0, vs=1;
 let isPanning=false, panSX, panSY, panVX, panVY;
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
+let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
 
 const svg    = document.getElementById('er-svg');
 const erMain = document.getElementById('er-main');
@@ -625,7 +642,13 @@ function calcSize(name) {
 // keeps chains like account – list_accounts – lists adjacent.
 function connectivityOrder(tables){
   const tset=new Set(tables), seen=new Set(), order=[];
-  for(const start of tables){
+  const degree=t=>[...stepNeighbors(t,'both')].filter(n=>tset.has(n)).length;
+  // seed each connected component from its highest-degree table (ties broken
+  // alphabetically), not just the first table in whatever order arrived —
+  // otherwise a hub can land far (row-wise) from its own direct neighbors,
+  // forcing long edges to cross many obstacle rows the router can't detour around
+  const starts=tables.slice().sort((a,b)=>(degree(b)-degree(a))||a.localeCompare(b));
+  for(const start of starts){
     if(seen.has(start)) continue;
     const stack=[start];
     while(stack.length){
@@ -832,8 +855,10 @@ function layoutAll(tables, edges) {
       runForce(tables, edges, Math.max(60, Math.min(220, 280-n)), K, attrK);
       return;
     }
-    // overview: compact aspect-fitted grid — readable at fit zoom,
-    // no force sim (it inflates the layout into an unreadable circle)
+    // overview: rectangle-native shelf-packed rows (connectivity order +
+    // barycenter crossing reduction) — fills the viewport without a
+    // circular layout's corner waste. No force sim (it inflates the
+    // layout into an unreadable circle).
     gridLayout(tables);
     return;
   }
@@ -1006,7 +1031,7 @@ function drawNode(parent, name) {
   const isRoot = isOverviewAuto && !excludedTables.has(name);
   const isAuto = isOverviewAuto && excludedTables.has(name);
   const g = svgEl('g', {
-    class: 'er-node' + (name===selectedTable?' sel':'') + (name===focusedTable?' center':'') + (isAuto?' auto':'') + ringCls,
+    class: 'er-node' + (selectedTables.has(name)?' sel':'') + (name===focusedTable?' center':'') + (isAuto?' auto':'') + ringCls,
     transform: `translate(${lx},${ty})`,
     'data-name': name,
   });
@@ -1129,6 +1154,14 @@ function drawNode(parent, name) {
   g.addEventListener('mousedown', e => {
     e.stopPropagation();
     if(e.button!==0) return;
+    // clicking an unselected node with no modifier replaces the selection
+    // immediately (Figma convention) so the drag below acts on just it
+    if(!(e.shiftKey||e.ctrlKey||e.metaKey) && !selectedTables.has(name)) selectOnly(name);
+    // drag the whole selection together when grabbing a member of it;
+    // otherwise (e.g. shift-mousedown on an unselected node) drag just this one
+    dragSet = selectedTables.has(name) ? new Set(selectedTables) : new Set([name]);
+    dragGroupStart = {};
+    dragSet.forEach(t => { dragGroupStart[t] = {...(nodePos[t]||{x:0,y:0})}; });
     const pt=svgPt(e.clientX,e.clientY);
     isDragging=true; dragMoved=false; dragName=name;
     dragCX=e.clientX; dragCY=e.clientY;
@@ -1138,7 +1171,8 @@ function drawNode(parent, name) {
   g.addEventListener('click', e => {
     e.stopPropagation();
     if(dragMoved){ dragMoved=false; return; } // end of a drag, not a click
-    selectOnly(name);
+    if(e.shiftKey||e.ctrlKey||e.metaKey) toggleSelect(name);
+    else selectOnly(name);
   });
   g.addEventListener('dblclick', e => {
     e.stopPropagation();
@@ -1269,24 +1303,41 @@ function borderPt(cx,cy,w,h,tx,ty){
 }
 
 // ── Select / focus ────────────────────────────────────────────────────────
-// selectOnly: highlight + details, no relayout (diagram click). null clears.
+// selectOnly: highlight + details, no relayout (diagram click / list click). null clears.
 function selectOnly(name){
-  selectedTable=name||null;
+  selectedTables=new Set(name?[name]:[]);
+  selectionAnchor=name||null;
+  refreshSelectionUI();
+}
+
+// toggleSelect: shift/ctrl-click — add or remove one table from the selection
+function toggleSelect(name){
+  if(selectedTables.has(name)){
+    selectedTables.delete(name);
+    if(selectionAnchor===name) selectionAnchor=[...selectedTables].pop()??null;
+  } else {
+    selectedTables.add(name);
+    selectionAnchor=name;
+  }
+  refreshSelectionUI();
+}
+
+function refreshSelectionUI(){
   document.querySelectorAll('.er-node').forEach(el =>
-    el.classList.toggle('sel', !!name && el.getAttribute('data-name')===name));
+    el.classList.toggle('sel', selectedTables.has(el.getAttribute('data-name'))));
   updateEdgeHighlight();
   document.querySelectorAll('#table-list .table-item').forEach(el=>{
     const nm=el.querySelector('.tname')?.textContent;
-    el.classList.toggle('selected', !!name && nm===name && !el.classList.contains('focused'));
+    el.classList.toggle('selected', selectedTables.has(nm) && !el.classList.contains('focused'));
   });
-  showDetails(name);
+  showDetails();
 }
 
-// color the edges (and their end markers) that touch the selected table
+// color the edges (and their end markers) that touch any selected table
 function updateEdgeHighlight(){
   document.querySelectorAll('.er-edge').forEach(el=>{
-    const on = !!selectedTable &&
-      (el.getAttribute('data-source')===selectedTable || el.getAttribute('data-target')===selectedTable);
+    const on = selectedTables.size>0 &&
+      (selectedTables.has(el.getAttribute('data-source')) || selectedTables.has(el.getAttribute('data-target')));
     el.classList.toggle('hl', on);
     el.querySelectorAll('path').forEach(p=>{
       ['marker-start','marker-end'].forEach(attr=>{
@@ -1337,23 +1388,23 @@ function focusTable(name) {
     return;
   }
   const wasInFocus=!!focusedTable;
-  focusedTable=name; selectedTable=name;
+  focusedTable=name; selectedTables=new Set([name]); selectionAnchor=name;
   manualExpanded.clear(); // ⊕ deep-dives reset when the focus target changes
   if(!wasInFocus) enterFocusMode();
   else switchFocusTable();
   refreshView();
-  showDetails(name); renderTableList();
+  showDetails(); renderTableList();
   updateDepthCtrl(); updateFocusUI();
   if(!wasInFocus) showToast(`Focused: ${name} — double-click or Esc to exit`);
 }
 
 function clearFocus(){
   if(!focusedTable) return; // no-op outside focus — don't destroy the overview layout
-  focusedTable=null; selectedTable=null;
+  focusedTable=null; selectedTables=new Set(); selectionAnchor=null;
   manualExpanded.clear();
   exitFocusMode();
   refreshView();
-  showDetails(null); renderTableList();
+  showDetails(); renderTableList();
   updateDepthCtrl(); updateFocusUI();
   showToast('Focus cleared — back to the overview');
 }
@@ -1380,7 +1431,7 @@ function renderTableList(){
       const item=document.createElement('div');
       item.className='table-item'
         +(focusedTable===name?' focused':'')
-        +(selectedTable===name&&focusedTable!==name?' selected':'')
+        +(selectedTables.has(name)&&focusedTable!==name?' selected':'')
         +(isHidden?' hidden':'')
         +(autoShown?' inview':'');
       const lbl=document.createElement('label');
@@ -1420,12 +1471,12 @@ function renderTableList(){
         if(isHidden){ hiddenTables.delete(name); }
         else {
           hiddenTables.add(name);
-          if(focusedTable===name){ focusedTable=null; selectedTable=null; exitFocusMode(); }
+          if(focusedTable===name){ focusedTable=null; selectedTables=new Set(); selectionAnchor=null; exitFocusMode(); }
         }
         saveState();
         if(focusedTable) switchFocusTable(); // re-run hub-spoke with new table set
         refreshView(); renderTableList(); updateHiddenBar();
-        showDetails(selectedTable);
+        showDetails();
       });
       lbl.appendChild(hb);
       item.appendChild(lbl);
@@ -1454,12 +1505,15 @@ document.getElementById('hidden-clear').addEventListener('click', () => {
   hiddenTables.clear(); saveState();
   if(focusedTable) switchFocusTable(); // re-run hub-spoke with new table set
   refreshView(); renderTableList(); updateHiddenBar();
-  showDetails(selectedTable);
+  showDetails();
 });
 
 // ── Right pane ─────────────────────────────────────────────────────────────
-function showDetails(name){
+function showDetails(){
   const el=document.getElementById('table-details');
+  if(selectedTables.size>=2){ renderMultiSelectDetails(el); return; }
+  const name = selectionAnchor && selectedTables.has(selectionAnchor)
+    ? selectionAnchor : [...selectedTables][0];
   if(!name||!DATA.tables[name]){el.innerHTML='<div class="empty-state">Click a table<br>to see its details</div>';return;}
   const t=DATA.tables[name];
   const cols=t.columns||[], assocs=t.associations||[];
@@ -1534,6 +1588,98 @@ function showDetails(name){
   el.querySelectorAll('[data-add]').forEach(a=>a.addEventListener('click',()=>addTables([a.dataset.add])));
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── Multi-select: align / distribute panel ─────────────────────────────────
+function renderMultiSelectDetails(el){
+  const names=[...selectedTables].filter(t=>DATA.tables[t]).sort();
+  const canAlign=selectedPositioned().length>=2;
+  const canDist=selectedPositioned().length>=3;
+  let h=`<div class="detail-name">${names.length} tables selected</div>`;
+  h+='<div class="sec-title">Align</div><div class="msel-btns">'
+    +`<button class="diag-btn" data-align="left" ${canAlign?'':'disabled'} title="Align left edges">⇤ Left</button>`
+    +`<button class="diag-btn" data-align="top" ${canAlign?'':'disabled'} title="Align top edges">⇡ Top</button>`
+    +`<button class="diag-btn" data-align="hcenter" ${canAlign?'':'disabled'} title="Align horizontal centers">↔ Center</button>`
+    +`<button class="diag-btn" data-align="vcenter" ${canAlign?'':'disabled'} title="Align vertical centers">↕ Middle</button>`
+    +'</div>';
+  h+='<div class="sec-title">Distribute</div><div class="msel-btns">'
+    +`<button class="diag-btn" data-dist="h" ${canDist?'':'disabled'} title="Distribute horizontally — equalize the gaps">⇔ Horiz.</button>`
+    +`<button class="diag-btn" data-dist="v" ${canDist?'':'disabled'} title="Distribute vertically — equalize the gaps">⇕ Vert.</button>`
+    +'</div>';
+  h+='<div class="sec-title">Selected</div><div class="msel-list">';
+  names.forEach(t=>{
+    h+=`<div class="msel-chip"><span class="msel-cn">${esc(t)}</span>`
+      +`<button class="msel-remove" data-remove="${esc(t)}" title="Remove from selection">✕</button></div>`;
+  });
+  h+='</div>';
+  el.innerHTML=h;
+  el.querySelectorAll('[data-align]').forEach(b=>b.addEventListener('click',()=>alignSelection(b.dataset.align)));
+  el.querySelectorAll('[data-dist]').forEach(b=>b.addEventListener('click',()=>distributeSelection(b.dataset.dist)));
+  el.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>{
+    const t=b.dataset.remove;
+    selectedTables.delete(t);
+    if(selectionAnchor===t) selectionAnchor=[...selectedTables].pop()??null;
+    refreshSelectionUI();
+  }));
+}
+
+// members of the current selection that are actually on the canvas (have a laid-out position)
+function selectedPositioned(){
+  return [...selectedTables].filter(t=>nodePos[t]&&(nodeSize[t]||calcSize(t)));
+}
+
+// redraw from the mutated nodePos without relaying out or moving the viewport
+// (same "just redraw" spirit as the drag-mouseup path — no auto-tidy relayout)
+function afterManualReposition(){
+  renderDiagram();
+  updateEdgeHighlight();
+}
+
+function alignSelection(mode){
+  const ts=selectedPositioned();
+  if(ts.length<2) return;
+  const boxes=ts.map(t=>{
+    const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+    return {t, x0:p.x-s.w/2, y0:p.y-s.h/2, x1:p.x+s.w/2, y1:p.y+s.h/2};
+  });
+  if(mode==='left'){
+    const x0=Math.min(...boxes.map(b=>b.x0));
+    boxes.forEach(b=>{ nodePos[b.t].x=x0+(b.x1-b.x0)/2; });
+  } else if(mode==='top'){
+    const y0=Math.min(...boxes.map(b=>b.y0));
+    boxes.forEach(b=>{ nodePos[b.t].y=y0+(b.y1-b.y0)/2; });
+  } else if(mode==='hcenter'){
+    const cx=(Math.min(...boxes.map(b=>b.x0))+Math.max(...boxes.map(b=>b.x1)))/2;
+    boxes.forEach(b=>{ nodePos[b.t].x=cx; });
+  } else if(mode==='vcenter'){
+    const cy=(Math.min(...boxes.map(b=>b.y0))+Math.max(...boxes.map(b=>b.y1)))/2;
+    boxes.forEach(b=>{ nodePos[b.t].y=cy; });
+  }
+  afterManualReposition();
+  showToast(`Aligned ${ts.length} tables`);
+}
+
+// keeps the two outermost members fixed, equalizes the edge-to-edge gaps
+// between the rest (equal centers would look wrong given varying node sizes)
+function distributeSelection(axis){
+  const ts=selectedPositioned();
+  if(ts.length<3) return;
+  const key=axis==='h'?'x':'y', dim=axis==='h'?'w':'h';
+  const items=ts.map(t=>{
+    const s=nodeSize[t]||calcSize(t);
+    return {t, half:s[dim]/2, c:nodePos[t][key]};
+  }).sort((a,b)=>a.c-b.c);
+  const first=items[0], last=items[items.length-1];
+  const totalSpan=(last.c+last.half)-(first.c-first.half);
+  const totalSize=items.reduce((s,it)=>s+it.half*2,0);
+  const gap=Math.max(0,(totalSpan-totalSize))/(items.length-1);
+  let edge=first.c-first.half;
+  items.forEach(it=>{
+    nodePos[it.t][key]=edge+it.half;
+    edge+=it.half*2+gap;
+  });
+  afterManualReposition();
+  showToast(`Distributed ${ts.length} tables`);
+}
 
 // ── Toast ─────────────────────────────────────────────────────────────────
 let toastTimer;
@@ -1711,6 +1857,56 @@ function downloadPNG(url){
 }
 
 // ── Pan / zoom ─────────────────────────────────────────────────────────────
+// ── Drag snapping ──────────────────────────────────────────────────────────
+// While dragging, the node's left/center/right (and top/center/bottom) snap
+// to the matching lines of other visible nodes, with a Figma-style guide
+// line at the snapped coordinate. Threshold is in screen px so zoom doesn't
+// change the feel. Hold Alt to disable.
+const SNAP_PX=6;
+function snapToNodes(name, x, y, guides, exclude){
+  exclude = exclude || new Set([name]);
+  const sz=nodeSize[name]||{w:160,h:100};
+  const th=SNAP_PX/vs;
+  const myX=[x-sz.w/2, x, x+sz.w/2], myY=[y-sz.h/2, y, y+sz.h/2];
+  let dx=th, dy=th, bx=null, by=null, gx=0, gy=0, tx=null, ty=null;
+  getDisplayTables().forEach(t=>{
+    if(exclude.has(t)) return;
+    const p=nodePos[t]; if(!p) return;
+    const s=nodeSize[t]||{w:160,h:100};
+    const cxs=[p.x-s.w/2, p.x, p.x+s.w/2], cys=[p.y-s.h/2, p.y, p.y+s.h/2];
+    for(const c of cxs) for(const m of myX){
+      const d=Math.abs(c-m);
+      if(d<dx){ dx=d; bx=x+(c-m); gx=c; tx=t; }
+    }
+    for(const c of cys) for(const m of myY){
+      const d=Math.abs(c-m);
+      if(d<dy){ dy=d; by=y+(c-m); gy=c; ty=t; }
+    }
+  });
+  if(bx!==null) guides.push({dir:'v', at:gx, a:name, b:tx});
+  if(by!==null) guides.push({dir:'h', at:gy, a:name, b:ty});
+  return {x:bx??x, y:by??y};
+}
+
+function drawSnapGuides(guides){
+  let gl=document.getElementById('guide-layer');
+  if(!guides.length){ if(gl) gl.innerHTML=''; return; }
+  if(!gl){ gl=svgEl('g',{id:'guide-layer'}); erMain.appendChild(gl); }
+  gl.innerHTML='';
+  const box=n=>{
+    const p=nodePos[n], s=nodeSize[n]||{w:160,h:100};
+    return p ? {x0:p.x-s.w/2, y0:p.y-s.h/2, x1:p.x+s.w/2, y1:p.y+s.h/2} : null;
+  };
+  guides.forEach(g=>{
+    const A=box(g.a), B=box(g.b);
+    if(!A||!B) return;
+    const at=g.dir==='v'
+      ? {x1:g.at, x2:g.at, y1:Math.min(A.y0,B.y0)-20, y2:Math.max(A.y1,B.y1)+20}
+      : {y1:g.at, y2:g.at, x1:Math.min(A.x0,B.x0)-20, x2:Math.max(A.x1,B.x1)+20};
+    gl.appendChild(svgEl('line', {...at, class:'snap-guide'}));
+  });
+}
+
 svg.addEventListener('mousedown', e=>{
   if(e.button!==0||isDragging) return;
   isPanning=true; panSX=e.clientX; panSY=e.clientY; panVX=vx; panVY=vy;
@@ -1721,11 +1917,26 @@ window.addEventListener('mousemove', e=>{
     // sub-3px jitter is a click, not a drag
     if(!dragMoved && Math.hypot(e.clientX-dragCX, e.clientY-dragCY) < 3) return;
     const pt=svgPt(e.clientX,e.clientY);
-    const nx=pt.x-dragOX, ny=pt.y-dragOY;
-    nodePos[dragName]={x:nx,y:ny}; dragMoved=true;
-    document.querySelectorAll(`.er-node[data-name="${CSS.escape(dragName)}"]`).forEach(el=>{
-      const sz=nodeSize[dragName]||{w:160,h:100};
-      el.setAttribute('transform',`translate(${nx-sz.w/2},${ny-sz.h/2})`);
+    let nx=pt.x-dragOX, ny=pt.y-dragOY;
+    const guides=[];
+    if(!e.altKey){
+      const sp=snapToNodes(dragName, nx, ny, guides, dragSet);
+      nx=sp.x; ny=sp.y;
+    }
+    drawSnapGuides(guides);
+    const start=dragGroupStart[dragName]||{x:nx,y:ny};
+    const ddx=nx-start.x, ddy=ny-start.y;
+    dragSet.forEach(t=>{
+      const s0=dragGroupStart[t]; if(!s0) return;
+      nodePos[t]={x:s0.x+ddx, y:s0.y+ddy};
+    });
+    dragMoved=true;
+    dragSet.forEach(t=>{
+      document.querySelectorAll(`.er-node[data-name="${CSS.escape(t)}"]`).forEach(el=>{
+        const sz=nodeSize[t]||{w:160,h:100};
+        const p=nodePos[t];
+        el.setAttribute('transform',`translate(${p.x-sz.w/2},${p.y-sz.h/2})`);
+      });
     });
     const eL=document.getElementById('edge-layer');
     if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
@@ -1738,11 +1949,13 @@ window.addEventListener('mousemove', e=>{
 window.addEventListener('mouseup', e=>{
   if(isDragging){
     isDragging=false; dragName=null;
+    dragSet=new Set(); dragGroupStart={};
     // dragMoved stays set: the click event fires after mouseup and must see it.
     // If no click follows (released outside the node/window), clear it on the
     // next task so it can't swallow a later legitimate click.
     setTimeout(()=>{ dragMoved=false; }, 0);
     svg.classList.remove('node-drag');
+    drawSnapGuides([]);
     const eL=document.getElementById('edge-layer');
     if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
     return;
@@ -1776,7 +1989,7 @@ window.addEventListener('keydown', e=>{
   const sb=document.getElementById('search');
   if(document.activeElement===sb && sb.value){ sb.value=''; renderTableList(); return; }
   if(focusedTable){ clearFocus(); return; }
-  if(selectedTable) selectOnly(null);
+  if(selectedTables.size) selectOnly(null);
 });
 
 // ── Toolbar buttons ─────────────────────────────────────────────────────────
@@ -1801,7 +2014,7 @@ document.getElementById('btn-reset')   .addEventListener('click',()=>{
   const ts=getDisplayTables();
   ts.forEach(t=>delete nodePos[t]);
   Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
-  // overview: compact aspect-fitted grid (no force sim) = largest nodes on screen;
+  // overview: shelf-packed rows via gridLayout;
   // focus view: layoutAll re-runs the (elliptical) hub-spoke
   if(!focusedTable){
     ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
@@ -1832,8 +2045,8 @@ document.getElementById('btn-all').addEventListener('click',()=>{
 document.getElementById('btn-none').addEventListener('click',()=>{
   allTables().forEach(t=>excludedTables.add(t));
   if(focusedTable){ focusedTable=null; exitFocusMode(); updateDepthCtrl(); updateFocusUI(); }
-  selectedTable=null;
-  saveState(); refreshView(); renderTableList(); showDetails(null);
+  selectedTables=new Set(); selectionAnchor=null;
+  saveState(); refreshView(); renderTableList(); showDetails();
 });
 document.getElementById('btn-unfocus').addEventListener('click',clearFocus);
 document.getElementById('focus-bar-close').addEventListener('click',clearFocus);
@@ -1909,9 +2122,14 @@ document.querySelectorAll('#colmode-group .diag-btn').forEach(btn=>{
     colMode=m; colOverride={}; // global change resets per-table overrides
     saveState(); updateColModeUI();
     Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
-    Object.keys(nodePos).forEach(k=>delete nodePos[k]);
-    Object.keys(basePos).forEach(k=>delete basePos[k]);
-    Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
+    // Auto-tidy ON: node sizes change drastically, so re-layout.
+    // OFF: nodes resize in place — the display set didn't change, so
+    // positions (incl. manual arrangement) are kept.
+    if(autoLayout){
+      Object.keys(nodePos).forEach(k=>delete nodePos[k]);
+      Object.keys(basePos).forEach(k=>delete basePos[k]);
+      Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
+    }
     refreshView();
   });
 });
@@ -1921,9 +2139,12 @@ document.getElementById('max-rows').addEventListener('change', e=>{
   maxRows=parseInt(e.target.value,10)||15;
   localStorage.setItem(LS('mr'), String(maxRows));
   Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
-  // node heights change drastically — re-layout to keep the no-overlap guarantee
-  getDisplayTables().forEach(t=>delete nodePos[t]);
-  if(focusedTable) switchFocusTable();
+  // Auto-tidy ON: node heights change drastically — re-layout to keep the
+  // no-overlap guarantee. OFF: resize in place, keep positions.
+  if(autoLayout){
+    getDisplayTables().forEach(t=>delete nodePos[t]);
+    if(focusedTable) switchFocusTable();
+  }
   refreshView();
 });
 
@@ -1994,7 +2215,7 @@ function applyView(v){
   excludedTables=new Set(v.excl||[]); hiddenTables=new Set(v.hid||[]);
   autoExpand=!!v.ae; expandDepth=v.dep??1; expandDir=v.dir||'both';
   colMode=v.cm??0; colOverride={}; manualExpanded.clear();
-  if(focusedTable){ focusedTable=null; selectedTable=null; exitFocusMode(); updateFocusUI(); }
+  if(focusedTable){ focusedTable=null; selectedTables=new Set(); selectionAnchor=null; exitFocusMode(); updateFocusUI(); }
   Object.keys(nodePos).forEach(k=>delete nodePos[k]);
   Object.keys(basePos).forEach(k=>delete basePos[k]);
   Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
@@ -2002,7 +2223,7 @@ function applyView(v){
   Object.entries(v.pos||{}).forEach(([t,p])=>{ if(DATA.tables[t]) nodePos[t]={...p}; });
   saveState(); syncControlsUI();
   renderDiagram(); requestAnimationFrame(fitView);
-  renderTableList(); updateHiddenBar(); updateDepthCtrl(); showDetails(null);
+  renderTableList(); updateHiddenBar(); updateDepthCtrl(); showDetails();
 }
 
 // reflect state variables into the topbar / toolbar controls

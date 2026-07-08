@@ -40,8 +40,9 @@ python3 erd.py mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html
 ```
 
 Connections use PyMySQL when installed and otherwise fall back to the `mysql` CLI —
-the tool itself has no dependencies. Prefer `MYSQL_PWD` or `~/.my.cnf` over putting
-the password in the URL, and use a read-only account.
+the tool itself has no dependencies. Use a read-only account, and leave the password
+out of the URL — if it's not in `MYSQL_PWD` either, you'll be prompted for it
+(hidden input, never touches argv or shell history).
 
 ### Options
 
@@ -68,7 +69,9 @@ the password in the URL, and use a read-only account.
   per-table deep-dive, two-level hiding, table *and column* search, named views,
   share links (state embedded in the URL)
 - **Readable layouts** — viewport-aware packing with crossing reduction, elliptical
-  hub-and-spoke focus view, edges detour around nodes, join-table chains, auto-tidy
+  hub-and-spoke focus view, edges detour around nodes, join-table chains, auto-tidy,
+  drag-to-snap with guide lines, and multi-select (shift/ctrl-click) with
+  align-left/top/center/middle and distribute-horizontal/vertical
 - **Exports** — PNG (clipboard, 2x), SVG, Mermaid `erDiagram`, and the Excel workbook
 - **Extras** — dark mode, print stylesheet, resizable/collapsible panes
 
@@ -81,6 +84,15 @@ python3 -m unittest discover -s tests -v
 The IR builders and the Excel writer are covered by pure unit tests; the overlay
 parsers have minimal fixtures under `tests/fixture_*`. No database is required to
 run the tests.
+
+`tests/test_e2e.py` drives the generated HTML's client-side JS (grid layout,
+multi-select align/distribute, drag-to-snap, Auto-tidy) in a real headless browser. It's optional and skips
+itself if not set up:
+
+```bash
+pip install playwright && playwright install chromium
+python3 -m unittest tests.test_e2e -v
+```
 
 ## Extending
 
