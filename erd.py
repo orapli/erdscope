@@ -62,14 +62,22 @@ def mysql_query_rows(url, sql):
     except ImportError:
         pymysql = None
     if pymysql:
-        conn = pymysql.connect(host=host, port=port, user=u.username,
-                               password=u.password or os.environ.get('MYSQL_PWD', ''),
-                               database=db, charset='utf8mb4')
+        try:
+            conn = pymysql.connect(host=host, port=port, user=u.username,
+                                   password=u.password or os.environ.get('MYSQL_PWD', ''),
+                                   database=db, charset='utf8mb4')
+        except pymysql.err.MySQLError as e:
+            # wrong host/password/db is the single most common daily failure
+            # here — a raw pymysql traceback is far less useful than the
+            # clean one-liner the mysql-CLI path below already gives
+            sys.exit(f'Error: could not connect to MySQL at {host}:{port}: {e}')
         try:
             with conn.cursor() as cur:
                 cur.execute(sql)
                 return [tuple('' if v is None else str(v) for v in r)
                         for r in cur.fetchall()]
+        except pymysql.err.MySQLError as e:
+            sys.exit(f'Error: mysql query failed: {e}')
         finally:
             conn.close()
     # No --raw: table/column comments are free-text and commonly contain
@@ -1346,6 +1354,23 @@ const DATA = __DATA_JSON__;
 // LocalStorage keys are namespaced per project so multiple ERD pages
 // served from the same origin don't share table selections
 const LS = k => `erd:${document.title}:${k}`;
+// localStorage.setItem throws in Safari private browsing and when the quota
+// is exceeded — uncaught, that aborts whatever click/drag handler called it
+// partway through, silently. Persisting view state is a nice-to-have, not
+// something worth breaking the interaction over, so swallow the failure
+// (once per session, so a full quota doesn't spam the console on every move).
+let lsWriteFailed = false;
+function setLS(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    if (!lsWriteFailed) {
+      lsWriteFailed = true;
+      console.warn('localStorage write failed (private browsing or quota exceeded) '
+        + '— view state (selection, layout, panel sizes, ...) will not persist across reloads', e);
+    }
+  }
+}
 
 // ── SVG helper ──────────────────────────────────────────────────────────
 const NS = 'http://www.w3.org/2000/svg';
@@ -1408,15 +1433,15 @@ const erMain = document.getElementById('er-main');
 
 // ── LocalStorage ──────────────────────────────────────────────────────────
 function saveState() {
-  localStorage.setItem(LS('excl'), JSON.stringify([...excludedTables]));
-  localStorage.setItem(LS('hid'),  JSON.stringify([...hiddenTables]));
-  localStorage.setItem(LS('ae'),   String(autoExpand));
-  localStorage.setItem(LS('dep'),  String(expandDepth));
-  localStorage.setItem(LS('cm'),   String(colMode));
-  localStorage.setItem(LS('cov'),  JSON.stringify(colOverride));
-  localStorage.setItem(LS('lbl'),  String(showEdgeLabels));
-  localStorage.setItem(LS('dir'),  expandDir);
-  localStorage.setItem(LS('al'),   String(autoLayout));
+  setLS(LS('excl'), JSON.stringify([...excludedTables]));
+  setLS(LS('hid'),  JSON.stringify([...hiddenTables]));
+  setLS(LS('ae'),   String(autoExpand));
+  setLS(LS('dep'),  String(expandDepth));
+  setLS(LS('cm'),   String(colMode));
+  setLS(LS('cov'),  JSON.stringify(colOverride));
+  setLS(LS('lbl'),  String(showEdgeLabels));
+  setLS(LS('dir'),  expandDir);
+  setLS(LS('al'),   String(autoLayout));
 }
 function loadState() {
   try { excludedTables = new Set(JSON.parse(localStorage.getItem(LS('excl')) || '[]')); } catch{}
@@ -2638,11 +2663,11 @@ function renderTableList(){
   const prevScroll = list.scrollTop;
   list.innerHTML='';
   const inView = (focusedTable||autoExpand) ? new Set(getDisplayTables()) : null;
-  const colHit = t => query && !t.includes(query)
+  const colHit = t => query && !t.toLowerCase().includes(query)
     ? (DATA.tables[t]?.columns||[]).find(c=>c.name.toLowerCase().includes(query))?.name
     : null;
   allTables()
-    .filter(t => !query || t.includes(query)
+    .filter(t => !query || t.toLowerCase().includes(query)
       || (DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(query)))
     .forEach(name => {
       const t=DATA.tables[name];
@@ -3331,7 +3356,7 @@ document.getElementById('btn-export-mmd').addEventListener('click', exportToMerm
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);
-  localStorage.setItem(LS('dk'), String(on));
+  setLS(LS('dk'), String(on));
 });
 document.getElementById('btn-autolayout').addEventListener('click',()=>{
   autoLayout=!autoLayout;
@@ -3441,7 +3466,7 @@ document.querySelectorAll('#colmode-group .diag-btn').forEach(btn=>{
 // Max visible rows per table
 document.getElementById('max-rows').addEventListener('change', e=>{
   maxRows=parseInt(e.target.value,10)||15;
-  localStorage.setItem(LS('mr'), String(maxRows));
+  setLS(LS('mr'), String(maxRows));
   Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
   // Auto-tidy ON: node heights change drastically — re-layout to keep the
   // no-overlap guarantee. OFF: resize in place, keep positions.
@@ -3472,7 +3497,7 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
   function setCollapsed(pane, tabId, key, val){
     pane.classList.toggle('collapsed', val);
     document.getElementById(tabId).classList.toggle('visible', val);
-    localStorage.setItem(key, String(val));
+    setLS(key, String(val));
   }
   setCollapsed(lp,'expand-left',LS('lc'),localStorage.getItem(LS('lc'))==='true');
   setCollapsed(rp,'expand-right',LS('rc'),localStorage.getItem(LS('rc'))==='true');
@@ -3498,7 +3523,7 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
     window.addEventListener('mouseup', ()=>{
       if(!resizing) return;
       resizing=false; div.classList.remove('dragging');
-      localStorage.setItem(key, String(Math.round(pane.getBoundingClientRect().width)));
+      setLS(key, String(Math.round(pane.getBoundingClientRect().width)));
     });
   }
   setupDivider('div-l', lp, LS('lw'),  1);
@@ -3507,7 +3532,7 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
 
 // ── Named views (save/restore the current view under a name) ─────────────
 function loadViews(){ try{ return JSON.parse(localStorage.getItem(LS('views'))||'{}')||{}; }catch{ return {}; } }
-function persistViews(v){ localStorage.setItem(LS('views'), JSON.stringify(v)); }
+function persistViews(v){ setLS(LS('views'), JSON.stringify(v)); }
 
 function snapshotView(){
   const pos={};
@@ -3589,7 +3614,7 @@ document.getElementById('view-share').addEventListener('click',()=>{
   const setLg=v=>{
     lg.classList.toggle('collapsed', v);
     document.getElementById('legend-toggle').textContent=v?'▸':'▾';
-    localStorage.setItem(LS('lg'), String(v));
+    setLS(LS('lg'), String(v));
   };
   setLg(localStorage.getItem(LS('lg'))==='true');
   document.getElementById('legend-head').addEventListener('click',()=>setLg(!lg.classList.contains('collapsed')));
@@ -3604,7 +3629,7 @@ document.getElementById('search').addEventListener('keydown', e=>{
   if(e.key!=='Enter') return;
   const q=e.target.value.toLowerCase();
   if(!q) return;
-  const m=allTables().find(t=>t.startsWith(q)) || allTables().find(t=>t.includes(q))
+  const m=allTables().find(t=>t.toLowerCase().startsWith(q)) || allTables().find(t=>t.toLowerCase().includes(q))
        || allTables().find(t=>(DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(q)));
   if(!m) return;
   if(!hiddenTables.has(m) && !getDisplayTables().includes(m)) addTables([m]); // add hidden targets before locating

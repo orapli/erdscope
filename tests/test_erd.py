@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from pathlib import Path
@@ -100,6 +101,45 @@ class TestInflector(unittest.TestCase):
         self.assertEqual(erd.class_to_table('User'), 'users')
         self.assertEqual(erd.class_to_table('Person'), 'people')
         self.assertEqual(erd.class_to_table('Admin::AuditLog'), 'audit_logs')
+
+
+class TestPyMysqlErrorHandling(unittest.TestCase):
+    """mysql_query_rows prefers PyMySQL when it's importable. A connection
+    or query failure there must exit cleanly (sys.exit with a one-line
+    message) rather than let a raw pymysql traceback through — the CLI
+    fallback path already had this, PyMySQL's didn't."""
+    def setUp(self):
+        class FakeMySQLError(Exception):
+            pass
+        class FakeErrModule:
+            MySQLError = FakeMySQLError
+        self.FakeMySQLError = FakeMySQLError
+        self.fake_pymysql = types.SimpleNamespace(err=FakeErrModule(), connect=None)
+        self.addCleanup(sys.modules.pop, 'pymysql', None)
+        sys.modules['pymysql'] = self.fake_pymysql
+
+    def test_connect_failure_exits_cleanly(self):
+        def fail_connect(**kw):
+            raise self.FakeMySQLError("Access denied for user 'x'@'host'")
+        self.fake_pymysql.connect = fail_connect
+        with self.assertRaises(SystemExit) as cm:
+            erd.mysql_query_rows('mysql://x@127.0.0.1:3306/db', 'SELECT 1')
+        self.assertIn('Access denied', str(cm.exception))
+
+    def test_query_failure_exits_cleanly(self):
+        class FakeCursor:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, sql):
+                raise self.outer.FakeMySQLError('unknown table')
+        FakeCursor.outer = self
+        class FakeConn:
+            def cursor(self): return FakeCursor()
+            def close(self): pass
+        self.fake_pymysql.connect = lambda **kw: FakeConn()
+        with self.assertRaises(SystemExit) as cm:
+            erd.mysql_query_rows('mysql://x@127.0.0.1:3306/db', 'SELECT 1')
+        self.assertIn('unknown table', str(cm.exception))
 
 
 class TestUnescapeMysqlField(unittest.TestCase):

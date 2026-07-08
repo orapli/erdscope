@@ -493,5 +493,115 @@ class TestIncrementalAdditionPlacement(unittest.TestCase):
             page.close()
 
 
+# Regression fixture for search case-sensitivity: a CamelCase table name (as
+# Prisma models commonly are without an @@map override) that a lowercase
+# search query must still be able to find.
+SEARCH_TABLE_ROWS = [('CamelCaseWidget', ''), ('plain_table', '')]
+SEARCH_COL_ROWS = [
+    _col('CamelCaseWidget', 'id', key='PRI'),
+    _col('plain_table', 'id', key='PRI'),
+]
+
+
+def _build_search_html():
+    tables = erd.mysql_ir(SEARCH_TABLE_ROWS, SEARCH_COL_ROWS, [], [])
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'search.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_search_fixture')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestSearchCaseInsensitivity(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_search_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def test_lowercase_query_finds_camelcase_table_in_list(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.CamelCaseWidget !== "undefined"')
+            page.fill('#search', 'camelcase')
+            visible = page.evaluate('''() =>
+                [...document.querySelectorAll('.table-item .tname')].map(e => e.textContent)''')
+            self.assertEqual(visible, ['CamelCaseWidget'])
+        finally:
+            page.close()
+
+    def test_lowercase_query_and_enter_locates_camelcase_table(self):
+        # locateTable() (only reached when the Enter handler's match logic
+        # actually resolves the query to a table) selects it — a stronger
+        # signal than just "still displayed", since both fixture tables are
+        # displayed by default regardless of whether the match worked
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.CamelCaseWidget !== "undefined"')
+            self.assertEqual(page.evaluate('selectedTables.size'), 0)
+            page.click('#search')
+            page.keyboard.type('camelcasewidget')
+            page.keyboard.press('Enter')
+            page.wait_for_timeout(100)
+            self.assertEqual(page.evaluate('[...selectedTables]'), ['CamelCaseWidget'])
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestLocalStorageWriteFailureIsNonFatal(unittest.TestCase):
+    """localStorage.setItem throws in Safari private browsing / over quota.
+    Regression: that used to abort whatever handler called saveState()
+    partway through, so the state change it was about to reflect in the
+    diagram (refreshView/renderTableList, called right after saveState())
+    never happened, even though the underlying data (excludedTables) had
+    already been mutated — a confusing half-applied UI state."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def test_unchecking_a_table_still_updates_the_diagram_when_storage_throws(self):
+        page = self.browser.new_page()
+        try:
+            page.add_init_script(
+                'localStorage.setItem = () => { throw new DOMException("quota exceeded"); };')
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.wait_for_timeout(50)
+            self.assertIn('posts', page.evaluate('getDisplayTables()'))
+            page.locator('.table-item:has(.tname:text-is("posts")) input[type=checkbox]').uncheck()
+            page.wait_for_timeout(50)
+            self.assertNotIn('posts', page.evaluate('getDisplayTables()'),
+                             'unchecking must still remove the table from the diagram '
+                             'even though persisting that choice to localStorage failed')
+        finally:
+            page.close()
+
+
 if __name__ == '__main__':
     unittest.main()
