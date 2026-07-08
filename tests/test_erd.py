@@ -215,6 +215,22 @@ class TestMySQLIr(unittest.TestCase):
         self.assertEqual(multi['columns'], ['user_id', 'title'])  # SEQ order
         self.assertFalse(multi['unique'])
 
+    def test_db_fk_under_unique_index_is_1to1(self):
+        # a FK column alone under a UNIQUE index can't repeat — real 1:1,
+        # not the default many:1 a bare FK column implies
+        table_rows = [('accounts', ''), ('profiles', '')]
+        col_rows = [
+            _col('accounts', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'account_id', 'bigint', 'bigint', 'NO', 'UNI'),
+        ]
+        fk_rows = [('profiles', 'account_id', 'accounts')]
+        index_rows = [('profiles', 'uk_profiles_account_id', 0, 1, 'account_id')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+        a = tables['profiles']['associations'][0]
+        self.assertEqual(a['type'], 'has_one')
+        self.assertEqual(a['foreign_key'], 'account_id')
+
 
 class TestOverlayAndInference(unittest.TestCase):
     def setUp(self):
@@ -226,6 +242,18 @@ class TestOverlayAndInference(unittest.TestCase):
         names = {a['name'] for a in self.tables['users']['associations']}
         self.assertIn('posts', names)
         self.assertIn('commented_posts', names)  # has_many :through
+
+    def test_belongs_to_backfills_conventional_foreign_key(self):
+        # comment.rb: `belongs_to :post` / `belongs_to :user` — neither gives
+        # an explicit foreign_key: option, so it must default to Rails
+        # convention (<name>_id) rather than being left unset
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        assocs = {a['name']: a for a in self.tables['comments']['associations']}
+        self.assertEqual(assocs['post']['foreign_key'], 'post_id')
+        self.assertEqual(assocs['user']['foreign_key'], 'user_id')
+        # an explicit foreign_key: option is still honored, not overridden
+        post_assocs = {a['name']: a for a in self.tables['posts']['associations']}
+        self.assertEqual(post_assocs['author']['foreign_key'], 'user_id')
 
     def test_dedupe_after_overlay(self):
         erd.merge_code_semantics(self.tables, FIXTURE)
@@ -243,6 +271,57 @@ class TestOverlayAndInference(unittest.TestCase):
         self.assertIn('webhooks', self.tables)
         self.assertTrue(self.tables['webhooks']['schema_missing'])
 
+    def test_dedupe_upgrades_lone_belongs_to_when_db_says_1to1(self):
+        # simulates an incomplete Rails declaration: `belongs_to :account`
+        # with no matching `has_one` on the other side, so the code alone
+        # never asserts cardinality — but the DB has a unique index on the
+        # FK column, so dedupe should promote the belongs_to to has_one
+        # rather than just deleting the DB FK and losing that signal
+        table_rows = [('accounts', ''), ('profiles', '')]
+        col_rows = [
+            _col('accounts', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'account_id', 'bigint', 'bigint', 'NO', 'UNI'),
+        ]
+        fk_rows = [('profiles', 'account_id', 'accounts')]
+        index_rows = [('profiles', 'uk_profiles_account_id', 0, 1, 'account_id')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+        self.assertEqual(tables['profiles']['associations'][0]['type'], 'has_one')
+
+        # an incomplete Rails-style overlay: only the belongs_to side declared
+        tables['profiles']['associations'].append(
+            {'type': 'belongs_to', 'name': 'account', 'target': 'accounts',
+             'foreign_key': 'account_id'})
+
+        removed = erd.dedupe_db_fk(tables)
+        self.assertEqual(removed, 1)
+        assocs = tables['profiles']['associations']
+        self.assertEqual(len(assocs), 1, 'the DB FK should be dropped, not duplicated')
+        self.assertEqual(assocs[0]['type'], 'has_one')
+        self.assertNotIn('db_fk', assocs[0])  # still the explicit (code-declared) entry
+
+    def test_dedupe_leaves_explicit_cardinality_alone(self):
+        # when the code *does* declare cardinality (has_many here), dedupe
+        # must not second-guess it even if the DB FK resolved to has_one
+        table_rows = [('accounts', ''), ('profiles', '')]
+        col_rows = [
+            _col('accounts', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'account_id', 'bigint', 'bigint', 'NO', 'UNI'),
+        ]
+        fk_rows = [('profiles', 'account_id', 'accounts')]
+        index_rows = [('profiles', 'uk_profiles_account_id', 0, 1, 'account_id')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+        tables['profiles']['associations'].append(
+            {'type': 'belongs_to', 'name': 'account', 'target': 'accounts',
+             'foreign_key': 'account_id'})
+        tables['accounts']['associations'].append(
+            {'type': 'has_many', 'name': 'profiles', 'target': 'profiles'})
+
+        erd.dedupe_db_fk(tables)
+        types = {a['type'] for a in tables['profiles']['associations']}
+        self.assertEqual(types, {'belongs_to'})  # left as-is, not upgraded
+
     def test_inference_on_constraintless_fk(self):
         added = erd.infer_fk_associations(self.tables)
         targets = {a['target'] for a in self.tables['likes']['associations']}
@@ -257,6 +336,68 @@ class TestOverlayAndInference(unittest.TestCase):
         assocs = [a for a in self.tables['posts']['associations']
                   if a['target'] == 'users']
         self.assertEqual(len(assocs), 1)
+
+    def test_inference_falls_back_to_singular_table_name(self):
+        # Rails-style pluralized tables are tried first, but schemas that
+        # don't pluralize (common outside Rails, e.g. Prisma defaults) should
+        # still resolve — 'author_id' -> 'author' when 'authors' doesn't exist
+        table_rows = [('posts', ''), ('author', '')]  # singular, deliberately
+        col_rows = [
+            _col('posts', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('posts', 'author_id', 'bigint', 'bigint'),
+            _col('author', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+        ]
+        tables = erd.mysql_ir(table_rows, col_rows, [], [])
+        added = erd.infer_fk_associations(tables)
+        self.assertEqual(added, 1)
+        a = tables['posts']['associations'][0]
+        self.assertEqual((a['target'], a['inferred']), ('author', True))
+
+    def test_inference_detects_1to1_via_unique_index(self):
+        table_rows = [('users', ''), ('profiles', '')]
+        col_rows = [
+            _col('users', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('profiles', 'user_id', 'bigint', 'bigint', 'NO', 'UNI'),
+        ]
+        index_rows = [('profiles', 'uk_profiles_user_id', 0, 1, 'user_id')]
+        tables = erd.mysql_ir(table_rows, col_rows, [], index_rows)
+        erd.infer_fk_associations(tables)
+        a = tables['profiles']['associations'][0]
+        self.assertEqual(a['type'], 'has_one')
+
+
+class TestFkColumns(unittest.TestCase):
+    """fk_columns (computed in _finish(), the single source of truth the FK
+    badge and PK/FK column view read) must only ever contain columns backed
+    by a real association — never a bare *_id name match. --infer-fk is the
+    only thing that can widen it, and only for names that also resolve to a
+    real table (comments.post_id/user_id do; likes.unknown_thing_id never
+    can, since no `unknown_things` table exists)."""
+    def _args(self, **kw):
+        base = dict(output='', models=None, excel=None, max_rows=15,
+                    only=None, exclude=None, infer_fk=False)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_default_excludes_unbacked_id_columns(self):
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            erd._finish(tables, self._args(output=str(Path(tmp) / 'out.html')), 'testdb')
+        self.assertNotIn('post_id', tables['comments']['fk_columns'])
+        self.assertNotIn('user_id', tables['comments']['fk_columns'])
+        # posts.user_id has a real DB FK constraint — always included
+        self.assertIn('user_id', tables['posts']['fk_columns'])
+
+    def test_infer_fk_widens_it_to_matching_tables_only(self):
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            erd._finish(tables, self._args(output=str(Path(tmp) / 'out.html'), infer_fk=True),
+                        'testdb')
+        self.assertIn('post_id', tables['comments']['fk_columns'])
+        self.assertIn('user_id', tables['comments']['fk_columns'])
+        # no `unknown_things` table exists — never inferred, flag or not
+        self.assertNotIn('unknown_thing_id', tables['likes']['fk_columns'])
 
 
 class TestParsePrisma(unittest.TestCase):
@@ -273,6 +414,16 @@ class TestParsePrisma(unittest.TestCase):
         self.assertEqual(assocs['author']['type'], 'belongs_to')
         self.assertEqual(assocs['author']['foreign_key'], 'authorId')
         self.assertEqual(assocs['tags']['type'], 'has_and_belongs_to_many')
+
+    def test_at_unique_fk_field_is_1to1_not_manyto1(self):
+        # Profile.userId is `Int @unique` — each value can appear at most
+        # once, so it's a real 1:1, not the default many:1 a bare FK implies
+        assocs = {a['name']: a for a in self.tables['Profile']['associations']}
+        self.assertEqual(assocs['user']['type'], 'has_one')
+        self.assertEqual(assocs['user']['foreign_key'], 'userId')
+        # Post.authorId has no @unique — stays the default many:1
+        post_assocs = {a['name']: a for a in self.tables['Post']['associations']}
+        self.assertEqual(post_assocs['author']['type'], 'belongs_to')
 
     def test_prisma_as_overlay(self):
         tables = {'users': {'columns': [], 'associations': [],
@@ -312,7 +463,7 @@ class TestParseDjango(unittest.TestCase):
 class TestGeneration(unittest.TestCase):
     def _args(self, **kw):
         base = dict(output='', models=None, excel=None, max_rows=15,
-                    only=None, exclude=None, no_infer_fk=False)
+                    only=None, exclude=None, infer_fk=False)
         base.update(kw)
         return SimpleNamespace(**base)
 

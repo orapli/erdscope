@@ -121,13 +121,6 @@ def mysql_ir(table_rows, col_rows, fk_rows, index_rows):
         if key == 'PRI' and t['primary_key'] is None:
             t['primary_key'] = col
         t['columns'].append(c)
-    for tname, col, ref in fk_rows:
-        if tname not in tables or ref not in tables:
-            continue
-        name = col[:-3] if col.endswith('_id') else col
-        tables[tname]['associations'].append(
-            {'type': 'belongs_to', 'name': name, 'target': ref,
-             'foreign_key': col, 'db_fk': True})
     idx = {}
     for tname, iname, non_unique, seq, col in index_rows:
         if tname not in tables:
@@ -139,7 +132,25 @@ def mysql_ir(table_rows, col_rows, fk_rows, index_rows):
     for (tname, _), e in sorted(idx.items()):
         e['columns'] = [c for _, c in sorted(e['columns'])]
         tables[tname]['indexes'].append(e)
+    # built before fk_rows so DB FKs can tell 1:1 (FK column alone under a
+    # unique index) from the default many:1 apart — a naked FK column can
+    # repeat, but a uniquely-constrained one can't, by definition
+    for tname, col, ref in fk_rows:
+        if tname not in tables or ref not in tables:
+            continue
+        name = col[:-3] if col.endswith('_id') else col
+        # has_one here means "this side's column is the FK, but it's 1:1" —
+        # same convention parse_django uses for OneToOneField
+        assoc_type = 'has_one' if _unique_single_col(tables[tname], col) else 'belongs_to'
+        tables[tname]['associations'].append(
+            {'type': assoc_type, 'name': name, 'target': ref,
+             'foreign_key': col, 'db_fk': True})
     return tables
+
+def _unique_single_col(table, col):
+    """True if `col` is, by itself, the entire column list of some unique
+    index on `table` — the DB-level signal for "this FK is really 1:1"."""
+    return any(ix['unique'] and ix['columns'] == [col] for ix in table['indexes'])
 
 def parse_mysql(url):
     db = urlparse(url).path.lstrip('/')
@@ -174,20 +185,34 @@ def parse_mysql(url):
 
 def dedupe_db_fk(tables):
     """After merging code-declared associations, drop DB-FK associations for
-    pairs that an explicit association already covers (either direction)."""
-    explicit = set()
+    pairs that an explicit association already covers (either direction).
+
+    A DB FK that resolved to has_one (mysql_ir's unique-index check — a real
+    1:1) upgrades a lone covering belongs_to in place instead of just being
+    dropped. belongs_to alone doesn't assert cardinality in Rails (has_one
+    vs has_many on the *other* side does) — if that other side was never
+    declared, dropping the DB FK outright would silently discard the DB's
+    1:1 signal and the pair would render as the many:1 default."""
+    explicit_by_pair = {}  # frozenset({a,b}) -> [(table_name, assoc_dict), ...]
     for name, t in tables.items():
         for a in t['associations']:
             if not a.get('db_fk') and not a.get('inferred'):
-                explicit.add((name, a['target']))
-                explicit.add((a['target'], name))
+                explicit_by_pair.setdefault(frozenset((name, a['target'])), []).append((name, a))
+
     removed = 0
     for name, t in tables.items():
         kept = []
         for a in t['associations']:
-            if a.get('db_fk') and (name, a['target']) in explicit:
-                removed += 1
-                continue
+            if a.get('db_fk'):
+                covering = explicit_by_pair.get(frozenset((name, a['target'])))
+                if covering is not None:
+                    has_cardinality = any(ea['type'] in ('has_one', 'has_many') for _, ea in covering)
+                    if a['type'] == 'has_one' and not has_cardinality:
+                        for other_name, ea in covering:
+                            if other_name == name and ea['type'] == 'belongs_to':
+                                ea['type'] = 'has_one'
+                    removed += 1
+                    continue
             kept.append(a)
         t['associations'] = kept
     return removed
@@ -261,6 +286,12 @@ def parse_models(models_dir, tables):
             assoc = {'type': assoc_type, 'name': sym, 'target': target_table}
             if through_m: assoc['through'] = through_m.group(1)
             if fk_m:      assoc['foreign_key'] = fk_m.group(1)
+            # belongs_to holds the FK on *this* table; without an explicit
+            # foreign_key: option Rails defaults to the convention column —
+            # backfill it so FK badges/inference have a real column to point
+            # to instead of only working when the option happens to be given
+            elif assoc_type == 'belongs_to':
+                assoc['foreign_key'] = f'{to_snake(sym)}_id'
             if poly:      assoc['polymorphic'] = True
             tables[table_name]['associations'].append(assoc)
 
@@ -292,33 +323,20 @@ def parse_prisma(schema_path):
     tables = {}
     for model, block in blocks.items():
         cols, assocs, pk = [], [], None
-        for line in block.splitlines():
-            line = line.strip()
-            if not line or line.startswith('@@'):
-                continue
+        unique_cols = set()  # scalar fields with @unique — used below to
+                              # tell a 1:1 FK-holding side from a plain belongs_to
+        lines = [l.strip() for l in block.splitlines() if l.strip() and not l.strip().startswith('@@')]
+
+        # pass 1: scalar/enum columns only — relation fields need unique_cols
+        # fully populated first (a relation's `fields: [...]` FK column can be
+        # declared on any line in the block, not necessarily before it)
+        for line in lines:
             fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
             if not fm:
                 continue
             fname, ftype, is_list, optional, rest = fm.groups()
-
-            if ftype in blocks:  # relation field
-                target = table_of(ftype)
-                fields = re.search(r'fields:\s*\[\s*(\w+)', rest)
-                if is_list:
-                    # the other side lists this model too -> implicit many-to-many
-                    if is_list_of(ftype, model):
-                        assocs.append({'type': 'has_and_belongs_to_many',
-                                       'name': fname, 'target': target})
-                    else:
-                        assocs.append({'type': 'has_many', 'name': fname, 'target': target})
-                elif fields:  # the side holding the FK
-                    assocs.append({'type': 'belongs_to', 'name': fname,
-                                   'target': target, 'foreign_key': fields.group(1)})
-                else:  # 1:1 parent side without the FK
-                    assocs.append({'type': 'has_one', 'name': fname, 'target': target})
-                continue
-
-            # scalar / enum column
+            if ftype in blocks:
+                continue  # relation field, handled in pass 2
             col = fname
             cm = re.search(r'@map\("([^"]+)"\)', rest)
             if cm:
@@ -326,12 +344,43 @@ def parse_prisma(schema_path):
             primary = '@id' in rest
             if primary:
                 pk = col
+            if '@unique' in rest:
+                unique_cols.add(col)
             cols.append({
                 'name': col,
                 'type': PRISMA_TYPES.get(ftype, ftype if ftype in enums else ftype.lower()),
                 'nullable': bool(optional) and not primary,
                 'primary': primary,
             })
+
+        # pass 2: relation fields
+        for line in lines:
+            fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
+            if not fm:
+                continue
+            fname, ftype, is_list, optional, rest = fm.groups()
+            if ftype not in blocks:
+                continue
+            target = table_of(ftype)
+            fields = re.search(r'fields:\s*\[\s*(\w+)', rest)
+            if is_list:
+                # the other side lists this model too -> implicit many-to-many
+                if is_list_of(ftype, model):
+                    assocs.append({'type': 'has_and_belongs_to_many',
+                                   'name': fname, 'target': target})
+                else:
+                    assocs.append({'type': 'has_many', 'name': fname, 'target': target})
+            elif fields:  # the side holding the FK
+                fk_col = fields.group(1)
+                # @unique on the scalar FK field means each value can only
+                # appear once — a real 1:1, not the default many:1 a bare FK
+                # column implies. Same has_one convention parse_django uses.
+                assoc_type = 'has_one' if fk_col in unique_cols else 'belongs_to'
+                assocs.append({'type': assoc_type, 'name': fname,
+                               'target': target, 'foreign_key': fk_col})
+            else:  # 1:1 parent side without the FK
+                assocs.append({'type': 'has_one', 'name': fname, 'target': target})
+
         tables[table_of(model)] = {'columns': cols, 'associations': assocs,
                                    'primary_key': pk}
     return tables
@@ -497,7 +546,12 @@ def parse_django(root):
 def infer_fk_associations(tables):
     """Infer edges from FK-looking column names even when no association is
     declared. Pairs already related in either direction are skipped. Marked
-    with an `inferred` flag."""
+    with an `inferred` flag. Tries the pluralized table name first (Rails
+    convention) and falls back to the singular stem as-is (common with
+    Prisma/other schemas that don't pluralize table names) — whichever
+    actually exists. A column alone under a single-column unique index is
+    inferred as has_one (1:1) instead of belongs_to (default many:1), same
+    signal the real-DB-FK path uses."""
     added = 0
     incoming = {}  # table -> set(tables that reference it)
     for name, t in tables.items():
@@ -509,12 +563,15 @@ def infer_fk_associations(tables):
             cn = c['name']
             if not cn.endswith('_id') or c.get('primary'):
                 continue
-            target = pluralize(cn[:-3])
-            if (target == name or target not in tables
+            stem = cn[:-3]
+            plural = pluralize(stem)
+            target = plural if plural in tables else stem if stem in tables else None
+            if (target is None or target == name
                     or target in outgoing              # we already reference it
                     or target in incoming.get(name, ())):  # it already references us
                 continue
-            t['associations'].append({'type': 'belongs_to', 'name': cn[:-3],
+            assoc_type = 'has_one' if _unique_single_col(t, cn) else 'belongs_to'
+            t['associations'].append({'type': assoc_type, 'name': stem,
                                       'target': target, 'foreign_key': cn,
                                       'inferred': True})
             outgoing.add(target)
@@ -652,11 +709,10 @@ def write_excel(tables, path, title):
                 [],
                 [('#', HDR), ('Column', HDR), ('Type', HDR), ('Nullable', HDR),
                  ('Default', HDR), ('Key', HDR), ('Extra', HDR), ('Comment', HDR)]]
-        fk_cols = {a.get('foreign_key') for a in t['associations']
-                   if a.get('foreign_key')}
+        fk_cols = set(t.get('fk_columns') or
+                      {a.get('foreign_key') for a in t['associations'] if a.get('foreign_key')})
         for i, c in enumerate(t['columns'], 1):
-            key = 'PK' if c.get('primary') else ('FK' if c['name'] in fk_cols
-                  or c['name'].endswith('_id') else '')
+            key = 'PK' if c.get('primary') else ('FK' if c['name'] in fk_cols else '')
             rows.append([i, c['name'], c.get('sql_type', c['type']),
                          'YES' if c['nullable'] else 'NO',
                          c.get('default', ''), key, c.get('extra', ''),
@@ -1361,13 +1417,19 @@ function getDisplayEdges(tables) {
 const COL_LABELS = ['All', 'PK/FK', 'Name'];
 
 function effColMode(name) { return colOverride[name] ?? colMode; }
-const isFkName = n => /(_id|Id)$/.test(n); // Rails snake_case / Prisma camelCase
+// a column counts as FK only when a real association actually backs it
+// (declared, DB constraint, or --infer-fk) — fk_columns is computed
+// server-side in _finish() from those associations, not guessed from the
+// column name here, so the badge can't claim a relation that isn't real
+function isFkCol(table, colName) {
+  return (DATA.tables[table]?.fk_columns || []).includes(colName);
+}
 
 function visibleCols(name) {
   const all = DATA.tables[name]?.columns || [];
   const m = effColMode(name);
   if (m === 0) return all;
-  if (m === 1) return all.filter(c => c.primary || isFkName(c.name));
+  if (m === 1) return all.filter(c => c.primary || isFkCol(name, c.name));
   return [];
 }
 
@@ -2105,7 +2167,7 @@ function drawNode(parent, name) {
     if(i%2===1) g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-alt'})); // inset: keep off the 1px border
     if(colHighlight&&colHighlight.table===name&&col.name.toLowerCase().includes(colHighlight.q))
       g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-colhit'}));
-    const isPK=col.primary, isFK=!isPK&&isFkName(col.name);
+    const isPK=col.primary, isFK=!isPK&&isFkCol(name, col.name);
     if(isPK){
       g.appendChild(svgEl('rect',{x:4,y:ry+3,width:20,height:14,rx:2,class:'n-bpk'}));
       const bt=svgEl('text',{x:14,y:ry+ROW_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-tpk'});
@@ -2549,7 +2611,7 @@ function showDetails(){
   if(cols.length>0){
     h+='<div class="sec-title">Columns</div><div class="col-list">';
     cols.forEach(c=>{
-      const isPK=c.primary, isFK=!isPK&&isFkName(c.name);
+      const isPK=c.primary, isFK=!isPK&&isFkCol(name, c.name);
       const bc=isPK?'badge bdg-pk':isFK?'badge bdg-fk':'badge bdg-mt';
       const bt=isPK?'PK':isFK?'FK':'';
       const nullEl=c.nullable?'<span class="col-null">NULL</span>':'';
@@ -2860,7 +2922,7 @@ function exportToMermaid(){
     lines.push(`    ${t} {`);
     (DATA.tables[t]?.columns||[]).forEach(c=>{
       if(!/^\w+$/.test(c.name)) return; // skip pseudo-columns from expression indexes
-      const key=c.primary?' PK':isFkName(c.name)?' FK':'';
+      const key=c.primary?' PK':isFkCol(t, c.name)?' FK':'';
       lines.push(`        ${c.type||'string'} ${c.name}${key}`);
     });
     lines.push('    }');
@@ -3470,8 +3532,11 @@ def main():
                         'Repeatable; comma-separated lists accepted (e.g. --only "user*,post*")')
     p.add_argument('--exclude', action='append', metavar='PATTERN',
                    help='Exclude tables matching the glob pattern(s). Same syntax as --only')
-    p.add_argument('--no-infer-fk', action='store_true',
-                   help='Disable inferring relations from *_id columns')
+    p.add_argument('--infer-fk', action='store_true',
+                   help='Guess relations from *_id column names when no real '
+                        'association/FK backs them (off by default: unbacked guesses '
+                        'can be wrong, and both the FK badge and the "PK/FK" column '
+                        'view only ever show columns from real associations)')
     args = p.parse_args()
 
     url = args.database
@@ -3495,10 +3560,18 @@ def main():
 
 def _finish(tables, args, title_name):
     """Shared tail: FK inference, --only/--exclude filtering, HTML generation."""
-    if not args.no_infer_fk:
+    if getattr(args, 'infer_fk', False):
         inferred = infer_fk_associations(tables)
         if inferred:
             print(f'Inferred {inferred} relations from *_id columns', file=sys.stderr)
+
+    # single source of truth for "is this column really a foreign key" —
+    # the FK badge and the PK/FK column view both read this instead of
+    # guessing from the column name, so they can only ever show a column
+    # that's backed by a real (declared, DB, or --infer-fk) association
+    for t in tables.values():
+        t['fk_columns'] = sorted({a['foreign_key'] for a in t['associations']
+                                  if a.get('foreign_key')})
 
     def patterns(args_list):
         return [pat for arg in args_list for pat in arg.split(',') if pat]

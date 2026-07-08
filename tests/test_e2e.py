@@ -68,7 +68,7 @@ INDEX_ROWS = [('users', 'PRIMARY', 0, 1, 'id')]
 def _build_html():
     tables = erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
     args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
-                            only=None, exclude=None, no_infer_fk=False)
+                            only=None, exclude=None, infer_fk=False)
     tmp = tempfile.mkdtemp()
     out = Path(tmp) / 'out.html'
     args.output = str(out)
@@ -317,7 +317,7 @@ CLIQUE_INDEX_ROWS = [('hub', 'PRIMARY', 0, 1, 'id')]
 def _build_clique_html():
     tables = erd.mysql_ir(CLIQUE_TABLE_ROWS, CLIQUE_COL_ROWS, CLIQUE_FK_ROWS, CLIQUE_INDEX_ROWS)
     args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
-                            only=None, exclude=None, no_infer_fk=False)
+                            only=None, exclude=None, infer_fk=False)
     tmp = tempfile.mkdtemp()
     out = Path(tmp) / 'clique.html'
     args.output = str(out)

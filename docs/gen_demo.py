@@ -129,11 +129,18 @@ IX = [
     ('reviews', 'uk_reviews_product_user', 0, 1, 'product_id'),
     ('reviews', 'uk_reviews_product_user', 0, 2, 'user_id'),
     ('activity_logs', 'idx_logs_created', 1, 1, 'created_at'),
+    # both columns are marked UNI above — a real DB always backs that with a
+    # matching unique index, which is also what tells the tool "this FK is
+    # 1:1" (shipments.order_id) rather than the default many:1
+    ('shipments', 'uk_shipments_order_id', 0, 1, 'order_id'),
+    ('coupons', 'uk_coupons_code', 0, 1, 'code'),
 ]
 
 tables = erd.mysql_ir(T, C, FK, IX)
 args = SimpleNamespace(output=str(ROOT / 'docs' / 'index.html'),
                        models=None, excel=None, max_rows=15,
-                       only=None, exclude=None, no_infer_fk=False)
+                       only=None, exclude=None,
+                       infer_fk=True)  # showcase the feature: activity_logs' *_id
+                                       # columns are deliberately FK-less in the schema
 erd._finish(tables, args, 'demo_shop')
 print('demo written to docs/index.html', file=sys.stderr)

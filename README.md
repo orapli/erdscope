@@ -54,7 +54,7 @@ out of the URL — if it's not in `MYSQL_PWD` either, you'll be prompted for it
 | `--max-rows N` | Max column rows shown per table (default: 15; the rest scroll) |
 | `--only 'user*,post*'` | Include only tables matching the glob pattern(s) |
 | `--exclude '*_logs'` | Exclude tables matching the glob pattern(s) |
-| `--no-infer-fk` | Disable inferring relations from `*_id` columns |
+| `--infer-fk` | Guess relations from `*_id` column names when no real association/FK backs them (off by default — see below) |
 
 ## What you get
 
@@ -64,7 +64,9 @@ out of the URL — if it's not in `MYSQL_PWD` either, you'll be prompted for it
   DB FKs already covered by an explicit association are dropped, the rest get a
   "DB FK" badge. Models without a matching table are flagged "no schema info"
 - **Three kinds of edges, visually distinct** — declared associations (solid),
-  DB FK constraints (solid, badged), name-based inference (`*_id`, faint dotted)
+  DB FK constraints (solid, badged), name-based inference (`*_id`, faint dotted,
+  needs `--infer-fk`). The column-list "FK" badge is grounded the same way — a
+  `*_id` name alone never earns it, only a real association does
 - **Interactive exploration** — locate/focus with depth and dependency direction,
   per-table deep-dive, two-level hiding, table *and column* search, named views,
   share links (state embedded in the URL)
