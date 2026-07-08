@@ -244,6 +244,46 @@ class TestClientJS(unittest.TestCase):
         self.assertAlmostEqual(gaps[0], gaps[1], places=3,
                                 msg='distribute should equalize the edge-to-edge gaps')
 
+    def test_undo_redo_drag(self):
+        self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                         'undo should start disabled — nothing to undo yet')
+        before = self.page.evaluate('({...nodePos.users})')
+
+        rect = self.page.evaluate('''() => {
+            const r = document.querySelector('svg').getBoundingClientRect();
+            return {left:r.left, top:r.top};
+        }''')
+        view = self.page.evaluate('({vx, vy, vs})')
+        to_client = lambda wx, wy: (rect['left'] + view['vx'] + wx * view['vs'],
+                                     rect['top'] + view['vy'] + wy * view['vs'])
+        sx, sy = to_client(before['x'], before['y'])
+        tx, ty = to_client(before['x'] + 300, before['y'] + 300)
+        self.page.keyboard.down('Alt')  # disable snap so the delta is exact
+        self.page.mouse.move(sx, sy)
+        self.page.mouse.down()
+        self.page.mouse.move(tx, ty, steps=8)
+        self.page.mouse.up()
+        self.page.keyboard.up('Alt')
+
+        after_drag = self.page.evaluate('({...nodePos.users})')
+        self.assertNotEqual(before, after_drag, 'the drag should have moved the node')
+        self.assertFalse(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                          'undo should be enabled after a real drag')
+
+        self.page.click('#btn-undo')
+        self.assertEqual(self.page.evaluate('({...nodePos.users})'), before,
+                          'undo should restore the pre-drag position exactly')
+
+        self.page.keyboard.press('Control+Shift+Z')
+        self.assertEqual(self.page.evaluate('({...nodePos.users})'), after_drag,
+                          'Ctrl+Shift+Z should redo back to the post-drag position')
+
+    def test_undo_does_not_fire_on_a_plain_click(self):
+        # a click with no movement must not push a spurious undo entry
+        self.page.click('[data-name="users"]')
+        self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                         'a plain click (no drag) should not create an undo entry')
+
 
 # Regression fixture for the "same-row skip" family of layout bugs: 'hub' is
 # the highest-degree table (becomes the row-0 hub), its three direct children

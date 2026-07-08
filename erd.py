@@ -847,6 +847,8 @@ body.dark .snap-guide{stroke:#f87171}
   font-size:13px;color:#475569;box-shadow:0 1px 3px rgba(0,0,0,.08);white-space:nowrap}
 .diag-btn:hover{background:#f1f5f9}
 .diag-btn.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
+.diag-btn:disabled{opacity:.4;cursor:not-allowed}
+.diag-btn:disabled:hover{background:white}
 #colmode-group{display:flex;box-shadow:0 1px 3px rgba(0,0,0,.08);border-radius:6px}
 #colmode-group .diag-btn{box-shadow:none;border-radius:0;font-size:11px;margin-left:-1px}
 #colmode-group .diag-btn:first-child{border-radius:6px 0 0 6px;margin-left:0}
@@ -1012,6 +1014,7 @@ body.dark #center-pane{background:#0b1220;
 body.dark #legend,body.dark .diag-btn,body.dark .expand-tab{background:#0f172a;border-color:#334155;color:#94a3b8}
 body.dark .diag-btn:hover{background:#1e293b}
 body.dark .diag-btn.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
+body.dark .diag-btn:disabled:hover{background:#0f172a}
 body.dark #max-rows{background:#0f172a;color:#94a3b8}
 body.dark #focus-bar{background:#172554;border-color:#3b82f6;color:#bfdbfe}
 body.dark #focus-bar .fb-hint{color:#93c5fd}
@@ -1139,6 +1142,8 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       <button class="diag-btn" id="btn-zoom-out" title="Zoom out">−</button>
       <button class="diag-btn" id="btn-zoom-100" title="Zoom to 100% (text at natural size)">1:1</button>
       <button class="diag-btn" id="btn-fit" title="Fit all">⊡</button>
+      <button class="diag-btn" id="btn-undo" title="Undo layout change (Ctrl/Cmd+Z)" disabled>↶</button>
+      <button class="diag-btn" id="btn-redo" title="Redo layout change (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
       <button class="diag-btn" id="btn-reset" title="Re-layout now (repack to fill the screen)">↺</button>
       <button class="diag-btn" id="btn-autolayout" title="Auto-tidy mode: re-layout and fit whenever the displayed tables change">Auto-tidy</button>
       <button class="diag-btn" id="btn-dark" title="Toggle dark mode (exports always use the light palette)">🌙</button>
@@ -1202,6 +1207,15 @@ let vx=0, vy=0, vs=1;
 let isPanning=false, panSX, panSY, panVX, panVY;
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
 let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
+let dragUndoSnapshot=null; // nodePos captured at mousedown, committed to undoStack only if the drag actually moved something
+
+// Layout undo/redo: position-only history (not selection/checkbox state —
+// changing which tables are displayed is treated as expected, not something
+// to undo). Covers drag, align/distribute, and explicit relayouts (↺, and
+// colmode/max-rows changes while Auto-tidy is on) — the "I moved things
+// carefully, then a misclick wiped it" scenarios.
+let undoStack=[], redoStack=[];
+const UNDO_LIMIT=30;
 
 const svg    = document.getElementById('er-svg');
 const erMain = document.getElementById('er-main');
@@ -2155,6 +2169,7 @@ function drawNode(parent, name) {
     dragSet = selectedTables.has(name) ? new Set(selectedTables) : new Set([name]);
     dragGroupStart = {};
     dragSet.forEach(t => { dragGroupStart[t] = {...(nodePos[t]||{x:0,y:0})}; });
+    dragUndoSnapshot = snapshotPos(); // committed on mouseup only if the drag actually moved something
     const pt=svgPt(e.clientX,e.clientY);
     isDragging=true; dragMoved=false; dragName=name;
     dragCX=e.clientX; dragCY=e.clientY;
@@ -2634,6 +2649,45 @@ function selectedPositioned(){
   return [...selectedTables].filter(t=>nodePos[t]&&(nodeSize[t]||calcSize(t)));
 }
 
+// ── Layout undo/redo ─────────────────────────────────────────────────────
+function snapshotPos(){
+  const snap={};
+  Object.keys(nodePos).forEach(k=>{ snap[k]={...nodePos[k]}; });
+  return snap;
+}
+function restorePos(snap){
+  Object.keys(nodePos).forEach(k=>delete nodePos[k]);
+  Object.keys(snap).forEach(k=>{ nodePos[k]={...snap[k]}; });
+}
+// call *before* mutating nodePos
+function pushUndoSnapshot(){
+  undoStack.push(snapshotPos());
+  if(undoStack.length>UNDO_LIMIT) undoStack.shift();
+  redoStack=[]; // a fresh action invalidates the redo branch
+  updateUndoRedoUI();
+}
+function doUndo(){
+  if(!undoStack.length){ showToast('Nothing to undo'); return; }
+  redoStack.push(snapshotPos());
+  restorePos(undoStack.pop());
+  updateUndoRedoUI();
+  renderDiagram(); // redraw from the restored positions; keep pan/zoom as-is
+  showToast('Undid layout change');
+}
+function doRedo(){
+  if(!redoStack.length){ showToast('Nothing to redo'); return; }
+  undoStack.push(snapshotPos());
+  restorePos(redoStack.pop());
+  updateUndoRedoUI();
+  renderDiagram();
+  showToast('Redid layout change');
+}
+function updateUndoRedoUI(){
+  const u=document.getElementById('btn-undo'), r=document.getElementById('btn-redo');
+  if(u) u.disabled=!undoStack.length;
+  if(r) r.disabled=!redoStack.length;
+}
+
 // redraw from the mutated nodePos without relaying out or moving the viewport
 // (same "just redraw" spirit as the drag-mouseup path — no auto-tidy relayout)
 function afterManualReposition(){
@@ -2644,6 +2698,7 @@ function afterManualReposition(){
 function alignSelection(mode){
   const ts=selectedPositioned();
   if(ts.length<2) return;
+  pushUndoSnapshot();
   const boxes=ts.map(t=>{
     const p=nodePos[t], s=nodeSize[t]||calcSize(t);
     return {t, x0:p.x-s.w/2, y0:p.y-s.h/2, x1:p.x+s.w/2, y1:p.y+s.h/2};
@@ -2670,6 +2725,7 @@ function alignSelection(mode){
 function distributeSelection(axis){
   const ts=selectedPositioned();
   if(ts.length<3) return;
+  pushUndoSnapshot();
   const key=axis==='h'?'x':'y', dim=axis==='h'?'w':'h';
   const items=ts.map(t=>{
     const s=nodeSize[t]||calcSize(t);
@@ -2956,6 +3012,13 @@ window.addEventListener('mousemove', e=>{
 window.addEventListener('mouseup', e=>{
   if(isDragging){
     isDragging=false; dragName=null;
+    if(dragMoved && dragUndoSnapshot){
+      undoStack.push(dragUndoSnapshot);
+      if(undoStack.length>UNDO_LIMIT) undoStack.shift();
+      redoStack=[];
+      updateUndoRedoUI();
+    }
+    dragUndoSnapshot=null;
     dragSet=new Set(); dragGroupStart={};
     // dragMoved stays set: the click event fires after mouseup and must see it.
     // If no click follows (released outside the node/window), clear it on the
@@ -2999,6 +3062,21 @@ window.addEventListener('keydown', e=>{
   if(selectedTables.size) selectOnly(null);
 });
 
+// Layout undo/redo: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y). Skipped while
+// typing in a text field so it doesn't fight the browser's native undo there.
+window.addEventListener('keydown', e=>{
+  if(!(e.ctrlKey||e.metaKey)) return;
+  const tag=document.activeElement?.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA') return;
+  if(e.key==='z'||e.key==='Z'){
+    e.preventDefault();
+    e.shiftKey ? doRedo() : doUndo();
+  } else if(e.key==='y'||e.key==='Y'){
+    e.preventDefault();
+    doRedo();
+  }
+});
+
 // ── Toolbar buttons ─────────────────────────────────────────────────────────
 function applyZoom(f){
   const r=svg.getBoundingClientRect();
@@ -3017,7 +3095,10 @@ document.getElementById('btn-zoom-100').addEventListener('click',()=>{
   setTransform();
 });
 document.getElementById('btn-fit')     .addEventListener('click',fitView);
+document.getElementById('btn-undo')    .addEventListener('click',doUndo);
+document.getElementById('btn-redo')    .addEventListener('click',doRedo);
 document.getElementById('btn-reset')   .addEventListener('click',()=>{
+  pushUndoSnapshot();
   const ts=getDisplayTables();
   ts.forEach(t=>delete nodePos[t]);
   Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
@@ -3133,6 +3214,7 @@ document.querySelectorAll('#colmode-group .diag-btn').forEach(btn=>{
     // OFF: nodes resize in place — the display set didn't change, so
     // positions (incl. manual arrangement) are kept.
     if(autoLayout){
+      pushUndoSnapshot();
       Object.keys(nodePos).forEach(k=>delete nodePos[k]);
       Object.keys(basePos).forEach(k=>delete basePos[k]);
       Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
@@ -3149,6 +3231,7 @@ document.getElementById('max-rows').addEventListener('change', e=>{
   // Auto-tidy ON: node heights change drastically — re-layout to keep the
   // no-overlap guarantee. OFF: resize in place, keep positions.
   if(autoLayout){
+    pushUndoSnapshot();
     getDisplayTables().forEach(t=>delete nodePos[t]);
     if(focusedTable) switchFocusTable();
   }

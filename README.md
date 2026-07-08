@@ -70,8 +70,9 @@ out of the URL — if it's not in `MYSQL_PWD` either, you'll be prompted for it
   share links (state embedded in the URL)
 - **Readable layouts** — viewport-aware packing with crossing reduction, elliptical
   hub-and-spoke focus view, edges detour around nodes, join-table chains, auto-tidy,
-  drag-to-snap with guide lines, and multi-select (shift/ctrl-click) with
-  align-left/top/center/middle and distribute-horizontal/vertical
+  drag-to-snap with guide lines, multi-select (shift/ctrl-click) with
+  align-left/top/center/middle and distribute-horizontal/vertical, and
+  layout undo/redo (Ctrl/Cmd+Z)
 - **Exports** — PNG (clipboard, 2x), SVG, Mermaid `erDiagram`, and the Excel workbook
 - **Extras** — dark mode, print stylesheet, resizable/collapsible panes
 
