@@ -143,6 +143,27 @@ class TestClientJS(unittest.TestCase):
                          'header-only mode should have actually shrunk the node '
                          '(otherwise this test is not exercising the resize path)')
 
+    def test_display_change_does_not_reset_viewport_when_content_still_fits(self):
+        # regression: refreshView() used to unconditionally re-fit the
+        # viewport on every display-set change, so checking one more table
+        # in the list snapped away any pan/zoom the user had set up —
+        # jarring on its own, and specifically disruptive right after a
+        # deliberate zoom-in to inspect a cluster
+        self.assertEqual(self.page.evaluate('autoLayout'), False)
+        # the initial page load already fit-viewed once — the diagram is in
+        # view at this transform, so any change from here proves a refit fired
+        before = self.page.evaluate('({vx, vy, vs})')
+        # uncheck then recheck 'likes' — a real display-set change that
+        # goes through refreshView(), with positions untouched by autoLayout
+        self.page.locator('.table-item:has(.tname:text-is("likes")) input[type=checkbox]').uncheck()
+        self.page.wait_for_timeout(50)
+        self.page.locator('.table-item:has(.tname:text-is("likes")) input[type=checkbox]').check()
+        self.page.wait_for_timeout(50)
+        after = self.page.evaluate('({vx, vy, vs})')
+        self.assertEqual(before, after,
+                         'the viewport must not be reset when the display change '
+                         "didn't actually move the diagram out of view")
+
     def test_drag_snaps_to_neighbor_and_shows_guide(self):
         rect = self.page.evaluate('''() => {
             const r = document.querySelector('svg').getBoundingClientRect();

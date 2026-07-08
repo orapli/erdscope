@@ -2202,7 +2202,32 @@ function refreshView(){
     ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
       if(ts.length) gridLayout(ts);
   }
-  renderDiagram(); requestAnimationFrame(fitView);
+  renderDiagram();
+  // don't yank the viewport back to fit-all for a change that didn't
+  // actually move it out of view — checking one more table in the list, or
+  // any change with Auto-tidy off (existing positions are untouched, new
+  // ones incrementally placed near their connections), usually leaves the
+  // diagram right where the user was already looking
+  if(!isDisplayInView()) requestAnimationFrame(fitView);
+}
+
+// is the current display set's bounding box (already) inside the viewport,
+// i.e. would fitView() actually change anything the user can see?
+function isDisplayInView(){
+  const tables=getDisplayTables();
+  if(!tables.length) return true;
+  const R=svg.getBoundingClientRect();
+  if(!R.width||!R.height) return false;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  tables.forEach(name=>{
+    const p=nodePos[name], s=nodeSize[name]||calcSize(name);
+    if(!p) return;
+    x0=Math.min(x0,p.x-s.w/2); y0=Math.min(y0,p.y-s.h/2);
+    x1=Math.max(x1,p.x+s.w/2); y1=Math.max(y1,p.y+s.h/2);
+  });
+  if(!isFinite(x0)) return true;
+  const sx0=x0*vs+vx, sy0=y0*vs+vy, sx1=x1*vs+vx, sy1=y1*vs+vy;
+  return sx0>=-20 && sy0>=-20 && sx1<=R.width+20 && sy1<=R.height+20;
 }
 
 // ── fitView ────────────────────────────────────────────────────────────────
