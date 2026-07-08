@@ -264,40 +264,42 @@ body.no-edge-labels .e-lbg,body.no-edge-labels .e-ltxt{display:none}
 /* ── dark mode ── */
 body.dark{background:#0b1220;color:#cbd5e1}
 body.dark #left-pane,body.dark #right-pane{background:#0f172a;border-color:#1e293b}
-body.dark .pane-title{color:#64748b;border-color:#1e293b}
+/* secondary/dimmed text in dark mode, one step brighter across the board
+   than the first pass (still dimmer than primary text, just legible) */
+body.dark .pane-title{color:#94a3b8;border-color:#1e293b}
 body.dark #left-controls{border-color:#1e293b}
-body.dark #left-controls button{background:#1e293b;border-color:#334155;color:#94a3b8}
+body.dark #left-controls button{background:#1e293b;border-color:#334155;color:#cbd5e1}
 body.dark #left-controls button:hover{background:#334155}
 body.dark #search-box{border-color:#1e293b}
 body.dark #search-box input{background:#1e293b;border-color:#334155;color:#e2e8f0}
-body.dark .table-item label{color:#94a3b8}
+body.dark .table-item label{color:#cbd5e1}
 body.dark .table-item label:hover{background:#1e293b}
 body.dark .table-item.selected label{background:#172554}
 body.dark .table-item.focused label{background:#1e3a8a;color:#bfdbfe}
-body.dark .rel-badge{background:#1e293b;color:#64748b}
+body.dark .rel-badge{background:#1e293b;color:#94a3b8}
 body.dark .col-hit{background:#164e63;color:#a5f3fc}
 body.dark #center-pane{background:#0b1220;
   background-image:linear-gradient(rgba(148,163,184,.07) 1px,transparent 1px),
     linear-gradient(90deg,rgba(148,163,184,.07) 1px,transparent 1px)}
-body.dark #legend,body.dark .diag-btn,body.dark .expand-tab{background:#0f172a;border-color:#334155;color:#94a3b8}
+body.dark #legend,body.dark .diag-btn,body.dark .expand-tab{background:#0f172a;border-color:#334155;color:#cbd5e1}
 body.dark .diag-btn:hover{background:#1e293b}
 body.dark .diag-btn.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
 body.dark .diag-btn:disabled:hover{background:#0f172a}
-body.dark #max-rows{background:#0f172a;color:#94a3b8}
+body.dark #max-rows{background:#0f172a;color:#cbd5e1}
 body.dark #focus-bar{background:#172554;border-color:#3b82f6;color:#bfdbfe}
 body.dark #focus-bar .fb-hint{color:#93c5fd}
 body.dark #focus-bar button{background:#0f172a;border-color:#1e40af;color:#93c5fd}
 body.dark #hidden-bar{background:#450a0a;border-color:#7f1d1d;color:#fca5a5}
-body.dark #canvas-empty{color:#64748b}
+body.dark #canvas-empty{color:#94a3b8}
 body.dark .detail-name{color:#e2e8f0;border-color:#e2e8f0}
 body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry,body.dark .msel-chip{background:#1e293b}
 body.dark .idx-name{color:#e2e8f0}
 body.dark .col-cn,body.dark .aname,body.dark .msel-cn{color:#e2e8f0}
-body.dark .empty-state{color:#64748b}
+body.dark .empty-state{color:#94a3b8}
 body.dark .er-node .n-bg{fill:#1e293b;stroke:#334155}
 body.dark .er-node .n-alt{fill:#263447}
 body.dark .er-node .n-cn{fill:#e2e8f0}
-body.dark .er-node .n-ct{fill:#94a3b8}
+body.dark .er-node .n-ct{fill:#aab6c7}
 body.dark .er-node .n-colhit{fill:#713f12}
 /* headers had no dark override at all, so they silently inherited the
    light-mode fill (#1e293b) — identical to the dark-mode body color right
