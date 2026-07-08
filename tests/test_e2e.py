@@ -100,6 +100,10 @@ class TestClientJS(unittest.TestCase):
         # script, but fitView() is scheduled via requestAnimationFrame.
         self.page.wait_for_function('typeof nodePos.users !== "undefined"')
         self.page.wait_for_timeout(50)
+        # the legend is a fixed-position overlay in the top-left of the
+        # canvas; depending on layout/fit-zoom a node can end up underneath
+        # it, intercepting clicks — collapse it so node clicks are reliable
+        self.page.click('#legend-head')
 
     def tearDown(self):
         self.page.close()
@@ -239,6 +243,169 @@ class TestClientJS(unittest.TestCase):
         }''')
         self.assertAlmostEqual(gaps[0], gaps[1], places=3,
                                 msg='distribute should equalize the edge-to-edge gaps')
+
+
+# Regression fixture for the "same-row skip" family of layout bugs: 'hub' is
+# the highest-degree table (becomes the row-0 hub), its three direct children
+# land in row 1, and 'center' is *also* directly connected to both of its
+# row-1 siblings — a same-row "star" that a naive left-to-right ordering
+# can't satisfy on both sides at once (discovery order puts the star's center
+# at one end of the row, not between its two neighbors), forcing the edge
+# router into a long detour arc around whichever sibling ends up in between.
+CLIQUE_TABLE_ROWS = [('hub', ''), ('center', ''), ('left_leaf', ''), ('right_leaf', '')]
+CLIQUE_COL_ROWS = [
+    _col('hub', 'id', key='PRI'),
+    _col('center', 'id', key='PRI'),
+    _col('center', 'hub_id', key='MUL'),
+    _col('left_leaf', 'id', key='PRI'),
+    _col('left_leaf', 'hub_id', key='MUL'),
+    _col('left_leaf', 'center_id', key='MUL'),
+    _col('right_leaf', 'id', key='PRI'),
+    _col('right_leaf', 'hub_id', key='MUL'),
+    _col('right_leaf', 'center_id', key='MUL'),
+]
+CLIQUE_FK_ROWS = [
+    ('center', 'hub_id', 'hub'),
+    ('left_leaf', 'hub_id', 'hub'),
+    ('left_leaf', 'center_id', 'center'),
+    ('right_leaf', 'hub_id', 'hub'),
+    ('right_leaf', 'center_id', 'center'),
+]
+CLIQUE_INDEX_ROWS = [('hub', 'PRIMARY', 0, 1, 'id')]
+
+
+def _build_clique_html():
+    tables = erd.mysql_ir(CLIQUE_TABLE_ROWS, CLIQUE_COL_ROWS, CLIQUE_FK_ROWS, CLIQUE_INDEX_ROWS)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, no_infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'clique.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_clique_fixture')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestSameRowSkipRegression(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_clique_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def test_star_center_edges_stay_short(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.hub !== "undefined"')
+            page.wait_for_timeout(50)
+            bends = page.evaluate(r'''() => {
+                const out = {};
+                document.querySelectorAll('.er-edge').forEach(g => {
+                    const src = g.getAttribute('data-source'), tgt = g.getAttribute('data-target');
+                    if (!((src==='center'&&tgt==='left_leaf')||(src==='left_leaf'&&tgt==='center')
+                       || (src==='center'&&tgt==='right_leaf')||(src==='right_leaf'&&tgt==='center'))) return;
+                    const path = g.querySelector('path');
+                    const bb = path.getBBox();
+                    out[src+'-'+tgt] = Math.max(bb.width, bb.height);
+                });
+                return out;
+            }''')
+            self.assertEqual(len(bends), 2, f'expected both center-leaf edges, got {bends}')
+            for pair, size in bends.items():
+                self.assertLess(size, 100,
+                    f'{pair} edge bbox is {size}px — the row-1 "star" center '
+                    f'ended up not adjacent to a row-1 sibling it connects to, '
+                    f'forcing a long detour arc')
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestIncrementalAdditionPlacement(unittest.TestCase):
+    """Regression for the incremental-additions cascade: adding tables one
+    checkbox at a time (each click is its own 1-table layout pass, all
+    anchored at the same hub) used to stack every new table straight below
+    the previous one — after a few rounds the diagram was a 1-node-wide
+    vertical snake full of long detour edges. The placer must scan sideways
+    within a row band before dropping to the next one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()  # users hub + 4 spokes fixture
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    CHECKBOX = '.table-item:has(.tname:text-is("{0}")) input[type=checkbox]'
+
+    def test_sequential_checkbox_adds_fill_rows_not_one_column(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.wait_for_timeout(50)
+            # isolate state from other tests sharing this browser context,
+            # then start from a fresh layout that contains only the hub
+            page.evaluate('localStorage.clear()')
+            page.reload()
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.click('#btn-none')
+            page.click(self.CHECKBOX.format('users'))
+            page.reload()  # persisted state -> fresh gridLayout of just 'users'
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            # four separate incremental passes, all anchored at the hub
+            for name in ('posts', 'comments', 'likes', 'audit_logs'):
+                page.click(self.CHECKBOX.format(name))
+            boxes = page.evaluate('''() => {
+                const out = {};
+                for (const t of getDisplayTables()) {
+                    const p = nodePos[t], s = nodeSize[t];
+                    out[t] = {x0:p.x-s.w/2, y0:p.y-s.h/2, x1:p.x+s.w/2, y1:p.y+s.h/2,
+                              x:p.x, y:p.y};
+                }
+                return out;
+            }''')
+            self.assertEqual(len(boxes), 5)
+            names = list(boxes)
+            for i in range(len(names)):
+                for j in range(i + 1, len(names)):
+                    a, b = boxes[names[i]], boxes[names[j]]
+                    separated = (a['x1'] <= b['x0'] or b['x1'] <= a['x0'] or
+                                 a['y1'] <= b['y0'] or b['y1'] <= a['y0'])
+                    self.assertTrue(separated,
+                        f'{names[i]} and {names[j]} overlap: {a} vs {b}')
+            # at least two of the hub's children must share a row band —
+            # the old placer put every addition on its own row
+            ys = sorted(boxes[n]['y'] for n in ('posts', 'comments', 'likes', 'audit_logs'))
+            same_band = any(abs(ys[i+1] - ys[i]) < 40 for i in range(len(ys)-1))
+            self.assertTrue(same_band,
+                f'every incremental addition landed on its own row (ys={ys}) — '
+                f'the 1-wide vertical cascade is back')
+            # and the overall diagram must not be a vertical snake
+            x0 = min(b['x0'] for b in boxes.values()); x1 = max(b['x1'] for b in boxes.values())
+            y0 = min(b['y0'] for b in boxes.values()); y1 = max(b['y1'] for b in boxes.values())
+            self.assertLess((y1-y0) / (x1-x0), 3.0,
+                f'diagram bbox {x1-x0:.0f}x{y1-y0:.0f} is a vertical snake')
+        finally:
+            page.close()
 
 
 if __name__ == '__main__':

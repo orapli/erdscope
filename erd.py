@@ -1180,6 +1180,11 @@ let autoExpand     = false;
 let expandDepth    = 1;  // 1|2|3|0(=unlimited)
 let expandDir      = 'both'; // 'both' | 'out' (depends on) | 'in' (depended by)
 let manualExpanded = new Set(); // tables added with ⊕ while focused (not persisted)
+// overview ⊕: tables it checks so they're shown, but that shouldn't themselves
+// become fresh auto-expand roots (else one ⊕ click cascades past 1 hop
+// whenever auto-expand is on, because the newly-checked tables immediately
+// expand again on the next getDisplayTables() pass). Not persisted.
+let noAutoExpandRoot = new Set();
 let autoLayout     = false; // re-layout automatically whenever the display set changes
 let colHighlight   = null;  // {table, q} — column-search hit to highlight in the node
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
@@ -1292,6 +1297,7 @@ function getDisplayTables() {
     const total = allTables().filter(t => !hiddenTables.has(t)).length;
     for (const root of base) {
       if (seen.size >= total) break;
+      if (noAutoExpandRoot.has(root)) continue; // ⊕-added: shown, but not a fresh root
       getRelated(root, expandDepth).forEach((d, t) => { if (!hiddenTables.has(t)) seen.add(t); });
     }
     return allTables().filter(t => seen.has(t));
@@ -1301,7 +1307,9 @@ function getDisplayTables() {
 }
 
 // Add tables to the current view: while focused they join manualExpanded
-// (transient deep-dive); in the overview their checkboxes get checked.
+// (transient deep-dive); in the overview their checkboxes get checked, but
+// marked noAutoExpandRoot so a single ⊕ click can't cascade past 1 hop when
+// auto-expand is on (see the flag's declaration for why).
 function addTables(names, label){
   const cur=new Set(getDisplayTables());
   const add=[...names].filter(t=>!cur.has(t)&&!hiddenTables.has(t)&&DATA.tables[t]);
@@ -1310,7 +1318,7 @@ function addTables(names, label){
     add.forEach(t=>manualExpanded.add(t));
     switchFocusTable(); // re-run hub-spoke including the new tables
   } else {
-    add.forEach(t=>excludedTables.delete(t));
+    add.forEach(t=>{ excludedTables.delete(t); noAutoExpandRoot.add(t); });
     saveState();
   }
   refreshView(); renderTableList();
@@ -1374,98 +1382,239 @@ function calcSize(name) {
 // Order tables so connected ones sit next to each other in the shelf
 // (DFS over the visible subgraph, starting from the alphabetical first).
 // keeps chains like account – list_accounts – lists adjacent.
-function connectivityOrder(tables){
-  const tset=new Set(tables), seen=new Set(), order=[];
-  const degree=t=>[...stepNeighbors(t,'both')].filter(n=>tset.has(n)).length;
-  // seed each connected component from its highest-degree table (ties broken
-  // alphabetically), not just the first table in whatever order arrived —
-  // otherwise a hub can land far (row-wise) from its own direct neighbors,
-  // forcing long edges to cross many obstacle rows the router can't detour around
-  const starts=tables.slice().sort((a,b)=>(degree(b)-degree(a))||a.localeCompare(b));
-  for(const start of starts){
-    if(seen.has(start)) continue;
-    const stack=[start];
-    while(stack.length){
-      const t=stack.pop();
-      if(seen.has(t)) continue;
-      seen.add(t); order.push(t);
-      const nb=[...stepNeighbors(t,'both')].filter(n=>tset.has(n)&&!seen.has(n)).sort().reverse();
-      stack.push(...nb);
-    }
-  }
-  return order;
-}
+// Overview layout: each connected component is split into rows by BFS depth
+// from its highest-degree table (same shape as hubSpokeLayout's rings, just
+// laid out as rows instead of circles). Every edge therefore connects the
+// same row or an adjacent one — the old width-wrapped rows could put two
+// connected tables many rows apart, or split a dense cluster across one row
+// with no adjacency, forcing edges into long detour arcs around whatever
+// sat between them (see HANDOFF for the concrete example). Components are
+// then shelf-packed side by side toward the viewport aspect ratio.
+// widest physical row worth laying out: anything wider renders below ~60%
+// zoom on a typical viewport. Both the overview's sub-row wrap and the
+// incremental group placement break rows up at this width.
+const MAX_ROW_W=1700;
 
 function gridLayout(tables) {
-  const gapX=40, gapY=60;
-  const sized=new Map(tables.map(t=>[t, nodeSize[t]||calcSize(t)]));
-  const area=[...sized.values()].reduce((s,n)=>s+(n.w+gapX)*(n.h+gapY),0);
-  const asp=viewAspect();
-  // small views: connectivity order + crossing reduction pays off;
-  // large views: keep alphabetical rows for A→Z scanning
+  const gapX=40, gapY=60, gap=90;
+  const tset=new Set(tables);
+  // small views: order rows by neighbor position for short, near-vertical
+  // edges; large views: skip it (alphabetical) to stay cheap
   const small=tables.length<=40;
-  const order=small?connectivityOrder(tables):tables.slice();
 
-  function packRows(targetW){
-    const rows=[]; let cur=[], x=0;
-    order.forEach(t=>{
-      const w=sized.get(t).w;
-      if(x>0 && x+w>targetW){ rows.push(cur); cur=[]; x=0; }
-      cur.push(t); x+=w+gapX;
+  const adj=new Map(tables.map(t=>[t,new Set()]));
+  for(const [n,t] of Object.entries(DATA.tables)){
+    if(!tset.has(n)) continue;
+    (t.associations||[]).forEach(a=>{
+      if(a.polymorphic||a.target===n||!tset.has(a.target)) return;
+      adj.get(n).add(a.target); adj.get(a.target).add(n);
     });
-    if(cur.length) rows.push(cur);
-    return rows;
-  }
-  function measure(rows){
-    let W=0, H=0;
-    rows.forEach(r=>{
-      W=Math.max(W, r.reduce((s,t)=>s+sized.get(t).w+gapX,0)-gapX);
-      H+=Math.max(...r.map(t=>sized.get(t).h))+gapY;
-    });
-    return {W, H:H-gapY};
   }
 
-  // iterate: shelf rows waste vertical space (row height = tallest node),
-  // so adjust the wrap width until the result matches the viewport shape
-  let targetW=Math.max(900, Math.sqrt(area*asp));
-  let rows=packRows(targetW), box=measure(rows);
-  for(let i=0;i<3 && Math.abs(box.W/box.H-asp)/asp>0.1;i++){
-    targetW=Math.max(900, targetW*Math.sqrt(asp/(box.W/box.H)));
-    rows=packRows(targetW); box=measure(rows);
+  // connected components (alphabetical seed order keeps runs stable); size-1
+  // components are isolated tables, laid out separately as plain rows below
+  const seen=new Set(), comps=[], singles=[];
+  for(const t of tables.slice().sort()){
+    if(seen.has(t)) continue;
+    const comp=[], stack=[t];
+    while(stack.length){
+      const c=stack.pop();
+      if(seen.has(c)) continue;
+      seen.add(c); comp.push(c);
+      adj.get(c).forEach(n=>{ if(!seen.has(n)) stack.push(n); });
+    }
+    if(comp.length>1) comps.push(comp); else singles.push(comp[0]);
   }
 
-  const xc=new Map(), rowOf=new Map();
-  function assign(){
-    let y=0;
-    rows.forEach((r,ri)=>{
-      const rw=r.reduce((s,t)=>s+sized.get(t).w+gapX,0)-gapX;
-      const rh=Math.max(...r.map(t=>sized.get(t).h));
-      let x=(box.W-rw)/2; // center each row
-      r.forEach(t=>{
-        const s=sized.get(t);
-        xc.set(t, x+s.w/2); rowOf.set(t, ri);
-        nodePos[t]={x:x+s.w/2-box.W/2, y:y+rh/2-box.H/2};
+  function layoutComponent(comp){
+    const hub=comp.slice().sort((a,b)=>(adj.get(b).size-adj.get(a).size)||a.localeCompare(b))[0];
+    const depMap=new Map([[hub,0]]);
+    let frontier=[hub];
+    while(frontier.length){
+      const next=[];
+      frontier.forEach(name=>{
+        adj.get(name).forEach(n=>{
+          if(!depMap.has(n)){ depMap.set(n, depMap.get(name)+1); next.push(n); }
+        });
+      });
+      frontier=next;
+    }
+    const byDepth={};
+    depMap.forEach((d,t)=>{ (byDepth[d]=byDepth[d]||[]).push(t); });
+
+    // target row width: a hub with many direct children makes one BFS depth
+    // much wider than the rest ("wedge" shape, mostly empty bounding box) —
+    // wrap any row wider than this back into multiple physical sub-rows.
+    // Target from the component's expected height (depth count × a typical
+    // row band) × the viewport aspect, not from total node area — an
+    // area-based guess doesn't know a BFS layout already has one mandatory
+    // row per depth, so it under-targets width and over-wraps, leaving the
+    // component too tall instead of too wide.
+    const depths=Object.keys(byDepth).length;
+    const avgRowH=comp.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).h,0)/comp.length;
+    const estHeight=depths*(avgRowH+gapY);
+    const rowTargetW=Math.max(700, estHeight*viewAspect()*1.15);
+
+    const xc=new Map(); // placed x-centers, feeds the next row's ordering
+    const placeRow=(sr, rowY)=>{
+      const rw=sr.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).w+gapX,0)-gapX;
+      // shift the row so members sit under their already-placed neighbors
+      // (mean offset) instead of centering every row on the component axis:
+      // a centered row puts e.g. two grandchildren in the middle while
+      // their parents sit at the far end of a wide wrapped depth-1 row,
+      // forcing long swooping arcs under the whole component. Symmetric
+      // rows (a star's children around the hub) get shift ≈ 0, so the
+      // common case stays visually centered.
+      let shift=0;
+      if(small){
+        const deltas=[]; let x=-rw/2;
+        sr.forEach(t=>{
+          const s=nodeSize[t]||calcSize(t);
+          const ns=[...adj.get(t)].filter(n=>xc.has(n));
+          if(ns.length) deltas.push(ns.reduce((a,n)=>a+xc.get(n),0)/ns.length-(x+s.w/2));
+          x+=s.w+gapX;
+        });
+        if(deltas.length) shift=deltas.reduce((a,b)=>a+b,0)/deltas.length;
+      }
+      let x=shift-rw/2;
+      sr.forEach(t=>{
+        const s=nodeSize[t]||calcSize(t);
+        const cx=x+s.w/2;
+        nodePos[t]={x:cx, y:rowY};
+        xc.set(t,cx);
         x+=s.w+gapX;
       });
-      y+=rh+gapY;
-    });
-  }
-  assign();
-
-  if(small && rows.length>1){
-    // Sugiyama-style barycenter sweeps (as in graphviz/dagre): reorder each
-    // row by the mean x of connected nodes in other rows to reduce crossings
-    const tset=new Set(tables);
-    const nb=new Map(tables.map(t=>[t,[...stepNeighbors(t,'both')].filter(n=>tset.has(n))]));
-    const bary=t=>{
-      const ns=nb.get(t).filter(n=>rowOf.get(n)!==rowOf.get(t));
-      if(!ns.length) return xc.get(t);
-      return ns.reduce((s,n)=>s+xc.get(n),0)/ns.length;
     };
-    for(let pass=0; pass<4; pass++){
-      rows.forEach(r=>r.sort((a,b)=>bary(a)-bary(b)));
-      assign();
-    }
+    let y=0, hubH=0;
+    Object.keys(byDepth).map(Number).sort((a,b)=>a-b).forEach(d=>{
+      let row=byDepth[d];
+      if(small && d>0){
+        // preferred x = mean x of this row's already-placed (row d-1) neighbors
+        // — keeps a table under its parent, minimizing zigzag and edge length.
+        // Siblings that share a parent all get the same preference (it's the
+        // parent's x), so on its own this can't separate a busy hub's many
+        // direct children — cluster same-row tables that are *also* directly
+        // connected to each other (e.g. two children of the same hub that
+        // reference one another) so they land adjacent instead of at
+        // opposite ends of the row, which is what forces a long detour arc.
+        const rowSet=new Set(row);
+        const pref=t=>{
+          const ns=[...adj.get(t)].filter(n=>xc.has(n));
+          return ns.length ? ns.reduce((s,n)=>s+xc.get(n),0)/ns.length : 0;
+        };
+        const seenRow=new Set(), clusters=[];
+        row.slice().sort((a,b)=>pref(a)-pref(b)).forEach(start=>{
+          if(seenRow.has(start)) return;
+          const members=new Set(), stack=[start];
+          while(stack.length){
+            const t=stack.pop();
+            if(members.has(t)) continue;
+            members.add(t);
+            [...adj.get(t)].filter(n=>rowSet.has(n)&&!members.has(n)).forEach(n=>stack.push(n));
+          }
+          // a same-row "hub" (e.g. two children of the parent that also
+          // reference each other) needs to sit *between* its row-siblings,
+          // not at one end — plain discovery order only guarantees adjacency
+          // on one side. Sort by in-cluster degree and place highest first,
+          // then alternate left/right so each subsequent (lower-degree) node
+          // lands next to what's already placed.
+          const list=[...members];
+          const inDeg=t=>[...adj.get(t)].filter(n=>members.has(n)).length;
+          list.sort((a,b)=>(inDeg(b)-inDeg(a))||(pref(a)-pref(b)));
+          const seq=[list[0]];
+          for(let i=1;i<list.length;i++) (i%2) ? seq.push(list[i]) : seq.unshift(list[i]);
+          seq.forEach(t=>seenRow.add(t));
+          clusters.push(seq);
+        });
+        clusters.sort((a,b)=>{
+          const pa=a.reduce((s,t)=>s+pref(t),0)/a.length;
+          const pb=b.reduce((s,t)=>s+pref(t),0)/b.length;
+          return pa-pb;
+        });
+        row=clusters.flat();
+      } else {
+        row=row.slice().sort();
+      }
+
+      // wrap into at most 2 physical sub-rows when this depth is too wide —
+      // capped at 2 (not "however many fit at rowTargetW") because a hub
+      // with many direct children is still only *one* level deep, and
+      // wrapping it into 3+ stacked rows reads as a much taller/deeper tree
+      // than the graph actually is. Split by item count (not a width
+      // target) so the two halves come out roughly balanced.
+      const naturalW=row.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).w+gapX,0)-gapX;
+      // normally at most 2 sub-rows (3+ stacked rows read as a much deeper
+      // tree than the graph actually is) — but a really big fan-out (20+
+      // direct children) makes each half wider than any viewport can show
+      // at readable zoom, so the cap grows just enough to keep each
+      // physical sub-row under MAX_ROW_W
+      const cap=Math.max(2, Math.ceil(naturalW/MAX_ROW_W));
+      const chunks=Math.max(1, Math.min(cap, Math.ceil(naturalW/rowTargetW)));
+      const subRows=[];
+      if(chunks<=1){
+        subRows.push(row);
+      } else {
+        const per=Math.ceil(row.length/chunks);
+        for(let i=0;i<row.length;i+=per) subRows.push(row.slice(i,i+per));
+      }
+
+      if(d===1 && subRows.length>1){
+        // the row directly under the hub overflowed into sub-rows —
+        // alternate them below/above the hub instead of stacking them all
+        // below the first. Depth 0 has nothing above it by construction,
+        // so that is free space; stacking every sub-row below instead
+        // forces every edge from the later sub-rows up to the hub to pass
+        // behind/through the first sub-row's nodes to get there.
+        let yUp=-(hubH/2+gapY);
+        subRows.forEach((sr,i)=>{
+          const rh=Math.max(...sr.map(t=>(nodeSize[t]||calcSize(t)).h));
+          if(i%2===0){ placeRow(sr, y+rh/2); y+=rh+gapY; }
+          else       { placeRow(sr, yUp-rh/2); yUp-=rh+gapY; }
+        });
+        return;
+      }
+      subRows.forEach(sr=>{
+        const rh=Math.max(...sr.map(t=>(nodeSize[t]||calcSize(t)).h));
+        placeRow(sr, y+rh/2);
+        if(d===0) hubH=rh;
+        y+=rh+gapY;
+      });
+    });
+
+    let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+    comp.forEach(t=>{
+      const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+      x0=Math.min(x0,p.x-s.w/2); y0=Math.min(y0,p.y-s.h/2);
+      x1=Math.max(x1,p.x+s.w/2); y1=Math.max(y1,p.y+s.h/2);
+    });
+    return {comp, x0, y0, w:x1-x0, h:y1-y0};
+  }
+
+  // shelf-pack component boxes (largest first) toward the viewport shape
+  const boxes=comps.map(layoutComponent);
+  const area=boxes.reduce((s,b)=>s+(b.w+gap)*(b.h+gap),0);
+  const targetW=Math.max(900, Math.sqrt(area*viewAspect()));
+  boxes.sort((a,b)=>b.w*b.h-a.w*a.h);
+  let cx=0, cy=0, rowH=0, maxX=0;
+  boxes.forEach(b=>{
+    if(cx>0 && cx+b.w>targetW){ cx=0; cy+=rowH+gap; rowH=0; }
+    b.comp.forEach(t=>{
+      const p=nodePos[t];
+      nodePos[t]={x:cx+(p.x-b.x0), y:cy+(p.y-b.y0)};
+    });
+    cx+=b.w+gap; rowH=Math.max(rowH,b.h); maxX=Math.max(maxX,cx-gap);
+  });
+
+  // isolated tables: plain rows underneath
+  if(singles.length){
+    const rowW=Math.max(maxX,900);
+    let sx=0, sy=cy+rowH+gap, srH=0;
+    singles.sort().forEach(t=>{
+      const s=nodeSize[t]||calcSize(t);
+      if(sx>0 && sx+s.w>rowW){ sx=0; sy+=srH+60; srH=0; }
+      nodePos[t]={x:sx+s.w/2, y:sy+s.h/2};
+      sx+=s.w+40; srH=Math.max(srH,s.h);
+    });
   }
 }
 
@@ -1597,8 +1746,16 @@ function layoutAll(tables, edges) {
     return;
   }
 
-  // incremental additions (checkbox re-check etc.): append below the
-  // current bounding box in a row — predictable, nothing else moves
+  // incremental additions (checkbox re-check, auto-expand pulling in new
+  // tables, etc.): new tables land near the already-placed neighbors that
+  // pulled them in, instead of a disconnected row appended far below the
+  // whole diagram. Tables that share the same anchor (e.g. several direct
+  // children of one hub, all arriving together via auto-expand) are grouped
+  // and packed as a single row below that anchor — placing each one via an
+  // independent nearest-free-slot search instead scatters same-depth
+  // siblings across several rows purely by search order, which reads as a
+  // much deeper tree than the graph actually is. Isolated additions (no
+  // already-placed neighbor at all) fall back to the old append-below row.
   let bx0=Infinity, by1=-Infinity;
   tables.forEach(t => {
     const p=nodePos[t]; if(!p) return;
@@ -1606,11 +1763,113 @@ function layoutAll(tables, edges) {
     bx0=Math.min(bx0, p.x-s.w/2); by1=Math.max(by1, p.y+s.h/2);
   });
   if(!isFinite(bx0)){ gridLayout(tables); return; }
-  let cx=bx0, cy=by1+110;
-  newTables.forEach(t => {
-    const s=nodeSize[t]||{w:160,h:100};
-    nodePos[t]={x:cx+s.w/2, y:cy+s.h/2};
-    cx+=s.w+40;
+  const overlapsPlaced=(x,y,s)=>{
+    for(const t of tables){
+      const p=nodePos[t]; if(!p) continue;
+      const os=nodeSize[t]||{w:160,h:100};
+      if(Math.abs(x-p.x)<(s.w+os.w)/2+20 && Math.abs(y-p.y)<(s.h+os.h)/2+20) return true;
+    }
+    return false;
+  };
+
+  const groups=new Map(); // anchor bucket key -> {ax,ay,members[]} | {isolated,members:[t]}
+  const anchorX=new Map(); // new table -> its group's anchor x (pre-placement estimate)
+  newTables.forEach(t=>{
+    const neighborPos=edges
+      .filter(e=>e.source===t||e.target===t)
+      .map(e=>e.source===t?e.target:e.source)
+      .filter(n=>nodePos[n]&&!newTables.includes(n))
+      .map(n=>nodePos[n]);
+    if(!neighborPos.length){ groups.set('iso:'+t, {isolated:true, members:[t]}); return; }
+    const ax=neighborPos.reduce((s,p)=>s+p.x,0)/neighborPos.length;
+    const ay=neighborPos.reduce((s,p)=>s+p.y,0)/neighborPos.length;
+    anchorX.set(t, ax);
+    const key=Math.round(ax/60)+','+Math.round(ay/60); // nearby anchors share a group
+    if(!groups.has(key)) groups.set(key, {ax, ay, members:[]});
+    groups.get(key).members.push(t);
+  });
+
+  let cx=bx0, cy=by1+110, rowH=0; // fallback cursor, isolated additions only
+  groups.forEach(g=>{
+    if(g.isolated){
+      const t=g.members[0], s=nodeSize[t]||calcSize(t);
+      if(cx>bx0 && cx+s.w>bx0+900){ cx=bx0; cy+=rowH+40; rowH=0; }
+      nodePos[t]={x:cx+s.w/2, y:cy+s.h/2};
+      cx+=s.w+40; rowH=Math.max(rowH,s.h);
+      return;
+    }
+    // pack this group as one centered row below its shared anchor; when that
+    // spot is taken, scan sideways within the same row band first, then the
+    // bands further down — not straight down only. A pure vertical descent
+    // stacks *repeated* additions (several rounds of checkbox clicks, each
+    // its own 1-table pass anchored near the same hub) into a single 1-wide
+    // column: every new table lands below the previous one, and after a few
+    // rounds the diagram is a tall snake full of long detour edges.
+    // order the row by where each member's connections sit — already-placed
+    // tables by real position, still-unplaced new tables by their group's
+    // anchor — so tables that reference each other land adjacent instead of
+    // at opposite ends of the band (which forces a detour arc under
+    // everything in between)
+    if(g.members.length>1){
+      const prefX=t=>{
+        const xs=[];
+        edges.forEach(e=>{
+          if(e.source!==t&&e.target!==t) return;
+          const n=e.source===t?e.target:e.source;
+          if(nodePos[n]) xs.push(nodePos[n].x);
+          else if(anchorX.has(n)) xs.push(anchorX.get(n));
+        });
+        return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:g.ax;
+      };
+      g.members.sort((a,b)=>(prefX(a)-prefX(b))||a.localeCompare(b));
+    }
+    // a huge group (e.g. auto-expand toggled on next to a 15-child hub)
+    // would make one unreadably wide row — break it at MAX_ROW_W; the
+    // pref-sorted order keeps each chunk internally coherent, and chunks
+    // placed later collide with earlier ones, landing on the next band
+    const bands=[];
+    { let cur=[], w=0;
+      g.members.forEach(t=>{
+        const s=nodeSize[t]||calcSize(t);
+        if(cur.length && w+s.w>MAX_ROW_W){ bands.push(cur); cur=[]; w=0; }
+        cur.push(t); w+=s.w+40;
+      });
+      if(cur.length) bands.push(cur);
+    }
+    bands.forEach(members=>{
+      const rw=members.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).w+40,0)-40;
+      const rh=Math.max(...members.map(t=>(nodeSize[t]||calcSize(t)).h));
+      const fits=(ax,ry)=>{
+        let x=ax-rw/2;
+        for(const t of members){
+          const s=nodeSize[t]||calcSize(t);
+          if(overlapsPlaced(x+s.w/2, ry, s)) return false;
+          x+=s.w+40;
+        }
+        return true;
+      };
+      let ax=g.ax, ry=g.ay+rh/2+110, found=false;
+      // multi-band (oversized) groups always stack below the anchor —
+      // scanning sideways would lay the bands out end to end, recreating
+      // exactly the over-wide row the banding is meant to prevent
+      const offs=bands.length>1?[0]:[0,1,-1,2,-2];
+      for(let level=0; level<12 && !found; level++){
+        const y=g.ay+rh/2+110+level*(rh+40);
+        for(const m of offs){               // nearest horizontal slot wins
+          if(fits(g.ax+m*(rw+40), y)){ ax=g.ax+m*(rw+40); ry=y; found=true; break; }
+        }
+      }
+      if(!found){ // extremely crowded: old straight-down descent as a backstop
+        ax=g.ax; ry=g.ay+rh/2+110;
+        for(let tries=0; tries<30 && !fits(ax,ry); tries++) ry+=rh+40;
+      }
+      let x=ax-rw/2;
+      members.forEach(t=>{
+        const s=nodeSize[t]||calcSize(t);
+        nodePos[t]={x:x+s.w/2, y:ry};
+        x+=s.w+40;
+      });
+    });
   });
 }
 
@@ -2200,6 +2459,7 @@ function renderTableList(){
         e.stopPropagation();
         if(cb.checked){ excludedTables.delete(name); }
         else { excludedTables.add(name); }
+        noAutoExpandRoot.delete(name); // a direct checkbox click is explicit intent — full root again
         saveState();
         if(focusedTable){ renderTableList(); return; } // the focus view ignores checkboxes
         refreshView(); renderTableList();
