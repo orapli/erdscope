@@ -1051,6 +1051,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 #er-svg.node-drag{cursor:grabbing}
 .snap-guide{stroke:#ef4444;stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;pointer-events:none}
 body.dark .snap-guide{stroke:#f87171}
+.marquee-rect{fill:rgba(59,130,246,.12);stroke:#3b82f6;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:none}
 
 /* ── toolbar ── */
 #diagram-toolbar{position:absolute;bottom:12px;right:12px;display:flex;gap:4px;align-items:center}
@@ -1324,6 +1325,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <div class="lr" style="color:#94a3b8">faint dotted = relation inferred from FK column name</div>
         <div class="lhint">Framework association names (has_many etc.) appear in the right pane<br>
           Diagram: click = select, shift/ctrl-click = multi-select, double-click = focus, drag = move (whole selection if multi-selected)<br>
+          shift-drag on empty canvas = rubber-band select<br>
           2+ selected: align/distribute buttons appear in the right pane<br>
           List: click = locate in diagram, double-click = focus<br>
           Esc: exit focus</div>
@@ -1435,6 +1437,10 @@ const ringDepth = {}; // tableName -> depth (0=center, 1=ring1, ...)
 
 let vx=0, vy=0, vs=1;
 let isPanning=false, panSX, panSY, panVX, panVY;
+let isMarqueeSelecting=false, marqueeStart=null; // world coords; shift-drag on empty canvas
+let marqueeJustSelected=false; // suppresses the "click on empty canvas clears selection"
+                                // handler for the click event that follows the marquee's
+                                // own mouseup — same trick dragMoved uses for node drags
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
 let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
 let dragUndoSnapshot=null; // nodePos captured at mousedown, committed to undoStack only if the drag actually moved something
@@ -3276,8 +3282,24 @@ function drawSnapGuides(guides){
   });
 }
 
+function drawMarquee(a,b){
+  let gl=document.getElementById('marquee-layer');
+  if(!a||!b){ if(gl) gl.innerHTML=''; return; }
+  if(!gl){ gl=svgEl('g',{id:'marquee-layer'}); erMain.appendChild(gl); }
+  gl.innerHTML='';
+  const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(b.x-a.x), h=Math.abs(b.y-a.y);
+  gl.appendChild(svgEl('rect',{x,y,width:w,height:h,class:'marquee-rect'}));
+}
+
 svg.addEventListener('mousedown', e=>{
   if(e.button!==0||isDragging) return;
+  // shift-drag on empty canvas = rubber-band select, same modifier as
+  // shift-click's "add to selection" on a node — plain drag still pans
+  if(e.shiftKey){
+    isMarqueeSelecting=true;
+    marqueeStart=svgPt(e.clientX,e.clientY);
+    return;
+  }
   isPanning=true; panSX=e.clientX; panSY=e.clientY; panVX=vx; panVY=vy;
   svg.classList.add('panning');
 });
@@ -3324,6 +3346,10 @@ window.addEventListener('mousemove', e=>{
     }
     return;
   }
+  if(isMarqueeSelecting){
+    drawMarquee(marqueeStart, svgPt(e.clientX,e.clientY));
+    return;
+  }
   if(!isPanning) return;
   vx=panVX+(e.clientX-panSX); vy=panVY+(e.clientY-panSY);
   setTransform();
@@ -3349,6 +3375,31 @@ window.addEventListener('mouseup', e=>{
     if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
     return;
   }
+  if(isMarqueeSelecting){
+    isMarqueeSelecting=false;
+    const cur=svgPt(e.clientX,e.clientY);
+    const x0=Math.min(marqueeStart.x,cur.x), x1=Math.max(marqueeStart.x,cur.x);
+    const y0=Math.min(marqueeStart.y,cur.y), y1=Math.max(marqueeStart.y,cur.y);
+    // require an actual drag (not just a shift-click) before touching the
+    // selection, so a stray shift-click on empty canvas doesn't do anything
+    if(x1-x0>3 || y1-y0>3){
+      getDisplayTables().forEach(t=>{
+        const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+        if(!p) return;
+        const nx0=p.x-s.w/2, nx1=p.x+s.w/2, ny0=p.y-s.h/2, ny1=p.y+s.h/2;
+        if(nx1>=x0 && nx0<=x1 && ny1>=y0 && ny0<=y1){ // intersects the marquee
+          selectedTables.add(t);
+          selectionAnchor=t;
+        }
+      });
+      refreshSelectionUI();
+      marqueeJustSelected=true;
+      setTimeout(()=>{ marqueeJustSelected=false; }, 0);
+    }
+    marqueeStart=null;
+    drawMarquee(null,null);
+    return;
+  }
   if(isPanning){isPanning=false;svg.classList.remove('panning');}
 });
 
@@ -3369,6 +3420,7 @@ svg.addEventListener('wheel', e=>{
 },{passive:false});
 
 svg.addEventListener('click', e=>{
+  if(marqueeJustSelected){ marqueeJustSelected=false; return; } // end of a marquee, not a click
   if(e.target===svg||e.target===erMain) selectOnly(null);
 });
 

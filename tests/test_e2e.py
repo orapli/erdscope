@@ -214,6 +214,45 @@ class TestClientJS(unittest.TestCase):
         self.assertAlmostEqual(boxes['posts']['left'], boxes['comments']['left'], places=6,
                                 msg='align-left should give both nodes the same left edge')
 
+    def test_shift_drag_on_empty_canvas_marquee_selects(self):
+        # regression: the marquee's own mouseup is immediately followed by a
+        # native `click` event, which svg's click handler used to interpret
+        # as "clicked empty canvas" and wipe the selection it had just set
+        rect = self.page.evaluate('''() => {
+            const r = document.querySelector('svg').getBoundingClientRect();
+            return {left:r.left, top:r.top};
+        }''')
+        view = self.page.evaluate('({vx, vy, vs})')
+        to_client = lambda wx, wy: (rect['left'] + view['vx'] + wx * view['vs'],
+                                     rect['top'] + view['vy'] + wy * view['vs'])
+        boxes = self.page.evaluate('''() => {
+            const box = n => ({...nodePos[n], ...nodeSize[n]});
+            return {posts: box('posts'), comments: box('comments'), users: box('users')};
+        }''')
+        # a rectangle around posts+comments only (not users)
+        x0 = min(boxes['posts']['x']-boxes['posts']['w']/2, boxes['comments']['x']-boxes['comments']['w']/2) - 20
+        y0 = min(boxes['posts']['y']-boxes['posts']['h']/2, boxes['comments']['y']-boxes['comments']['h']/2) - 20
+        x1 = max(boxes['posts']['x']+boxes['posts']['w']/2, boxes['comments']['x']+boxes['comments']['w']/2) + 20
+        y1 = max(boxes['posts']['y']+boxes['posts']['h']/2, boxes['comments']['y']+boxes['comments']['h']/2) + 20
+        self.assertFalse(boxes['users']['x']-boxes['users']['w']/2 >= x0 and
+                         boxes['users']['x']+boxes['users']['w']/2 <= x1 and
+                         boxes['users']['y']-boxes['users']['h']/2 >= y0 and
+                         boxes['users']['y']+boxes['users']['h']/2 <= y1,
+                         'test setup: users must NOT be inside the marquee box')
+        sx, sy = to_client(x0, y0)
+        tx, ty = to_client(x1, y1)
+        self.page.keyboard.down('Shift')
+        self.page.mouse.move(sx, sy)
+        self.page.mouse.down()
+        self.page.mouse.move(tx, ty, steps=8)
+        self.page.mouse.up()
+        self.page.keyboard.up('Shift')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(sorted(self.page.evaluate('[...selectedTables]')), ['comments', 'posts'])
+        # must survive the trailing click, not get wiped by it
+        self.page.wait_for_timeout(100)
+        self.assertEqual(sorted(self.page.evaluate('[...selectedTables]')), ['comments', 'posts'])
+
     def test_group_drag_moves_whole_selection_together(self):
         self.page.click('[data-name="posts"]')
         self.page.click('[data-name="comments"]', modifiers=['Shift'])

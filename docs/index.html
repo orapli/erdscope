@@ -105,6 +105,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 #er-svg.node-drag{cursor:grabbing}
 .snap-guide{stroke:#ef4444;stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;pointer-events:none}
 body.dark .snap-guide{stroke:#f87171}
+.marquee-rect{fill:rgba(59,130,246,.12);stroke:#3b82f6;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:none}
 
 /* ── toolbar ── */
 #diagram-toolbar{position:absolute;bottom:12px;right:12px;display:flex;gap:4px;align-items:center}
@@ -378,6 +379,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <div class="lr" style="color:#94a3b8">faint dotted = relation inferred from FK column name</div>
         <div class="lhint">Framework association names (has_many etc.) appear in the right pane<br>
           Diagram: click = select, shift/ctrl-click = multi-select, double-click = focus, drag = move (whole selection if multi-selected)<br>
+          shift-drag on empty canvas = rubber-band select<br>
           2+ selected: align/distribute buttons appear in the right pane<br>
           List: click = locate in diagram, double-click = focus<br>
           Esc: exit focus</div>
@@ -433,6 +435,23 @@ const DATA = {"tables": {"users": {"columns": [{"name": "id", "type": "bigint", 
 // LocalStorage keys are namespaced per project so multiple ERD pages
 // served from the same origin don't share table selections
 const LS = k => `erd:${document.title}:${k}`;
+// localStorage.setItem throws in Safari private browsing and when the quota
+// is exceeded — uncaught, that aborts whatever click/drag handler called it
+// partway through, silently. Persisting view state is a nice-to-have, not
+// something worth breaking the interaction over, so swallow the failure
+// (once per session, so a full quota doesn't spam the console on every move).
+let lsWriteFailed = false;
+function setLS(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    if (!lsWriteFailed) {
+      lsWriteFailed = true;
+      console.warn('localStorage write failed (private browsing or quota exceeded) '
+        + '— view state (selection, layout, panel sizes, ...) will not persist across reloads', e);
+    }
+  }
+}
 
 // ── SVG helper ──────────────────────────────────────────────────────────
 const NS = 'http://www.w3.org/2000/svg';
@@ -472,6 +491,10 @@ const ringDepth = {}; // tableName -> depth (0=center, 1=ring1, ...)
 
 let vx=0, vy=0, vs=1;
 let isPanning=false, panSX, panSY, panVX, panVY;
+let isMarqueeSelecting=false, marqueeStart=null; // world coords; shift-drag on empty canvas
+let marqueeJustSelected=false; // suppresses the "click on empty canvas clears selection"
+                                // handler for the click event that follows the marquee's
+                                // own mouseup — same trick dragMoved uses for node drags
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
 let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
 let dragUndoSnapshot=null; // nodePos captured at mousedown, committed to undoStack only if the drag actually moved something
@@ -495,15 +518,15 @@ const erMain = document.getElementById('er-main');
 
 // ── LocalStorage ──────────────────────────────────────────────────────────
 function saveState() {
-  localStorage.setItem(LS('excl'), JSON.stringify([...excludedTables]));
-  localStorage.setItem(LS('hid'),  JSON.stringify([...hiddenTables]));
-  localStorage.setItem(LS('ae'),   String(autoExpand));
-  localStorage.setItem(LS('dep'),  String(expandDepth));
-  localStorage.setItem(LS('cm'),   String(colMode));
-  localStorage.setItem(LS('cov'),  JSON.stringify(colOverride));
-  localStorage.setItem(LS('lbl'),  String(showEdgeLabels));
-  localStorage.setItem(LS('dir'),  expandDir);
-  localStorage.setItem(LS('al'),   String(autoLayout));
+  setLS(LS('excl'), JSON.stringify([...excludedTables]));
+  setLS(LS('hid'),  JSON.stringify([...hiddenTables]));
+  setLS(LS('ae'),   String(autoExpand));
+  setLS(LS('dep'),  String(expandDepth));
+  setLS(LS('cm'),   String(colMode));
+  setLS(LS('cov'),  JSON.stringify(colOverride));
+  setLS(LS('lbl'),  String(showEdgeLabels));
+  setLS(LS('dir'),  expandDir);
+  setLS(LS('al'),   String(autoLayout));
 }
 function loadState() {
   try { excludedTables = new Set(JSON.parse(localStorage.getItem(LS('excl')) || '[]')); } catch{}
@@ -1216,15 +1239,18 @@ function enterFocusMode() {
   // Save full-view positions
   Object.keys(nodePos).forEach(k => { basePos[k] = {...nodePos[k]}; });
   Object.keys(nodePos).forEach(k => delete nodePos[k]);
+  clearUndoStacks(); // undo history belongs to the overview's nodePos, not focus's
 }
 function switchFocusTable() {
   Object.keys(nodePos).forEach(k => delete nodePos[k]);
   Object.keys(ringDepth).forEach(k => delete ringDepth[k]);
+  clearUndoStacks(); // new focus root -> different table set, unrelated history
 }
 function exitFocusMode() {
   Object.keys(nodePos).forEach(k => delete nodePos[k]);
   Object.keys(ringDepth).forEach(k => delete ringDepth[k]);
   Object.keys(basePos).forEach(k => { nodePos[k] = {...basePos[k]}; });
+  clearUndoStacks(); // back to the overview's nodePos; focus-mode history doesn't apply
 }
 
 // re-render; with auto-tidy on, the overview is re-packed first so the
@@ -1236,7 +1262,32 @@ function refreshView(){
     ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
       if(ts.length) gridLayout(ts);
   }
-  renderDiagram(); requestAnimationFrame(fitView);
+  renderDiagram();
+  // don't yank the viewport back to fit-all for a change that didn't
+  // actually move it out of view — checking one more table in the list, or
+  // any change with Auto-tidy off (existing positions are untouched, new
+  // ones incrementally placed near their connections), usually leaves the
+  // diagram right where the user was already looking
+  if(!isDisplayInView()) requestAnimationFrame(fitView);
+}
+
+// is the current display set's bounding box (already) inside the viewport,
+// i.e. would fitView() actually change anything the user can see?
+function isDisplayInView(){
+  const tables=getDisplayTables();
+  if(!tables.length) return true;
+  const R=svg.getBoundingClientRect();
+  if(!R.width||!R.height) return false;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  tables.forEach(name=>{
+    const p=nodePos[name], s=nodeSize[name]||calcSize(name);
+    if(!p) return;
+    x0=Math.min(x0,p.x-s.w/2); y0=Math.min(y0,p.y-s.h/2);
+    x1=Math.max(x1,p.x+s.w/2); y1=Math.max(y1,p.y+s.h/2);
+  });
+  if(!isFinite(x0)) return true;
+  const sx0=x0*vs+vx, sy0=y0*vs+vy, sx1=x1*vs+vx, sy1=y1*vs+vy;
+  return sx0>=-20 && sy0>=-20 && sx1<=R.width+20 && sy1<=R.height+20;
 }
 
 // ── fitView ────────────────────────────────────────────────────────────────
@@ -1725,11 +1776,11 @@ function renderTableList(){
   const prevScroll = list.scrollTop;
   list.innerHTML='';
   const inView = (focusedTable||autoExpand) ? new Set(getDisplayTables()) : null;
-  const colHit = t => query && !t.includes(query)
+  const colHit = t => query && !t.toLowerCase().includes(query)
     ? (DATA.tables[t]?.columns||[]).find(c=>c.name.toLowerCase().includes(query))?.name
     : null;
   allTables()
-    .filter(t => !query || t.includes(query)
+    .filter(t => !query || t.toLowerCase().includes(query)
       || (DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(query)))
     .forEach(name => {
       const t=DATA.tables[name];
@@ -1976,6 +2027,15 @@ function updateUndoRedoUI(){
   if(u) u.disabled=!undoStack.length;
   if(r) r.disabled=!redoStack.length;
 }
+// a snapshot's nodePos only makes sense for the mode/table-set it was taken
+// in — entering/leaving/switching focus (and loading a saved view) all
+// wholesale-replace nodePos with an unrelated coordinate space, so an undo
+// stack built up in one of them is meaningless (and actively corrupting:
+// restoring it drops nodes or scrambles positions) in another
+function clearUndoStacks(){
+  undoStack=[]; redoStack=[];
+  updateUndoRedoUI();
+}
 
 // redraw from the mutated nodePos without relaying out or moving the viewport
 // (same "just redraw" spirit as the drag-mouseup path — no auto-tidy relayout)
@@ -2172,8 +2232,15 @@ function exportToMermaid(){
 async function exportToPNG(){
   const built=buildExportSvg();
   if(!built) return;
-  const scale=2, W=Math.ceil(built.vw*scale), H=Math.ceil(built.vh*scale);
-  built.svg.setAttribute('width',W); built.svg.setAttribute('height',H); // 2x raster
+  // browsers cap canvas dimensions (commonly ~16384px/side, tighter on
+  // Safari/mobile) — an oversized canvas makes toBlob() silently yield
+  // null with no error of its own. Scale down from the ideal 2x rather
+  // than fail outright on a large diagram; MAX_DIM is a conservative
+  // floor that should be safe everywhere.
+  const MAX_DIM=8000;
+  const scale=Math.max(0.1, Math.min(2, MAX_DIM/built.vw, MAX_DIM/built.vh));
+  const W=Math.ceil(built.vw*scale), H=Math.ceil(built.vh*scale);
+  built.svg.setAttribute('width',W); built.svg.setAttribute('height',H);
   const svgStr=new XMLSerializer().serializeToString(built.svg);
   const blob=new Blob([svgStr],{type:'image/svg+xml;charset=utf-8'});
   const url=URL.createObjectURL(blob);
@@ -2181,20 +2248,30 @@ async function exportToPNG(){
   await new Promise(resolve=>{
     const img=new Image();
     img.onload=()=>{
-      const canvas=document.createElement('canvas');
-      canvas.width=W; canvas.height=H;
-      const ctx=canvas.getContext('2d');
-      ctx.drawImage(img,0,0,W,H); // background stays transparent
-      URL.revokeObjectURL(url);
-      canvas.toBlob(pngBlob=>{
-        const pngUrl=URL.createObjectURL(pngBlob);
-        if(navigator.clipboard?.write){
-          navigator.clipboard.write([new ClipboardItem({'image/png':pngBlob})])
-            .then(()=>showToast('Copied to clipboard ✓'))
-            .catch(()=>downloadPNG(pngUrl));
-        } else { downloadPNG(pngUrl); }
+      try{
+        const canvas=document.createElement('canvas');
+        canvas.width=W; canvas.height=H;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,0,0,W,H); // background stays transparent
+        URL.revokeObjectURL(url);
+        canvas.toBlob(pngBlob=>{
+          if(!pngBlob){
+            showToast('Export failed: diagram too large to rasterize — try SVG export instead');
+            resolve(); return;
+          }
+          const pngUrl=URL.createObjectURL(pngBlob);
+          if(navigator.clipboard?.write){
+            navigator.clipboard.write([new ClipboardItem({'image/png':pngBlob})])
+              .then(()=>showToast('Copied to clipboard ✓'))
+              .catch(()=>downloadPNG(pngUrl));
+          } else { downloadPNG(pngUrl); }
+          resolve();
+        },'image/png');
+      }catch(err){
+        URL.revokeObjectURL(url);
+        showToast('Export failed: diagram too large to rasterize — try SVG export instead');
         resolve();
-      },'image/png');
+      }
     };
     img.onerror=()=>{URL.revokeObjectURL(url);showToast('Export failed');resolve();};
     img.src=url;
@@ -2259,8 +2336,24 @@ function drawSnapGuides(guides){
   });
 }
 
+function drawMarquee(a,b){
+  let gl=document.getElementById('marquee-layer');
+  if(!a||!b){ if(gl) gl.innerHTML=''; return; }
+  if(!gl){ gl=svgEl('g',{id:'marquee-layer'}); erMain.appendChild(gl); }
+  gl.innerHTML='';
+  const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(b.x-a.x), h=Math.abs(b.y-a.y);
+  gl.appendChild(svgEl('rect',{x,y,width:w,height:h,class:'marquee-rect'}));
+}
+
 svg.addEventListener('mousedown', e=>{
   if(e.button!==0||isDragging) return;
+  // shift-drag on empty canvas = rubber-band select, same modifier as
+  // shift-click's "add to selection" on a node — plain drag still pans
+  if(e.shiftKey){
+    isMarqueeSelecting=true;
+    marqueeStart=svgPt(e.clientX,e.clientY);
+    return;
+  }
   isPanning=true; panSX=e.clientX; panSY=e.clientY; panVX=vx; panVY=vy;
   svg.classList.add('panning');
 });
@@ -2307,6 +2400,10 @@ window.addEventListener('mousemove', e=>{
     }
     return;
   }
+  if(isMarqueeSelecting){
+    drawMarquee(marqueeStart, svgPt(e.clientX,e.clientY));
+    return;
+  }
   if(!isPanning) return;
   vx=panVX+(e.clientX-panSX); vy=panVY+(e.clientY-panSY);
   setTransform();
@@ -2332,6 +2429,31 @@ window.addEventListener('mouseup', e=>{
     if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
     return;
   }
+  if(isMarqueeSelecting){
+    isMarqueeSelecting=false;
+    const cur=svgPt(e.clientX,e.clientY);
+    const x0=Math.min(marqueeStart.x,cur.x), x1=Math.max(marqueeStart.x,cur.x);
+    const y0=Math.min(marqueeStart.y,cur.y), y1=Math.max(marqueeStart.y,cur.y);
+    // require an actual drag (not just a shift-click) before touching the
+    // selection, so a stray shift-click on empty canvas doesn't do anything
+    if(x1-x0>3 || y1-y0>3){
+      getDisplayTables().forEach(t=>{
+        const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+        if(!p) return;
+        const nx0=p.x-s.w/2, nx1=p.x+s.w/2, ny0=p.y-s.h/2, ny1=p.y+s.h/2;
+        if(nx1>=x0 && nx0<=x1 && ny1>=y0 && ny0<=y1){ // intersects the marquee
+          selectedTables.add(t);
+          selectionAnchor=t;
+        }
+      });
+      refreshSelectionUI();
+      marqueeJustSelected=true;
+      setTimeout(()=>{ marqueeJustSelected=false; }, 0);
+    }
+    marqueeStart=null;
+    drawMarquee(null,null);
+    return;
+  }
   if(isPanning){isPanning=false;svg.classList.remove('panning');}
 });
 
@@ -2352,6 +2474,7 @@ svg.addEventListener('wheel', e=>{
 },{passive:false});
 
 svg.addEventListener('click', e=>{
+  if(marqueeJustSelected){ marqueeJustSelected=false; return; } // end of a marquee, not a click
   if(e.target===svg||e.target===erMain) selectOnly(null);
 });
 
@@ -2418,7 +2541,7 @@ document.getElementById('btn-export-mmd').addEventListener('click', exportToMerm
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);
-  localStorage.setItem(LS('dk'), String(on));
+  setLS(LS('dk'), String(on));
 });
 document.getElementById('btn-autolayout').addEventListener('click',()=>{
   autoLayout=!autoLayout;
@@ -2528,7 +2651,7 @@ document.querySelectorAll('#colmode-group .diag-btn').forEach(btn=>{
 // Max visible rows per table
 document.getElementById('max-rows').addEventListener('change', e=>{
   maxRows=parseInt(e.target.value,10)||15;
-  localStorage.setItem(LS('mr'), String(maxRows));
+  setLS(LS('mr'), String(maxRows));
   Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
   // Auto-tidy ON: node heights change drastically — re-layout to keep the
   // no-overlap guarantee. OFF: resize in place, keep positions.
@@ -2559,7 +2682,7 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
   function setCollapsed(pane, tabId, key, val){
     pane.classList.toggle('collapsed', val);
     document.getElementById(tabId).classList.toggle('visible', val);
-    localStorage.setItem(key, String(val));
+    setLS(key, String(val));
   }
   setCollapsed(lp,'expand-left',LS('lc'),localStorage.getItem(LS('lc'))==='true');
   setCollapsed(rp,'expand-right',LS('rc'),localStorage.getItem(LS('rc'))==='true');
@@ -2585,7 +2708,7 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
     window.addEventListener('mouseup', ()=>{
       if(!resizing) return;
       resizing=false; div.classList.remove('dragging');
-      localStorage.setItem(key, String(Math.round(pane.getBoundingClientRect().width)));
+      setLS(key, String(Math.round(pane.getBoundingClientRect().width)));
     });
   }
   setupDivider('div-l', lp, LS('lw'),  1);
@@ -2594,7 +2717,7 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
 
 // ── Named views (save/restore the current view under a name) ─────────────
 function loadViews(){ try{ return JSON.parse(localStorage.getItem(LS('views'))||'{}')||{}; }catch{ return {}; } }
-function persistViews(v){ localStorage.setItem(LS('views'), JSON.stringify(v)); }
+function persistViews(v){ setLS(LS('views'), JSON.stringify(v)); }
 
 function snapshotView(){
   const pos={};
@@ -2613,6 +2736,7 @@ function applyView(v){
   Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
   Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
   Object.entries(v.pos||{}).forEach(([t,p])=>{ if(DATA.tables[t]) nodePos[t]={...p}; });
+  clearUndoStacks(); // a saved view's nodePos is unrelated to whatever was being edited before
   saveState(); syncControlsUI();
   renderDiagram(); requestAnimationFrame(fitView);
   renderTableList(); updateHiddenBar(); updateDepthCtrl(); showDetails();
@@ -2676,7 +2800,7 @@ document.getElementById('view-share').addEventListener('click',()=>{
   const setLg=v=>{
     lg.classList.toggle('collapsed', v);
     document.getElementById('legend-toggle').textContent=v?'▸':'▾';
-    localStorage.setItem(LS('lg'), String(v));
+    setLS(LS('lg'), String(v));
   };
   setLg(localStorage.getItem(LS('lg'))==='true');
   document.getElementById('legend-head').addEventListener('click',()=>setLg(!lg.classList.contains('collapsed')));
@@ -2691,7 +2815,7 @@ document.getElementById('search').addEventListener('keydown', e=>{
   if(e.key!=='Enter') return;
   const q=e.target.value.toLowerCase();
   if(!q) return;
-  const m=allTables().find(t=>t.startsWith(q)) || allTables().find(t=>t.includes(q))
+  const m=allTables().find(t=>t.toLowerCase().startsWith(q)) || allTables().find(t=>t.toLowerCase().includes(q))
        || allTables().find(t=>(DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(q)));
   if(!m) return;
   if(!hiddenTables.has(m) && !getDisplayTables().includes(m)) addTables([m]); // add hidden targets before locating
