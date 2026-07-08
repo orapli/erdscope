@@ -353,6 +353,13 @@ def parse_models(models_dir, tables, table_map=None):
     # module's file, `included do ... end` or not — anything computed
     # dynamically is genuinely out of reach for regex-based static analysis.
     module_src = {}
+    # class_name -> {base, content, clean} for every `class X < Y` found
+    # anywhere under models_dir (concerns excluded, same as before) —
+    # collected in one pass so a custom base class (`class Widget <
+    # BaseRecord`, common in mature Rails apps once they've grown a base
+    # model of their own) can be resolved transitively below, the same way
+    # parse_django resolves models.Model through abstract base classes.
+    class_info = {}
     for path in models_dir.rglob('*.rb'):
         try:
             content = path.read_text(encoding='utf-8', errors='replace')
@@ -360,32 +367,51 @@ def parse_models(models_dir, tables, table_map=None):
             continue
         for mm in re.finditer(r'module\s+(\w+)\b', content):
             module_src.setdefault(mm.group(1), content)
-
-    for path in sorted(models_dir.rglob('*.rb')):
         if 'concerns' in path.parts:  # separator-agnostic (works on Windows too)
             continue
-        try:
-            content = path.read_text(encoding='utf-8', errors='replace')
-        except Exception:
+        clean = re.sub(r'#[^\n]*', '', content)
+        for cm in re.finditer(r'class\s+([\w:]+)\s*<\s*([\w:]+)', clean):
+            # self.abstract_class = true (e.g. a shared BaseRecord) still
+            # counts as a valid base for the transitive check below, but
+            # isn't itself a real, queryable model with its own table
+            abstract = re.search(r'self\.abstract_class\s*=\s*true', clean) is not None
+            class_info[cm.group(1)] = {'base': cm.group(2), 'content': content,
+                                       'clean': clean, 'abstract': abstract}
+
+    # a class counts as a real model if it (transitively) inherits from
+    # ApplicationRecord/ActiveRecord::Base — not just a literal, direct
+    # `< ApplicationRecord`, which silently dropped every model built on a
+    # shared custom base class with no warning
+    model_names, changed = set(), True
+    while changed:
+        changed = False
+        for name, c in class_info.items():
+            if name not in model_names and (
+                    c['base'] in ('ApplicationRecord', 'ActiveRecord::Base')
+                    or c['base'] in model_names):
+                model_names.add(name)
+                changed = True
+
+    for class_name in sorted(model_names):
+        if class_info[class_name]['abstract']:
             continue
-        if not re.search(r'< (?:ApplicationRecord|ActiveRecord::Base)', content):
-            continue
-        m = re.search(r'class\s+([\w:]+)\s*<', content)
-        if not m:
-            continue
-        class_name = m.group(1)
+        content, clean = class_info[class_name]['content'], class_info[class_name]['clean']
         if class_name in table_map:
             # explicit override wins over everything — the escape hatch for
             # cases static analysis genuinely can't reach, e.g. table_name
             # set inside a concern that itself lives in a gem, not the app
             table_name = table_map[class_name]
         else:
-            tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", content)
+            # comment-stripped `clean`, not raw `content` — a commented-out
+            # `# self.table_name = 'old'` must not win over (or stand in
+            # for) the real, active assignment
+            tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", clean)
             if not tn_m:
-                for inc_m in re.finditer(r'include\s+([\w:]+)', content):
+                for inc_m in re.finditer(r'include\s+([\w:]+)', clean):
                     mod_content = module_src.get(inc_m.group(1).rsplit('::', 1)[-1])
                     if mod_content:
-                        tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", mod_content)
+                        mod_clean = re.sub(r'#[^\n]*', '', mod_content)
+                        tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", mod_clean)
                         if tn_m:
                             break
             table_name = tn_m.group(1) if tn_m else class_to_table(class_name)
@@ -394,7 +420,6 @@ def parse_models(models_dir, tables, table_map=None):
             # (library-managed table, another database, ...)
             tables[table_name] = {'columns': [], 'associations': [],
                                   'primary_key': None, 'schema_missing': True}
-        clean = re.sub(r'#[^\n]*', '', content)
         for m2 in re.finditer(
             r'(has_many|has_one|belongs_to|has_and_belongs_to_many)\s+:(\w+)((?:[^#\n]|,[ \t]*\n)*)',
             clean

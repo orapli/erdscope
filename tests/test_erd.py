@@ -392,6 +392,29 @@ class TestOverlayAndInference(unittest.TestCase):
         self.assertIn('totally_different', erd2)
         self.assertNotIn('crm_widgets', erd2)
 
+    def test_model_on_custom_base_class_is_not_silently_dropped(self):
+        # custom_base_widget.rb: `class CustomBaseWidget < BaseRecord`, and
+        # base_record.rb: `class BaseRecord < ApplicationRecord`. Only a
+        # literal `< ApplicationRecord`/`< ActiveRecord::Base` used to be
+        # recognized, so a model built on a shared custom base class (common
+        # in mature Rails apps) was dropped with no warning at all — its
+        # associations (belongs_to :user here) vanished silently.
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.assertIn('custom_base_widgets', self.tables)
+        names = {a['name'] for a in self.tables['custom_base_widgets']['associations']}
+        self.assertIn('user', names)
+        # the abstract base class itself must not become a bogus table
+        self.assertNotIn('base_records', self.tables)
+
+    def test_commented_out_table_name_does_not_win(self):
+        # commented_table_name.rb has `# self.table_name = 'should_not_be_used'`
+        # — the self.table_name regex must run on comment-stripped source,
+        # or a commented-out assignment silently overrides the real
+        # (class_to_table-derived) table name
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.assertIn('commented_table_names', self.tables)
+        self.assertNotIn('should_not_be_used', self.tables)
+
     def test_dedupe_upgrades_lone_belongs_to_when_db_says_1to1(self):
         # simulates an incomplete Rails declaration: `belongs_to :account`
         # with no matching `has_one` on the other side, so the code alone
