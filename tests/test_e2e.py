@@ -143,6 +143,31 @@ class TestClientJS(unittest.TestCase):
                          'header-only mode should have actually shrunk the node '
                          '(otherwise this test is not exercising the resize path)')
 
+    def test_dark_mode_header_is_distinguishable_from_body_and_selection(self):
+        # regression: dark mode had no override for .n-hdr at all, so every
+        # table's header silently inherited the *light*-mode fill — which
+        # happens to be identical to the dark-mode body color, making every
+        # header invisible against its own body (reported as "monotonous,
+        # hard to tell apart"). Also covers a fix-of-the-fix: the new dark
+        # default rule's higher specificity (extra "body" type selector)
+        # initially beat the pre-existing .sel/.center rule too, so a
+        # selected node's header looked identical to every other one's.
+        self.page.click('#btn-dark')
+        self.page.wait_for_timeout(50)
+        colors = self.page.evaluate('''() => {
+            const hdr = document.querySelector('[data-name="posts"] .n-hdr');
+            const bg  = document.querySelector('[data-name="posts"] .n-bg');
+            return {header: getComputedStyle(hdr).fill, body: getComputedStyle(bg).fill};
+        }''')
+        self.assertNotEqual(colors['header'], colors['body'],
+                            'the header must be visually distinct from the node body in dark mode')
+
+        self.page.click('[data-name="posts"]')
+        selected_fill = self.page.evaluate(
+            '''getComputedStyle(document.querySelector('[data-name="posts"] .n-hdr')).fill''')
+        self.assertNotEqual(selected_fill, colors['header'],
+                            'a selected node must still look different from an unselected one in dark mode')
+
     def test_display_change_does_not_reset_viewport_when_content_still_fits(self):
         # regression: refreshView() used to unconditionally re-fit the
         # viewport on every display-set change, so checking one more table

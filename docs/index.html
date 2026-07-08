@@ -299,6 +299,24 @@ body.dark .er-node .n-alt{fill:#263447}
 body.dark .er-node .n-cn{fill:#e2e8f0}
 body.dark .er-node .n-ct{fill:#94a3b8}
 body.dark .er-node .n-colhit{fill:#713f12}
+/* headers had no dark override at all, so they silently inherited the
+   light-mode fill (#1e293b) — identical to the dark-mode body color right
+   above, making every table's title bar invisible against its own body.
+   Light mode gets its contrast from a dark header on a near-white body
+   (max lightness gap); mirroring that in dark mode means a header
+   noticeably *lighter* than the body, not just one shade darker-of-dark —
+   auto-expanded (dashed, de-emphasized) nodes get the dimmer, closer-to-
+   body tone instead, matching their already-subdued border treatment */
+body.dark .er-node .n-hdr{fill:#475569}
+body.dark .er-node.auto .n-hdr{fill:#334155}
+body.dark .er-node.ring-1 .n-hdr{fill:#2952cc}
+body.dark .er-node.ring-2 .n-hdr{fill:#4a5f8f}
+body.dark .er-node.ring-3 .n-hdr{fill:#525f78}
+/* the theme-independent .sel/.center rule (#1d4ed8) has lower specificity
+   than body.dark .er-node .n-hdr above (extra "body" type selector), so
+   without this it silently lost to the plain dark-mode default and a
+   selected/focused node's header looked identical to every other node's */
+body.dark .er-node.sel .n-hdr,body.dark .er-node.center .n-hdr{fill:#3b82f6}
 body.dark .er-edge .e-lbg{fill:#0b1220}
 body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
 
