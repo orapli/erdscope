@@ -329,6 +329,33 @@ class TestClientJS(unittest.TestCase):
         self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
                          'a plain click (no drag) should not create an undo entry')
 
+    def test_undo_history_is_cleared_when_entering_focus_mode(self):
+        # regression: a drag's undo snapshot is a full overview nodePos.
+        # Entering focus mode wholesale-replaces nodePos with just the
+        # focus ring's positions — undoing there used to restore the stale
+        # overview snapshot into the wrong coordinate space/table set,
+        # scrambling the layout. The stack must be cleared on the
+        # transition instead, disabling undo.
+        box = self.page.locator('[data-name="posts"]').bounding_box()
+        self.page.mouse.move(box['x']+box['width']/2, box['y']+15)
+        self.page.mouse.down()
+        self.page.mouse.move(box['x']+box['width']/2+80, box['y']+15+80, steps=5)
+        self.page.mouse.up()
+        self.assertFalse(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                         'a real drag should have created an undo entry')
+
+        self.page.dblclick('[data-name="users"]')  # double-click = enter focus mode
+        self.page.wait_for_timeout(50)
+        self.assertTrue(self.page.evaluate('!!focusedTable'), 'should now be in focus mode')
+        self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                         'the pre-focus undo history must not carry into focus mode')
+
+        self.page.dblclick('[data-name="users"]')  # exit focus mode
+        self.page.wait_for_timeout(50)
+        self.assertFalse(self.page.evaluate('!!focusedTable'))
+        self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                         'exiting focus mode must not resurrect the pre-focus undo history either')
+
 
 # Regression fixture for the "same-row skip" family of layout bugs: 'hub' is
 # the highest-degree table (becomes the row-0 hub), its three direct children

@@ -2179,15 +2179,18 @@ function enterFocusMode() {
   // Save full-view positions
   Object.keys(nodePos).forEach(k => { basePos[k] = {...nodePos[k]}; });
   Object.keys(nodePos).forEach(k => delete nodePos[k]);
+  clearUndoStacks(); // undo history belongs to the overview's nodePos, not focus's
 }
 function switchFocusTable() {
   Object.keys(nodePos).forEach(k => delete nodePos[k]);
   Object.keys(ringDepth).forEach(k => delete ringDepth[k]);
+  clearUndoStacks(); // new focus root -> different table set, unrelated history
 }
 function exitFocusMode() {
   Object.keys(nodePos).forEach(k => delete nodePos[k]);
   Object.keys(ringDepth).forEach(k => delete ringDepth[k]);
   Object.keys(basePos).forEach(k => { nodePos[k] = {...basePos[k]}; });
+  clearUndoStacks(); // back to the overview's nodePos; focus-mode history doesn't apply
 }
 
 // re-render; with auto-tidy on, the overview is re-packed first so the
@@ -2939,6 +2942,15 @@ function updateUndoRedoUI(){
   if(u) u.disabled=!undoStack.length;
   if(r) r.disabled=!redoStack.length;
 }
+// a snapshot's nodePos only makes sense for the mode/table-set it was taken
+// in — entering/leaving/switching focus (and loading a saved view) all
+// wholesale-replace nodePos with an unrelated coordinate space, so an undo
+// stack built up in one of them is meaningless (and actively corrupting:
+// restoring it drops nodes or scrambles positions) in another
+function clearUndoStacks(){
+  undoStack=[]; redoStack=[];
+  updateUndoRedoUI();
+}
 
 // redraw from the mutated nodePos without relaying out or moving the viewport
 // (same "just redraw" spirit as the drag-mouseup path — no auto-tidy relayout)
@@ -3593,6 +3605,7 @@ function applyView(v){
   Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
   Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
   Object.entries(v.pos||{}).forEach(([t,p])=>{ if(DATA.tables[t]) nodePos[t]={...p}; });
+  clearUndoStacks(); // a saved view's nodePos is unrelated to whatever was being edited before
   saveState(); syncControlsUI();
   renderDiagram(); requestAnimationFrame(fitView);
   renderTableList(); updateHiddenBar(); updateDepthCtrl(); showDetails();
