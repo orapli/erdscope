@@ -1,0 +1,50 @@
+# Sample erdscope config file, based on the schema behind the live demo
+# (docs/gen_demo.py — a small e-commerce shop: users, products, orders...).
+#
+# To use it for real: copy to .erdscope.json or .erdscope.yml (dot-prefixed)
+# in the directory you run `erd.py` from and it's picked up automatically,
+# no --config needed. YAML comments like this one only work if PyYAML is
+# installed — .erdscope.json (no comments, since JSON has none) always works
+# with zero dependencies. An explicit CLI flag always overrides the same key
+# here. The database URL is never allowed in this file — it's CLI-only.
+
+output: erd.html
+max_rows: 15
+
+# Point at a Rails/Prisma/Django project to merge association semantics
+# (has_many :through, polymorphic, ...) on top of the DB truth.
+# models: ../myapp
+
+# Also write a table-definition workbook alongside the HTML.
+# excel: table_definitions.xlsx
+
+# Off by default on purpose: guessing relations from *_id column names can
+# be wrong. The demo turns it on because activity_logs.user_id has no real
+# FK constraint (deliberately, to show what an inferred edge looks like).
+infer_fk: true
+
+# only: ["user*", "order*"]
+# exclude: ["*_logs"]
+
+# Rails only, and only needed when static analysis can't resolve a model's
+# table itself (e.g. table_name set inside a concern that lives in a gem).
+# table_map:
+#   Widget: crm_widgets
+
+# Manually declare relations no source (real FK, *_id inference, or --models
+# code parsing) can find. Works even with no --models at all. Nothing in
+# this demo schema actually needs one (every FK fits a naming convention),
+# so the entries below are illustrative and left commented out — uncomment
+# and adapt table/column/references to your own schema's odd cases.
+relations: []
+  # - table: orders
+  #   column: buyer_ref        # imagine a column that doesn't fit *_id
+  #   references: users
+  #   name: buyer
+  #
+  # # one_to_one forces has_one (1:1) rendering even without a DB unique
+  # # constraint on the column:
+  # - table: shipments
+  #   column: order_id
+  #   references: orders
+  #   one_to_one: true

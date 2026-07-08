@@ -39,10 +39,10 @@ ssh -N -L 3307:db-host:3306 bastion &
 python3 erd.py mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html
 ```
 
-Connections use PyMySQL when installed and otherwise fall back to the `mysql` CLI —
-the tool itself has no dependencies. Use a read-only account, and leave the password
-out of the URL — if it's not in `MYSQL_PWD` either, you'll be prompted for it
-(hidden input, never touches argv or shell history).
+Use a read-only account, and leave the password out of the URL — if it's not in
+`MYSQL_PWD` either, you'll be prompted for it (hidden input, never touches argv or
+shell history). See [Dependencies](#dependencies) below for how the DB connection
+itself is made.
 
 ### Options
 
@@ -55,6 +55,74 @@ out of the URL — if it's not in `MYSQL_PWD` either, you'll be prompted for it
 | `--only 'user*,post*'` | Include only tables matching the glob pattern(s) |
 | `--exclude '*_logs'` | Exclude tables matching the glob pattern(s) |
 | `--infer-fk` | Guess relations from `*_id` column names when no real association/FK backs them (off by default — see below) |
+| `--table-map 'Widget=crm_widgets'` | Rails only: override a model's table when static analysis can't determine it (e.g. `table_name` set inside a concern that lives in a gem, not the app). Repeatable; comma-separated lists accepted |
+| `--config PATH` | Load defaults from a config file instead of repeating flags — see below. Auto-discovered as `.erdscope.json`/`.yml`/`.yaml` in the current directory if not given |
+| `--no-config` | Skip config auto-discovery even if `.erdscope.*` exists in the cwd |
+
+## Config file
+
+Once the flag list above gets long, put it in a file instead — `.erdscope.json` next to
+where you run the tool is picked up automatically (no `--config` needed). JSON works
+with zero dependencies; YAML works too if PyYAML happens to be installed. Every key
+mirrors a CLI option above (snake_case), plus one config-only key, `relations`:
+
+```jsonc
+{
+  "output": "erd.html",
+  "models": "../myapp",
+  "max_rows": 15,
+  "infer_fk": true,
+  "only": ["user*", "post*"],
+  "table_map": { "Widget": "crm_widgets" },
+
+  // manually declare a relation no source (real FK, *_id inference, or
+  // --models code parsing) can find — an oddly-named column, or one a
+  // gem-provided concern/dynamic association hides from static analysis.
+  // Works standalone, with no --models at all: you can build a complete
+  // relation graph from a config file alone, e.g. before the models exist.
+  "relations": [
+    { "table": "orders", "column": "buyer_code", "references": "users" },
+    { "table": "profiles", "column": "person_ref", "references": "users",
+      "one_to_one": true, "name": "owner" }
+  ]
+}
+```
+
+An explicit CLI flag always wins over the same config key, replacing it entirely
+(list-valued keys like `only` are not merged with the config's). The database URL is
+deliberately **not** a config key — it's CLI-only, so a config file that ends up
+committed can never carry a credential-bearing connection string.
+
+See [`erdscope.example.yml`](erdscope.example.yml) for a fully annotated sample (based
+on the live demo's schema) with every key explained and the situational ones commented
+out — copy it to `.erdscope.yml`/`.erdscope.json` and adapt.
+
+Precedence for a manually declared relation is the same as a code-parsed association:
+it's applied before `--infer-fk` runs (so it also suppresses a wrong name-based guess
+for that column) and takes priority over a real DB FK constraint for the same column.
+An unknown table/column/target in `relations` is always a typo, so it's a hard error,
+not a silent no-op.
+
+## Dependencies
+
+`erd.py` runs with **zero required dependencies** — everything below is optional, and
+the tool degrades gracefully (falls back, or fails with a clear message) when a piece
+is missing.
+
+| Library | Used for | If not installed |
+|---|---|---|
+| [PyMySQL](https://pypi.org/project/PyMySQL/) | The DB connection | Falls back to shelling out to the `mysql` CLI (must be on `PATH`) |
+| [PyYAML](https://pypi.org/project/PyYAML/) | Reading a `.yml`/`.yaml` config file | A `.json` config still works with no dependency; pointing `--config`/auto-discovery at a `.yml`/`.yaml` file without PyYAML installed exits with a clear error |
+
+Excel output (`--excel`) needs neither — it's written directly via the stdlib
+`zipfile`/XML, not a spreadsheet library.
+
+Test-only, and only if you run that particular suite:
+
+| Library | Used for |
+|---|---|
+| [openpyxl](https://pypi.org/project/openpyxl/) | Roundtrip-verifying `--excel` output in the unit tests (`tests/test_erd.py`); that one test skips itself if it's missing |
+| [Playwright](https://playwright.dev/python/) | The browser E2E suite (`tests/test_e2e.py`) — see [Tests](#tests) below |
 
 ## What you get
 

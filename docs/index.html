@@ -185,6 +185,7 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .atype{font-size:10px;color:#64748b}
 .badge-inf{font-size:9px;background:#fef9c3;color:#854d0e;padding:0 4px;border-radius:3px}
 .badge-dbfk{font-size:9px;background:#dbeafe;color:#1e3a5f;padding:0 4px;border-radius:3px}
+.badge-manual{font-size:9px;background:#ede9fe;color:#5b21b6;padding:0 4px;border-radius:3px}
 .aname{font-family:monospace;font-size:12px;font-weight:600;color:#1e293b}
 .atarget{font-size:11px;color:#64748b;margin-top:1px}
 .atarget a{color:#3b82f6;cursor:pointer;text-decoration:none}
@@ -1857,6 +1858,7 @@ function showDetails(){
         :(DESC[a.type]||'');
       if(a.inferred) desc+=' (inferred from the FK column name; no association is declared)';
       if(a.db_fk) desc+=' (from a database foreign-key constraint)';
+      if(a.manual) desc+=' (manually declared in the config file)';
       const inView=dispTables.has(a.target);
       const isHidden=hiddenTables.has(a.target);
       const link=a.polymorphic
@@ -1868,7 +1870,7 @@ function showDetails(){
             :`<a class="add-target" data-add="${esc(a.target)}" title="Not displayed — click to add to the diagram">${esc(a.target)} ＋</a>`;
       const thr=a.through?`<div class="athrough">through: :${esc(a.through)}</div>`:'';
       // plain-language description appears as a tooltip on hover
-      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}</div><div class="aname">:${esc(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
+      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${esc(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
     });
     h+='</div>';
   }

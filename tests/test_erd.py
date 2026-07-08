@@ -271,6 +271,32 @@ class TestOverlayAndInference(unittest.TestCase):
         self.assertIn('webhooks', self.tables)
         self.assertTrue(self.tables['webhooks']['schema_missing'])
 
+    def test_table_name_resolved_through_included_concern(self):
+        # widget.rb declares no self.table_name itself — it's set inside
+        # `included do` in the HasCrmTable concern it includes. Without
+        # following the include, this would fall back to class_to_table
+        # ('Widget' -> 'widgets'), which is wrong.
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.assertIn('crm_widgets', self.tables)
+        self.assertNotIn('widgets', self.tables)
+
+    def test_table_map_overrides_unresolvable_table_name(self):
+        # gizmo.rb includes a concern that lives in a gem, not this app —
+        # genuinely unresolvable by static analysis, so it falls back to
+        # class_to_table('Gizmo') = 'gizmos', which is wrong for this model.
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.assertIn('gizmos', self.tables)  # the (wrong) naive guess, unmapped
+
+    def test_table_map_corrects_it(self):
+        erd.merge_code_semantics(self.tables, FIXTURE, table_map={'Gizmo': 'crm_gizmos'})
+        self.assertIn('crm_gizmos', self.tables)
+        self.assertNotIn('gizmos', self.tables)
+        # the override wins even over a *correctly* resolved table_name
+        erd2 = db_tables()
+        erd.merge_code_semantics(erd2, FIXTURE, table_map={'Widget': 'totally_different'})
+        self.assertIn('totally_different', erd2)
+        self.assertNotIn('crm_widgets', erd2)
+
     def test_dedupe_upgrades_lone_belongs_to_when_db_says_1to1(self):
         # simulates an incomplete Rails declaration: `belongs_to :account`
         # with no matching `has_one` on the other side, so the code alone
@@ -322,6 +348,31 @@ class TestOverlayAndInference(unittest.TestCase):
         types = {a['type'] for a in tables['profiles']['associations']}
         self.assertEqual(types, {'belongs_to'})  # left as-is, not upgraded
 
+    def test_dedupe_is_column_aware_not_just_pair_aware(self):
+        # posts has TWO distinct FK columns pointing at users
+        # (author_id, editor_id) — an explicit belongs_to naming author_id
+        # must only dedupe the author_id DB FK, not also swallow editor_id
+        table_rows = [('users', ''), ('posts', '')]
+        col_rows = [
+            _col('users', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('posts', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('posts', 'author_id', 'bigint', 'bigint'),
+            _col('posts', 'editor_id', 'bigint', 'bigint'),
+        ]
+        fk_rows = [('posts', 'author_id', 'users'), ('posts', 'editor_id', 'users')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
+        tables['posts']['associations'].append(
+            {'type': 'belongs_to', 'name': 'author', 'target': 'users',
+             'foreign_key': 'author_id'})
+
+        removed = erd.dedupe_db_fk(tables)
+        self.assertEqual(removed, 1)  # only the author_id DB FK
+        fks = {a['foreign_key'] for a in tables['posts']['associations']}
+        self.assertEqual(fks, {'author_id', 'editor_id'})  # editor_id DB FK survives
+        editor = next(a for a in tables['posts']['associations']
+                     if a['foreign_key'] == 'editor_id')
+        self.assertTrue(editor.get('db_fk'))
+
     def test_inference_on_constraintless_fk(self):
         added = erd.infer_fk_associations(self.tables)
         targets = {a['target'] for a in self.tables['likes']['associations']}
@@ -365,6 +416,120 @@ class TestOverlayAndInference(unittest.TestCase):
         erd.infer_fk_associations(tables)
         a = tables['profiles']['associations'][0]
         self.assertEqual(a['type'], 'has_one')
+
+
+class TestManualRelations(unittest.TestCase):
+    def setUp(self):
+        self.tables = db_tables()
+
+    def test_declares_belongs_to_by_default(self):
+        added = erd.apply_manual_relations(self.tables, [
+            {'table': 'comments', 'column': 'post_id', 'references': 'posts'},
+        ])
+        self.assertEqual(added, 1)
+        a = self.tables['comments']['associations'][0]
+        self.assertEqual((a['type'], a['name'], a['target'], a['foreign_key']),
+                         ('belongs_to', 'post', 'posts', 'post_id'))
+        self.assertTrue(a['manual'])
+
+    def test_one_to_one_flag_forces_has_one(self):
+        added = erd.apply_manual_relations(self.tables, [
+            {'table': 'comments', 'column': 'post_id', 'references': 'posts',
+             'one_to_one': True, 'name': 'thread'},
+        ])
+        self.assertEqual(added, 1)
+        a = self.tables['comments']['associations'][0]
+        self.assertEqual((a['type'], a['name']), ('has_one', 'thread'))
+
+    def test_auto_detects_1to1_via_unique_index_like_other_sources(self):
+        idx = {'name': 'uk_comments_post_id', 'columns': ['post_id'], 'unique': True}
+        self.tables['comments']['indexes'].append(idx)
+        erd.apply_manual_relations(self.tables, [
+            {'table': 'comments', 'column': 'post_id', 'references': 'posts'},
+        ])
+        self.assertEqual(self.tables['comments']['associations'][0]['type'], 'has_one')
+
+    def test_works_without_any_models_overlay(self):
+        # the whole point: a complete relation graph from config alone,
+        # usable before any application code exists
+        added = erd.apply_manual_relations(self.tables, [
+            {'table': 'likes', 'column': 'unknown_thing_id', 'references': 'users'},
+        ])
+        self.assertEqual(added, 1)
+        self.assertIn('users', {a['target'] for a in self.tables['likes']['associations']})
+
+    def test_unknown_table_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.apply_manual_relations(self.tables, [
+                {'table': 'nope', 'column': 'x_id', 'references': 'users'},
+            ])
+        self.assertIn('nope', str(cm.exception))
+
+    def test_unknown_column_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.apply_manual_relations(self.tables, [
+                {'table': 'comments', 'column': 'nope_id', 'references': 'posts'},
+            ])
+        self.assertIn('nope_id', str(cm.exception))
+
+    def test_unknown_target_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.apply_manual_relations(self.tables, [
+                {'table': 'comments', 'column': 'post_id', 'references': 'nope'},
+            ])
+        self.assertIn('nope', str(cm.exception))
+
+    def test_missing_key_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.apply_manual_relations(self.tables, [{'table': 'comments', 'column': 'post_id'}])
+        self.assertIn('references', str(cm.exception))
+
+    def test_plain_db_fk_does_not_block_a_manual_relation(self):
+        # posts.user_id already has a real DB FK to users, but a plain DB FK
+        # isn't "explicit" — the manual relation is meant to take precedence
+        # over it (dedupe_db_fk resolves the pair afterward), not be blocked
+        added = erd.apply_manual_relations(self.tables, [
+            {'table': 'posts', 'column': 'user_id', 'references': 'users', 'name': 'owner'},
+        ])
+        self.assertEqual(added, 1)
+
+    def test_redundant_with_existing_explicit_association_is_skipped(self):
+        # an explicit (code-declared or previously-manual) association for
+        # the exact same column/target already exists — redeclaring it
+        # manually shouldn't create a duplicate edge
+        self.tables['posts']['associations'].append(
+            {'type': 'belongs_to', 'name': 'author', 'target': 'users',
+             'foreign_key': 'user_id', 'manual': True})
+        added = erd.apply_manual_relations(self.tables, [
+            {'table': 'posts', 'column': 'user_id', 'references': 'users'},
+        ])
+        self.assertEqual(added, 0)
+        matching = [a for a in self.tables['posts']['associations']
+                   if a.get('foreign_key') == 'user_id' and a['target'] == 'users'
+                   and not a.get('db_fk')]
+        self.assertEqual(len(matching), 1)
+
+    def test_takes_precedence_over_db_fk_via_dedupe(self):
+        # manual relation applied before dedupe_db_fk, so it wins over a real
+        # (but here, differently-named) DB FK the same way a code-declared
+        # association would
+        table_rows = [('a', ''), ('b', '')]
+        col_rows = [
+            _col('a', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('b', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
+            _col('b', 'weird_ref', 'bigint', 'bigint'),
+        ]
+        fk_rows = [('b', 'weird_ref', 'a')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
+        erd.apply_manual_relations(tables, [
+            {'table': 'b', 'column': 'weird_ref', 'references': 'a', 'name': 'owner'},
+        ])
+        removed = erd.dedupe_db_fk(tables)
+        self.assertEqual(removed, 1)
+        assocs = tables['b']['associations']
+        self.assertEqual(len(assocs), 1)
+        self.assertTrue(assocs[0]['manual'])
+        self.assertNotIn('db_fk', assocs[0])
 
 
 class TestFkColumns(unittest.TestCase):
@@ -550,6 +715,172 @@ class TestExcel(unittest.TestCase):
             wb = openpyxl.load_workbook(out)
             self.assertEqual(wb.sheetnames[0], 'Tables')
             self.assertIn('users', wb.sheetnames)
+
+
+class TestLoadConfig(unittest.TestCase):
+    def _args(self, config=None, no_config=False):
+        return SimpleNamespace(config=config, no_config=no_config)
+
+    def test_no_config_no_discovery_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = os.getcwd()
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, orig)
+            self.assertEqual(erd.load_config(self._args()), {})
+
+    def test_explicit_config_loads_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.json'
+            path.write_text('{"max_rows": 30, "only": ["a", "b"]}')
+            config = erd.load_config(self._args(config=str(path)))
+        self.assertEqual(config, {'max_rows': 30, 'only': ['a', 'b']})
+
+    def test_missing_explicit_config_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.load_config(self._args(config='/no/such/file.json'))
+        self.assertIn('does not exist', str(cm.exception))
+
+    def test_config_and_no_config_together_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.load_config(self._args(config='x.json', no_config=True))
+        self.assertIn('mutually exclusive', str(cm.exception))
+
+    def test_no_config_skips_auto_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 99}')
+            orig = os.getcwd()
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, orig)
+            self.assertEqual(erd.load_config(self._args(no_config=True)), {})
+
+    def test_auto_discovers_erdscope_json_in_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 42}')
+            orig = os.getcwd()
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, orig)
+            self.assertEqual(erd.load_config(self._args()), {'max_rows': 42})
+
+    def test_database_key_forbidden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.json'
+            path.write_text('{"database": "mysql://x@host/db"}')
+            with self.assertRaises(SystemExit) as cm:
+                erd.load_config(self._args(config=str(path)))
+        self.assertIn('database', str(cm.exception))
+
+    def test_unknown_key_exits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.json'
+            path.write_text('{"totally_bogus": 1}')
+            with self.assertRaises(SystemExit) as cm:
+                erd.load_config(self._args(config=str(path)))
+        self.assertIn('totally_bogus', str(cm.exception))
+
+    def test_relations_key_allowed_though_not_in_config_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.json'
+            path.write_text('{"relations": []}')
+            config = erd.load_config(self._args(config=str(path)))
+        self.assertEqual(config, {'relations': []})
+
+    def test_invalid_json_exits_with_clear_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.json'
+            path.write_text('{not valid json')
+            with self.assertRaises(SystemExit) as cm:
+                erd.load_config(self._args(config=str(path)))
+        self.assertIn('JSON', str(cm.exception))
+
+    def test_top_level_must_be_object(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.json'
+            path.write_text('[1, 2, 3]')
+            with self.assertRaises(SystemExit) as cm:
+                erd.load_config(self._args(config=str(path)))
+        self.assertIn('object', str(cm.exception))
+
+    def test_yaml_config_if_pyyaml_available(self):
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest('PyYAML not installed')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'my.yml'
+            path.write_text('max_rows: 25\nonly:\n  - a\n  - b\n')
+            config = erd.load_config(self._args(config=str(path)))
+        self.assertEqual(config, {'max_rows': 25, 'only': ['a', 'b']})
+
+
+class TestMainConfigIntegration(unittest.TestCase):
+    """End-to-end: main() wired to a stubbed parse_mysql, exercising config
+    discovery + the CLI/config precedence rule (an explicit CLI flag fully
+    replaces the same config key, no merging — including list-valued keys)."""
+    def setUp(self):
+        orig_parse_mysql = erd.parse_mysql
+        orig_argv = sys.argv
+        orig_cwd = os.getcwd()
+        self.addCleanup(lambda: setattr(erd, 'parse_mysql', orig_parse_mysql))
+        self.addCleanup(lambda: setattr(sys, 'argv', orig_argv))
+        self.addCleanup(os.chdir, orig_cwd)
+        erd.parse_mysql = lambda url: db_tables()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        os.chdir(self.tmp.name)
+
+    def _run(self, *cli_args):
+        sys.argv = ['erd.py', 'mysql://x@localhost/testdb', *cli_args]
+        erd.main()
+
+    def _load_output(self, filename='erd.html'):
+        html = (Path(self.tmp.name) / filename).read_text()
+        m = re.search(r'const DATA = (\{.*?\});\s*\n', html)
+        return json.loads(m.group(1))
+
+    def test_config_only_relation_and_filter_applied(self):
+        Path('.erdscope.json').write_text(json.dumps({
+            'only': ['posts', 'comments'],
+            'relations': [{'table': 'comments', 'column': 'post_id',
+                          'references': 'posts', 'name': 'thread'}],
+        }))
+        self._run()
+        data = self._load_output()
+        self.assertEqual(set(data['tables']), {'posts', 'comments'})
+        names = {a['name'] for a in data['tables']['comments']['associations']}
+        self.assertIn('thread', names)
+
+    def test_cli_only_fully_replaces_config_only_not_merged(self):
+        Path('.erdscope.json').write_text(json.dumps({'only': ['posts', 'comments', 'users']}))
+        self._run('--only', 'tags')
+        data = self._load_output()
+        self.assertEqual(set(data['tables']), {'tags'})
+
+    def test_cli_output_flag_overrides_config(self):
+        Path('.erdscope.json').write_text(json.dumps({'output': 'from_config.html'}))
+        self._run('-o', 'from_cli.html')
+        self.assertTrue((Path(self.tmp.name) / 'from_cli.html').exists())
+        self.assertFalse((Path(self.tmp.name) / 'from_config.html').exists())
+
+    def test_config_output_used_when_cli_omits_it(self):
+        Path('.erdscope.json').write_text(json.dumps({'output': 'from_config.html'}))
+        self._run()
+        self.assertTrue((Path(self.tmp.name) / 'from_config.html').exists())
+
+    def test_no_config_flag_ignores_discovered_file(self):
+        Path('.erdscope.json').write_text(json.dumps({'only': ['tags']}))
+        self._run('--no-config')
+        data = self._load_output()
+        self.assertGreater(len(data['tables']), 1)  # unfiltered
+
+    def test_table_map_dict_form_in_config(self):
+        # merge_code_semantics only runs with --models; here we just check
+        # the config's table_map dict shape survives the merge loop without
+        # needing the CLI "Class=table" string-splitting path
+        Path('.erdscope.json').write_text(json.dumps({'table_map': {'Widget': 'crm_widgets'}}))
+        self._run('--models', str(FIXTURE))
+        data = self._load_output()
+        self.assertIn('crm_widgets', data['tables'])
+        self.assertNotIn('widgets', data['tables'])
 
 
 if __name__ == '__main__':

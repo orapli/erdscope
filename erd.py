@@ -204,8 +204,16 @@ def dedupe_db_fk(tables):
         kept = []
         for a in t['associations']:
             if a.get('db_fk'):
-                covering = explicit_by_pair.get(frozenset((name, a['target'])))
-                if covering is not None:
+                candidates = explicit_by_pair.get(frozenset((name, a['target'])), [])
+                # an explicit association only covers *this* DB FK if it
+                # doesn't name a column (has_many/habtm from the other side,
+                # inherently ambiguous about which FK it means) or names the
+                # SAME column — otherwise two distinct FK columns to the same
+                # target (created_by_id / updated_by_id) would wrongly
+                # collapse into whichever one happened to be declared
+                covering = [(n, ea) for n, ea in candidates
+                           if not ea.get('foreign_key') or ea['foreign_key'] == a.get('foreign_key')]
+                if covering:
                     has_cardinality = any(ea['type'] in ('has_one', 'has_many') for _, ea in covering)
                     if a['type'] == 'has_one' and not has_cardinality:
                         for other_name, ea in covering:
@@ -216,6 +224,58 @@ def dedupe_db_fk(tables):
             kept.append(a)
         t['associations'] = kept
     return removed
+
+def apply_manual_relations(tables, relations):
+    """Apply hand-declared relations from the config file's `relations` key —
+    the escape hatch for FKs no source (real constraint, *_id inference, or
+    --models code parsing) can determine, e.g. an oddly-named column or a
+    relation the app's code expresses in a way the parser doesn't handle.
+    Each entry: {table, column, references, one_to_one?, name?}.
+
+    Applied before dedupe_db_fk, so a manual relation naturally takes
+    precedence over a real DB FK or code-declared association for the same
+    column (dedupe_db_fk treats it as just another explicit association) and
+    is excluded from --infer-fk's guessing for that pair. Validates hard:
+    an unknown table/column/target is always the user's typo, and silently
+    producing no edge would defeat the entire point of a manual override."""
+    added = 0
+    for i, r in enumerate(relations):
+        where = f'relations[{i}]'
+        for key in ('table', 'column', 'references'):
+            if not r.get(key):
+                sys.exit(f'Error: {where} is missing required key {key!r}')
+        table, col, target = r['table'], r['column'], r['references']
+        if table not in tables:
+            sys.exit(f'Error: {where}: unknown table {table!r}')
+        if not any(c['name'] == col for c in tables[table]['columns']):
+            sys.exit(f'Error: {where}: {table!r} has no column {col!r}')
+        if target not in tables:
+            sys.exit(f'Error: {where}: unknown target table {target!r}')
+
+        # a plain DB FK doesn't count as "already covered" — the manual
+        # relation is meant to take precedence over it (dedupe_db_fk, run
+        # afterward, resolves that). Only a genuinely explicit association
+        # (code-declared, or a manual one from an earlier config load) makes
+        # this entry redundant.
+        existing = next((a for a in tables[table]['associations']
+                         if a.get('foreign_key') == col and a['target'] == target
+                         and not a.get('db_fk') and not a.get('inferred')), None)
+        if existing is not None:
+            print(f'Warning: {where} ({table}.{col} -> {target}) is already covered by '
+                  f'a {"manual" if existing.get("manual") else "code"}-declared association '
+                  f'— skipping', file=sys.stderr)
+            continue
+
+        if r.get('one_to_one'):
+            assoc_type = 'has_one'
+        else:
+            assoc_type = 'has_one' if _unique_single_col(tables[table], col) else 'belongs_to'
+        name = r.get('name') or (col[:-3] if col.endswith('_id') else col)
+        tables[table]['associations'].append(
+            {'type': assoc_type, 'name': name, 'target': target,
+             'foreign_key': col, 'manual': True})
+        added += 1
+    return added
 
 # ---------------------------------------------------------------------------
 # Pluralizer / inflector
@@ -244,9 +304,25 @@ def class_to_table(name):
 # ---------------------------------------------------------------------------
 # Model parser (app/models/**/*.rb)
 # ---------------------------------------------------------------------------
-def parse_models(models_dir, tables):
+def parse_models(models_dir, tables, table_map=None):
     if not models_dir.is_dir():
         return
+    table_map = table_map or {}
+    # module_name -> file content, for resolving self.table_name when it's
+    # set inside an `include`d concern rather than the model body itself
+    # (a common way to share a "points at a legacy/renamed table" mixin
+    # across models). Only catches a literal assignment somewhere in the
+    # module's file, `included do ... end` or not — anything computed
+    # dynamically is genuinely out of reach for regex-based static analysis.
+    module_src = {}
+    for path in models_dir.rglob('*.rb'):
+        try:
+            content = path.read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            continue
+        for mm in re.finditer(r'module\s+(\w+)\b', content):
+            module_src.setdefault(mm.group(1), content)
+
     for path in sorted(models_dir.rglob('*.rb')):
         if 'concerns' in path.parts:  # separator-agnostic (works on Windows too)
             continue
@@ -260,8 +336,21 @@ def parse_models(models_dir, tables):
         if not m:
             continue
         class_name = m.group(1)
-        tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", content)
-        table_name = tn_m.group(1) if tn_m else class_to_table(class_name)
+        if class_name in table_map:
+            # explicit override wins over everything — the escape hatch for
+            # cases static analysis genuinely can't reach, e.g. table_name
+            # set inside a concern that itself lives in a gem, not the app
+            table_name = table_map[class_name]
+        else:
+            tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", content)
+            if not tn_m:
+                for inc_m in re.finditer(r'include\s+([\w:]+)', content):
+                    mod_content = module_src.get(inc_m.group(1).rsplit('::', 1)[-1])
+                    if mod_content:
+                        tn_m = re.search(r"self\.table_name\s*=\s*['\"]([^'\"]+)['\"]", mod_content)
+                        if tn_m:
+                            break
+            table_name = tn_m.group(1) if tn_m else class_to_table(class_name)
         if table_name not in tables:
             # model exists but the table is not in any schema file
             # (library-managed table, another database, ...)
@@ -595,14 +684,17 @@ def detect_code_source(root):
             return 'prisma'
     return None
 
-def merge_code_semantics(tables, mroot):
+def merge_code_semantics(tables, mroot, table_map=None):
     """Overlay associations parsed from application code (Rails / Prisma /
     Django) on top of the database truth. Columns always come from the DB;
-    models without a matching DB table are added with schema_missing."""
+    models without a matching DB table are added with schema_missing.
+    table_map (Rails only): {class_name: table_name} overrides for models
+    whose real table can't be determined by static analysis (e.g. a
+    table_name set inside a concern that lives in a gem, not the app)."""
     kind = detect_code_source(mroot)
     if kind == 'rails':
         mdir = mroot / 'app' / 'models' if (mroot / 'app' / 'models').is_dir() else mroot
-        parse_models(mdir, tables)
+        parse_models(mdir, tables, table_map)
         return kind
     if kind in ('prisma', 'django'):
         if kind == 'prisma':
@@ -728,7 +820,8 @@ def write_excel(tables, path, title):
                      [('Type', HDR), ('Name', HDR), ('Target', HDR), ('Via', HDR)]]
             for a in t['associations']:
                 via = ('DB FK' if a.get('db_fk') else
-                       'inferred' if a.get('inferred') else 'code')
+                       'inferred' if a.get('inferred') else
+                       'manual' if a.get('manual') else 'code')
                 rows.append([a['type'], a['name'], a['target'], via])
         sheets.append((sheet_of[n],
                        _sheet_xml(rows, widths=[12, 28, 24, 10, 18, 6, 16, 50])))
@@ -975,6 +1068,7 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .atype{font-size:10px;color:#64748b}
 .badge-inf{font-size:9px;background:#fef9c3;color:#854d0e;padding:0 4px;border-radius:3px}
 .badge-dbfk{font-size:9px;background:#dbeafe;color:#1e3a5f;padding:0 4px;border-radius:3px}
+.badge-manual{font-size:9px;background:#ede9fe;color:#5b21b6;padding:0 4px;border-radius:3px}
 .aname{font-family:monospace;font-size:12px;font-weight:600;color:#1e293b}
 .atarget{font-size:11px;color:#64748b;margin-top:1px}
 .atarget a{color:#3b82f6;cursor:pointer;text-decoration:none}
@@ -2647,6 +2741,7 @@ function showDetails(){
         :(DESC[a.type]||'');
       if(a.inferred) desc+=' (inferred from the FK column name; no association is declared)';
       if(a.db_fk) desc+=' (from a database foreign-key constraint)';
+      if(a.manual) desc+=' (manually declared in the config file)';
       const inView=dispTables.has(a.target);
       const isHidden=hiddenTables.has(a.target);
       const link=a.polymorphic
@@ -2658,7 +2753,7 @@ function showDetails(){
             :`<a class="add-target" data-add="${esc(a.target)}" title="Not displayed — click to add to the diagram">${esc(a.target)} ＋</a>`;
       const thr=a.through?`<div class="athrough">through: :${esc(a.through)}</div>`:'';
       // plain-language description appears as a tooltip on hover
-      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}</div><div class="aname">:${esc(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
+      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${esc(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
     });
     h+='</div>';
   }
@@ -3507,6 +3602,69 @@ requestAnimationFrame(fitView);
 """
 
 # ---------------------------------------------------------------------------
+# Config file
+# ---------------------------------------------------------------------------
+# CLI flags mirrored by config keys of the same name -> (default value if
+# neither config nor CLI supplies one). `relations` is config-only (no CLI
+# equivalent — a list of individual FK declarations doesn't fit a flag) and
+# `database` is deliberately excluded: it's the one thing kept CLI-only, so a
+# checked-in config file can never carry a credential-bearing URL.
+CONFIG_DEFAULTS = {
+    'output': 'erd.html', 'models': None, 'excel': None, 'max_rows': 15,
+    'only': None, 'exclude': None, 'infer_fk': False, 'table_map': {},
+}
+
+def load_config(args):
+    """Load the config file: --config PATH if given, else auto-discovered
+    .erdscope.json / .erdscope.yml / .erdscope.yaml in the cwd (in that
+    order), unless --no-config. YAML needs PyYAML installed — JSON always
+    works with no dependency, same "works out of the box, YAML if you
+    already have it" spirit as the PyMySQL/mysql-CLI fallback above."""
+    if getattr(args, 'no_config', False):
+        if getattr(args, 'config', None):
+            sys.exit('Error: --config and --no-config are mutually exclusive')
+        return {}
+    path = None
+    if getattr(args, 'config', None):
+        path = Path(args.config).expanduser().resolve()
+        if not path.exists():
+            sys.exit(f'Error: config file {path} does not exist')
+    else:
+        for candidate in ('.erdscope.json', '.erdscope.yml', '.erdscope.yaml'):
+            c = Path.cwd() / candidate
+            if c.exists():
+                path = c
+                break
+    if path is None:
+        return {}
+    print(f'Using config: {path}', file=sys.stderr)
+    text = path.read_text(encoding='utf-8')
+    if path.suffix == '.json':
+        try:
+            config = json.loads(text)
+        except json.JSONDecodeError as e:
+            sys.exit(f'Error: failed to parse {path} as JSON: {e}')
+    else:
+        try:
+            import yaml
+        except ImportError:
+            sys.exit(f'Error: {path} is YAML but PyYAML is not installed '
+                      f'(pip install pyyaml, or use a .json config instead)')
+        try:
+            config = yaml.safe_load(text) or {}
+        except yaml.YAMLError as e:
+            sys.exit(f'Error: failed to parse {path} as YAML: {e}')
+    if not isinstance(config, dict):
+        sys.exit(f'Error: {path} must contain a JSON/YAML object at the top level')
+    if 'database' in config:
+        sys.exit(f'Error: {path} must not contain a "database" key — the DB URL is '
+                 f'CLI-only, to keep credentials out of a file that might get committed')
+    unknown = set(config) - set(CONFIG_DEFAULTS) - {'relations'}
+    if unknown:
+        sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
+    return config
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main():
@@ -3515,34 +3673,71 @@ def main():
                     'optionally enriched with association semantics parsed from '
                     'application code (Rails / Prisma / Django)')
     p.add_argument('database', metavar='mysql://user@host:port/dbname',
-                   help='Database connection URL (required). Use MYSQL_PWD or '
-                        '~/.my.cnf for the password; a read-only account is recommended')
-    p.add_argument('-o', '--output', default='erd.html',
+                   help='Database connection URL (required, CLI-only — never put this in '
+                        'a config file). Use MYSQL_PWD or ~/.my.cnf for the password; '
+                        'a read-only account is recommended')
+    # SUPPRESS on every config-mirrorable flag so we can tell "explicitly
+    # passed on the CLI" (attribute present) from "left to the config file /
+    # built-in default" (attribute absent) — see the merge loop below.
+    p.add_argument('-o', '--output', default=argparse.SUPPRESS,
                    help='Output HTML file (default: erd.html)')
-    p.add_argument('--models', metavar='PATH',
+    p.add_argument('--models', metavar='PATH', default=argparse.SUPPRESS,
                    help='Merge association semantics parsed from application code '
                         '(Rails project/app/models dir, schema.prisma, or Django project)')
-    p.add_argument('--excel', metavar='FILE.xlsx',
+    p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
-    p.add_argument('--max-rows', type=int, default=15,
+    p.add_argument('--max-rows', type=int, default=argparse.SUPPRESS,
                    help='Max column rows shown per table before scrolling (default: 15)')
-    p.add_argument('--only', action='append', metavar='PATTERN',
+    p.add_argument('--only', action='append', metavar='PATTERN', default=argparse.SUPPRESS,
                    help='Include only tables matching the glob pattern(s). '
                         'Repeatable; comma-separated lists accepted (e.g. --only "user*,post*")')
-    p.add_argument('--exclude', action='append', metavar='PATTERN',
+    p.add_argument('--exclude', action='append', metavar='PATTERN', default=argparse.SUPPRESS,
                    help='Exclude tables matching the glob pattern(s). Same syntax as --only')
-    p.add_argument('--infer-fk', action='store_true',
+    p.add_argument('--infer-fk', action='store_true', default=argparse.SUPPRESS,
                    help='Guess relations from *_id column names when no real '
                         'association/FK backs them (off by default: unbacked guesses '
                         'can be wrong, and both the FK badge and the "PK/FK" column '
                         'view only ever show columns from real associations)')
+    p.add_argument('--table-map', action='append', metavar='Class=table', default=argparse.SUPPRESS,
+                   help="Rails only: override a model's table when static analysis "
+                        "can't determine it (e.g. table_name set inside a concern "
+                        "that lives in a gem). Repeatable; comma-separated lists "
+                        "accepted, e.g. --table-map 'Widget=crm_widgets,Foo=bar_table'")
+    p.add_argument('--config', metavar='PATH',
+                   help='Config file (JSON, or YAML if PyYAML is installed) providing '
+                        'defaults for the options above plus `relations` (manual FK '
+                        'declarations — see README). An explicit CLI flag always wins '
+                        'over the same key in the config. Auto-discovered as '
+                        '.erdscope.json/.yml/.yaml in the current directory if not given')
+    p.add_argument('--no-config', action='store_true',
+                   help='Skip config auto-discovery even if .erdscope.* exists in the cwd')
     args = p.parse_args()
 
     url = args.database
     if not url.startswith('mysql://'):
         sys.exit('Error: a database URL is required (currently mysql:// only), '
                  'e.g. mysql://readonly@127.0.0.1:3306/myapp_production')
+
+    config = load_config(args)
+    if hasattr(args, 'table_map'):
+        tm = {}
+        for arg in args.table_map:
+            for pair in arg.split(','):
+                if not pair:
+                    continue
+                if '=' not in pair:
+                    sys.exit(f"Error: --table-map expects Class=table, got {pair!r}")
+                cls, tbl = pair.split('=', 1)
+                tm[cls] = tbl
+        args.table_map = tm
+    for key, default in CONFIG_DEFAULTS.items():
+        if not hasattr(args, key):  # not explicitly passed on the CLI
+            setattr(args, key, config.get(key, default))
+    relations = config.get('relations', [])
+    if not isinstance(relations, list):
+        sys.exit('Error: config `relations` must be a list')
+
     tables = parse_mysql(url)
     print(f'Fetched {len(tables)} tables from MySQL', file=sys.stderr)
 
@@ -3550,11 +3745,17 @@ def main():
         mroot = Path(args.models).expanduser().resolve()
         if not mroot.exists():
             sys.exit(f'Error: {mroot} does not exist')
-        kind = merge_code_semantics(tables, mroot)
-        removed = dedupe_db_fk(tables)
-        print(f'Merged {kind} associations from {mroot}'
-              + (f' ({removed} DB FKs covered by explicit associations)' if removed else ''),
-              file=sys.stderr)
+        kind = merge_code_semantics(tables, mroot, args.table_map)
+        print(f'Merged {kind} associations from {mroot}', file=sys.stderr)
+
+    if relations:
+        added = apply_manual_relations(tables, relations)
+        if added:
+            print(f'Applied {added} manual relation(s) from config', file=sys.stderr)
+
+    removed = dedupe_db_fk(tables)
+    if removed:
+        print(f'{removed} DB FKs covered by explicit associations', file=sys.stderr)
 
     _finish(tables, args, urlparse(url).path.lstrip('/'))
 
