@@ -2037,11 +2037,16 @@ function gridLayout(tables, preferredHub) {
   });
 
   // isolated tables (no relation to anything, or to each other): stacked
-  // in a column along the right edge, top to bottom, rather than appended
-  // as more rows underneath everything else — the connected components
-  // above already grow tallest via BFS-depth rows, so piling isolated
-  // tables on as further rows compounded that same vertical growth. The
-  // right edge has headroom the bottom edge doesn't.
+  // in a column beside the connected components, top to bottom, rather
+  // than appended as more rows underneath everything else — the connected
+  // components above already grow tallest via BFS-depth rows, so piling
+  // isolated tables on as further rows compounded that same vertical
+  // growth. Vertically centered on the components' bounding box, not
+  // top-aligned to it: the hub of a component isn't necessarily near its
+  // own top edge (e.g. a hub with children below it but none above), so
+  // anchoring at the raw top edge could park the column beside whichever
+  // child happened to end up topmost, reading as "floating near a random
+  // table" instead of "beside the group."
   if(singles.length){
     let ix0=Infinity, iy0=Infinity, ix1=-Infinity, iy1=-Infinity;
     comps.forEach(comp=>comp.forEach(t=>{
@@ -2050,13 +2055,14 @@ function gridLayout(tables, preferredHub) {
       ix1=Math.max(ix1,p.x+s.w/2); iy1=Math.max(iy1,p.y+s.h/2);
     }));
     if(!isFinite(ix1)){ ix1=0; iy0=0; iy1=0; } // every table is isolated
-    const colTargetH=Math.max(iy1-iy0, 600);
-    let sx=ix1+gap, sy=iy0, scW=0;
-    singles.sort().forEach(t=>{
+    singles.sort();
+    const totalH=singles.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).h+gapY,0)-gapY;
+    const sx=ix1+gap;
+    let sy=(iy0+iy1)/2-totalH/2;
+    singles.forEach(t=>{
       const s=nodeSize[t]||calcSize(t);
-      if(sy>iy0 && sy+s.h>iy0+colTargetH){ sy=iy0; sx+=scW+gapX; scW=0; }
       nodePos[t]={x:sx+s.w/2, y:sy+s.h/2};
-      sy+=s.h+gapY; scW=Math.max(scW,s.w);
+      sy+=s.h+gapY;
     });
   }
 }
@@ -2130,19 +2136,44 @@ function layoutAll(tables, edges) {
   });
 
   // Isolated additions (no already-placed neighbor at all) stack in a
-  // column along the right edge, top to bottom — appending them as more
-  // rows below (the old behavior) meant every unrelated table checked in
-  // made the whole diagram grow taller, which compounds fast since the
-  // diagram already tends to grow vertically from BFS-depth rows. The
-  // right edge has slack the old bottom-appending approach didn't use.
-  let ix=bx1+110, iy=by0, colW=0;
-  const colTargetH=Math.max(by1-by0, 500);
+  // single column along the right edge, top to bottom — appending them as
+  // more rows below (the old behavior) meant every unrelated table
+  // checked in made the whole diagram grow taller, which compounds fast
+  // since the diagram already tends to grow vertically from BFS-depth
+  // rows. If an isolated column already exists (from an earlier checkbox
+  // pass), continue stacking below its last member at the *same* x —
+  // recomputing the anchor from the whole diagram's right edge every time
+  // would push each new addition further right than the last, since the
+  // previous isolated table is now itself part of "the whole diagram".
+  const tset=new Set(tables), edgedTables=new Set();
+  edges.forEach(e=>{
+    if(tset.has(e.source)&&tset.has(e.target)&&e.source!==e.target){
+      edgedTables.add(e.source); edgedTables.add(e.target);
+    }
+  });
+  const placedIsolated=tables.filter(t=>nodePos[t]&&!newTables.includes(t)&&!edgedTables.has(t));
+  let ix, iy;
+  if(placedIsolated.length){
+    let cix0=Infinity, ciy1=-Infinity;
+    placedIsolated.forEach(t=>{
+      const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+      cix0=Math.min(cix0, p.x-s.w/2); ciy1=Math.max(ciy1, p.y+s.h/2);
+    });
+    ix=cix0; iy=ciy1+40;
+  } else {
+    // starting a fresh column: center this pass's isolated additions on
+    // the rest of the diagram's vertical midpoint (not its top edge) —
+    // see the matching comment in gridLayout's singles placement for why
+    ix=bx1+110;
+    const isolatedThisPass=[...groups.values()].filter(g=>g.isolated).map(g=>g.members[0]);
+    const totalH=isolatedThisPass.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).h+40,0)-40;
+    iy=(by0+by1)/2-totalH/2;
+  }
   groups.forEach(g=>{
     if(g.isolated){
       const t=g.members[0], s=nodeSize[t]||calcSize(t);
-      if(iy>by0 && iy+s.h>by0+colTargetH){ iy=by0; ix+=colW+40; colW=0; }
       nodePos[t]={x:ix+s.w/2, y:iy+s.h/2};
-      iy+=s.h+40; colW=Math.max(colW,s.w);
+      iy+=s.h+40;
       return;
     }
     // pack this group as one centered row below its shared anchor; when that
@@ -2242,6 +2273,10 @@ function exitFocusMode() {
 // re-render; with auto-tidy on, the overview is re-packed first so the
 // layout always tracks the current display set
 function refreshView(forceFit){
+  // snapshot which tables already had a position *before* this render —
+  // used below to scope the in-view check to only what's newly appearing,
+  // not the whole display set
+  const hadPos=new Set(Object.keys(nodePos));
   if(!focusedTable && autoLayout){
     const ts=getDisplayTables();
     ts.forEach(t=>delete nodePos[t]);
@@ -2257,13 +2292,26 @@ function refreshView(forceFit){
   // focus is a deliberate context switch, not an incidental display-set
   // tweak, so it always fits — otherwise the old viewport can happen to
   // already "contain" the new, smaller focused layout and never zoom in.
-  if(forceFit || !isDisplayInView()) requestAnimationFrame(fitView);
+  //
+  // Scoped to newly-placed tables only (not the full display set): once a
+  // user has manually zoomed in past "everything fits," the full display
+  // set's bbox essentially never fits the viewport by definition — so
+  // checking the whole set meant *any* refreshView call (even unchecking
+  // a table, which places nothing new) silently zoomed back out to fit-
+  // all on the very next interaction. A removal has nothing new to bring
+  // into view, so it must never force a fit; auto-tidy wipes and re-lays-
+  // out every table, so everything counts as "newly placed" there and the
+  // full-set check still applies as before.
+  const newlyPlaced=getDisplayTables().filter(t=>!hadPos.has(t));
+  if(forceFit || !isDisplayInView(newlyPlaced)) requestAnimationFrame(fitView);
 }
 
-// is the current display set's bounding box (already) inside the viewport,
-// i.e. would fitView() actually change anything the user can see?
-function isDisplayInView(){
-  const tables=getDisplayTables();
+// is the given set of tables' bounding box (already) inside the viewport,
+// i.e. would fitView() actually bring anything new into what the user can
+// see? Defaults to the full display set (used by callers other than
+// refreshView, and by refreshView itself when nothing has changed yet).
+function isDisplayInView(tables){
+  tables = tables===undefined ? getDisplayTables() : tables;
   if(!tables.length) return true;
   const R=svg.getBoundingClientRect();
   if(!R.width||!R.height) return false;

@@ -92,6 +92,23 @@ def _build_html_with_isolated_table():
     return out
 
 
+def _build_html_with_multiple_isolated_tables():
+    # four isolated tables, so repeated single-table additions (checkbox
+    # clicks or search+Enter, one at a time) can be checked for whether
+    # they accumulate into one column or march further right each time
+    names = ['settings_a', 'settings_b', 'settings_c', 'settings_d']
+    table_rows = TABLE_ROWS + [(n, '') for n in names]
+    col_rows = COL_ROWS + [_col(n, 'id', key='PRI') for n in names]
+    tables = erd.mysql_ir(table_rows, col_rows, FK_ROWS, INDEX_ROWS)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestClientJS(unittest.TestCase):
     @classmethod
@@ -204,6 +221,26 @@ class TestClientJS(unittest.TestCase):
         self.assertEqual(before, after,
                          'the viewport must not be reset when the display change '
                          "didn't actually move the diagram out of view")
+
+    def test_manual_zoom_survives_a_removal(self):
+        # regression: isDisplayInView() checked the *whole* display set's
+        # bbox against the viewport — which is false almost by definition
+        # once a user has zoomed in past "everything fits" (that's what
+        # zooming in means). So any refreshView() call afterward, even one
+        # that places nothing new (like unchecking a table), silently
+        # zoomed back out to fit-all. The check must be scoped to only
+        # what's newly appearing, not the full set.
+        self.page.click('#btn-zoom-in')
+        self.page.click('#btn-zoom-in')
+        self.page.wait_for_timeout(50)
+        zoomed = self.page.evaluate('({vx, vy, vs})')
+        self.assertFalse(self.page.evaluate('isDisplayInView()'),
+            'test setup assumption: zooming in should leave the full set out of view')
+        self.page.locator('.table-item:has(.tname:text-is("likes")) input[type=checkbox]').uncheck()
+        self.page.wait_for_timeout(100)
+        after = self.page.evaluate('({vx, vy, vs})')
+        self.assertEqual(zoomed, after,
+            'unchecking a table (nothing new appears) must not undo a manual zoom-in')
 
     def test_drag_snaps_to_neighbor_and_shows_guide(self):
         rect = self.page.evaluate('''() => {
@@ -765,6 +802,80 @@ class TestIsolatedTablePlacement(unittest.TestCase):
                 'incrementally-added isolated table should land to the right of the existing diagram')
             self.assertLess(s['y0'], by1,
                 'incrementally-added isolated table should not be appended below everything')
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestRepeatedIsolatedAdditionsShareOneColumn(unittest.TestCase):
+    """Regression: the first fix for isolated-table placement (right-side
+    column instead of rows below) recomputed the column's x from the whole
+    diagram's right edge on every single addition — so once the first
+    isolated table joined "the whole diagram", the second one's anchor
+    included it and landed even further right, and so on. Each isolated
+    table must reuse the *same* x as any already-placed isolated ones and
+    just continue the column downward. Exercises both the checkbox path
+    and the search+Enter-to-locate path, since both funnel through the
+    same incremental layoutAll()."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_with_multiple_isolated_tables()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    NAMES = ['settings_a', 'settings_b', 'settings_c', 'settings_d']
+    CHECKBOX = '.table-item:has(.tname:text-is("{0}")) input[type=checkbox]'
+
+    def _setup_base(self, page):
+        page.goto(self.html_path.as_uri())
+        page.wait_for_function('typeof nodePos.users !== "undefined"')
+        page.wait_for_timeout(50)
+        page.evaluate('localStorage.clear()')
+        page.reload()
+        page.wait_for_function('typeof nodePos.users !== "undefined"')
+        page.click('#btn-none')
+        for name in ('users', 'posts', 'comments'):
+            page.click(self.CHECKBOX.format(name))
+        page.reload()  # persisted state -> fresh gridLayout of the connected group
+        page.wait_for_function('typeof nodePos.users !== "undefined"')
+
+    def _xs(self, page):
+        names_js = '[' + ','.join(f'"{n}"' for n in self.NAMES) + ']'
+        return page.evaluate(f'''() => {names_js}.map(t => nodePos[t].x)''')
+
+    def test_four_separate_checkbox_additions_form_one_column(self):
+        page = self.browser.new_page()
+        try:
+            self._setup_base(page)
+            for name in self.NAMES:
+                page.click(self.CHECKBOX.format(name))  # each its own incremental pass
+                page.wait_for_timeout(30)
+            xs = self._xs(page)
+            self.assertEqual(len(set(xs)), 1,
+                f'isolated tables added one at a time should share one x, got {xs}')
+        finally:
+            page.close()
+
+    def test_search_and_enter_additions_form_one_column(self):
+        page = self.browser.new_page()
+        try:
+            self._setup_base(page)
+            for name in self.NAMES:
+                page.fill('#search', name)
+                page.press('#search', 'Enter')
+                page.wait_for_timeout(30)
+            xs = self._xs(page)
+            self.assertEqual(len(set(xs)), 1,
+                f'isolated tables located via search+Enter should share one x, got {xs}')
         finally:
             page.close()
 
