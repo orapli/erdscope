@@ -14,7 +14,7 @@ polymorphic, ...).
 schema with comments, indexes, real FKs and an inferred relation. Everything below
 is one self-contained HTML file.
 
-[![erdscope demo](docs/screenshot.svg)](https://orapli.github.io/erdscope/)
+[![erdscope demo](docs/screenshot.png)](https://orapli.github.io/erdscope/)
 
 Regenerate it anytime with `python3 docs/gen_demo.py`.
 

@@ -242,6 +242,58 @@ class TestClientJS(unittest.TestCase):
         self.assertEqual(zoomed, after,
             'unchecking a table (nothing new appears) must not undo a manual zoom-in')
 
+    def _click_remove_button(self, name):
+        box = self.page.evaluate(f'''() => {{
+            const g = document.querySelector('.er-node[data-name="{name}"]');
+            const btn = [...g.querySelectorAll('text')].find(t => t.textContent.startsWith('⊖'));
+            if (!btn) return null;
+            const r = btn.getBoundingClientRect();
+            return {{x: r.x + r.width/2, y: r.y + r.height/2}};
+        }}''')
+        if box is None: return False
+        self.page.mouse.click(box['x'], box['y'])
+        self.page.wait_for_timeout(100)
+        return True
+
+    def test_node_remove_button_excludes_the_table(self):
+        # the ⊖ button on a node's header is the diagram-side equivalent of
+        # unchecking the table's list checkbox — a lighter action than the
+        # list's separate 🚫 ban button (excluding is easy to undo and
+        # doesn't survive auto-expand pulling the table back in, unlike a
+        # full ban, which was judged worse for this one-click canvas action)
+        self.assertTrue(self.page.evaluate('getDisplayTables().includes("users")'))
+        self.assertTrue(self._click_remove_button('users'))
+        self.assertFalse(self.page.evaluate('getDisplayTables().includes("users")'),
+            'clicking ⊖ should remove the table from the diagram')
+        self.assertTrue(self.page.evaluate('excludedTables.has("users")'),
+            '⊖ should exclude (like unchecking), not ban, the table')
+        self.assertFalse(self.page.evaluate('hiddenTables.has("users")'),
+            '⊖ must not use the heavier ban mechanism')
+        self.assertEqual(self.page.evaluate('[...selectedTables]'), [],
+            'clicking ⊖ must not also select the node underneath it')
+
+    def test_remove_button_hidden_while_focused(self):
+        # excludeTable() has no effect while focused (the focus view
+        # ignores excludedTables entirely) — the button must not be shown
+        # where clicking it would silently do nothing
+        self.page.dblclick('.er-node[data-name="users"] .n-title')
+        self.page.wait_for_timeout(100)
+        self.assertTrue(self.page.evaluate('!!focusedTable'), 'test setup: should now be focused')
+        self.assertFalse(self._click_remove_button('users'),
+            'the ⊖ button should not be rendered while focused')
+
+    def test_remove_button_hidden_when_autoexpand_would_restore_it(self):
+        # with auto-expand on, excluding a table that's still reachable as
+        # another root's neighbor doesn't actually remove it from view —
+        # the button must not be offered in that case either
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(100)
+        self.assertTrue(self.page.evaluate('getDisplayTables().includes("posts")'))
+        self.assertFalse(self.page.evaluate('canExclude("posts")'),
+            "test setup: 'posts' should still be reachable from 'users' via auto-expand")
+        self.assertFalse(self._click_remove_button('posts'),
+            'the ⊖ button should not be rendered when auto-expand would just restore the table')
+
     def test_drag_snaps_to_neighbor_and_shows_guide(self):
         rect = self.page.evaluate('''() => {
             const r = document.querySelector('svg').getBoundingClientRect();

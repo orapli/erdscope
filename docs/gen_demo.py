@@ -144,3 +144,55 @@ args = SimpleNamespace(output=str(ROOT / 'docs' / 'index.html'),
                                        # columns are deliberately FK-less in the schema
 erd._finish(tables, args, 'demo_shop')
 print('demo written to docs/index.html', file=sys.stderr)
+
+# README's screenshot used to be a hand-exported SVG that this script never
+# touched, so it silently drifted out of sync with the actual UI every time
+# the demo was regenerated. Regenerate docs/screenshot.png here too, right
+# from the file this script just wrote, so the two can never diverge again.
+# Soft dependency on Playwright (same pattern as tests/test_e2e.py) — skip
+# with a note rather than fail if it's not installed.
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    print('playwright not installed — skipping docs/screenshot.png '
+          '(pip install playwright && playwright install chromium)', file=sys.stderr)
+else:
+    import base64
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={'width': 1400, 'height': 1000})
+        page.goto((ROOT / 'docs' / 'index.html').resolve().as_uri())
+        page.wait_for_function('typeof nodePos.users !== "undefined"')
+        page.wait_for_timeout(300)
+        # rasterizePNGBlob()'s own logic, but with an explicit white
+        # background fill instead of transparency — a README screenshot
+        # should look right regardless of the viewer's page background,
+        # unlike a user-triggered export meant to be composed elsewhere
+        data_url = page.evaluate('''async () => {
+            const built = buildExportSvg();
+            const MAX_DIM = 8000;
+            const scale = Math.max(0.1, Math.min(2, MAX_DIM/built.vw, MAX_DIM/built.vh));
+            const W = Math.ceil(built.vw*scale), H = Math.ceil(built.vh*scale);
+            built.svg.setAttribute('width', W); built.svg.setAttribute('height', H);
+            const svgStr = new XMLSerializer().serializeToString(built.svg);
+            const blob = new Blob([svgStr], {type:'image/svg+xml;charset=utf-8'});
+            const url = URL.createObjectURL(blob);
+            return await new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = W; canvas.height = H;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, W, H);
+                    ctx.drawImage(img, 0, 0, W, H);
+                    URL.revokeObjectURL(url);
+                    resolve(canvas.toDataURL('image/png'));
+                };
+                img.src = url;
+            });
+        }''')
+        browser.close()
+    _, encoded = data_url.split(',', 1)
+    (ROOT / 'docs' / 'screenshot.png').write_bytes(base64.b64decode(encoded))
+    print('demo written to docs/screenshot.png', file=sys.stderr)

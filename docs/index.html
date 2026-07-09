@@ -1432,6 +1432,30 @@ function drawNode(parent, name) {
     g.appendChild(rb);
   }
 
+  // remove this table from the diagram — the lightweight equivalent of
+  // unchecking its list checkbox (not the list's separate 🚫 full ban:
+  // that hides it everywhere including auto-expand/focus, which is a much
+  // bigger commitment than "get this one table off my screen right now").
+  // Only shown when unchecking would actually do something: while
+  // focused, checkboxes are ignored entirely, and with auto-expand on, a
+  // table can still be pulled back in as another root's neighbor even
+  // after being excluded — showing a button that visibly does nothing
+  // when clicked is worse than not showing it.
+  if(canExclude(name)){
+    const rb=svgEl('text',{x:sz.w-46,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-mode'});
+    rb.textContent='⊖';
+    const rbTitle=svgEl('title',{});
+    rbTitle.textContent='Remove this table from the diagram';
+    rb.appendChild(rbTitle);
+    rb.addEventListener('mousedown', e=>e.stopPropagation());
+    rb.addEventListener('dblclick', e=>e.stopPropagation());
+    rb.addEventListener('click', e=>{
+      e.stopPropagation();
+      excludeTable(name);
+    });
+    g.appendChild(rb);
+  }
+
   // manual expansion: pull this table's direct relations into the view
   const eb=svgEl('text',{x:sz.w-28,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-mode'});
   eb.textContent='⊕';
@@ -1813,6 +1837,50 @@ function clearFocus(){
   showToast('Focus cleared — back to the overview');
 }
 
+// Ban/unban a table — fully hidden, even from auto-expand and focus views,
+// until unbanned (via this same toggle, the list's 🚫 button, or the
+// "banned: N table(s)" bar's clear-all link). Used by the list's per-row
+// 🚫 button only — the diagram node's own ⊖ button is the much lighter
+// excludeTable() below, not this.
+function toggleBan(name){
+  if(hiddenTables.has(name)){ hiddenTables.delete(name); }
+  else {
+    hiddenTables.add(name);
+    if(focusedTable===name){ focusedTable=null; selectedTables=new Set(); selectionAnchor=null; exitFocusMode(); }
+  }
+  saveState();
+  if(focusedTable) switchFocusTable(); // re-run hub-spoke with new table set
+  refreshView(); renderTableList(); updateHiddenBar();
+  showDetails();
+}
+
+// Exclude a table from the current view — the same effect as unchecking
+// its list checkbox, kept separate from toggleBan() above because it's a
+// much smaller commitment (easy to bring back by re-checking the box or
+// via ⊕ on a related table; doesn't survive auto-expand pulling it back
+// in as someone else's neighbor, unlike a ban).
+function excludeTable(name){
+  excludedTables.add(name);
+  noAutoExpandRoot.delete(name); // matches the checkbox handler's own intent: explicit removal, not a stale auto-expand root
+  saveState();
+  refreshView(); renderTableList();
+}
+
+// Would excludeTable(name) actually remove it from what's currently
+// visible? False while focused (checkboxes/exclusion are ignored by the
+// focus view entirely) or when auto-expand would just pull the table back
+// in as another root's neighbor — drawNode() uses this to hide the ⊖
+// button rather than show one that visibly does nothing when clicked.
+function canExclude(name){
+  if(focusedTable) return false;
+  if(!autoExpand) return true;
+  const already=excludedTables.has(name);
+  excludedTables.add(name);
+  const stillShown=getDisplayTables().includes(name);
+  if(!already) excludedTables.delete(name);
+  return !stillShown;
+}
+
 // ── Left pane ─────────────────────────────────────────────────────────────
 function renderTableList(){
   const list  = document.getElementById('table-list');
@@ -1874,15 +1942,7 @@ function renderTableList(){
       hb.title=isHidden?'Unban':'Ban completely (never shown, even by auto-expand)';
       hb.addEventListener('click', e => {
         e.stopPropagation(); e.preventDefault();
-        if(isHidden){ hiddenTables.delete(name); }
-        else {
-          hiddenTables.add(name);
-          if(focusedTable===name){ focusedTable=null; selectedTables=new Set(); selectionAnchor=null; exitFocusMode(); }
-        }
-        saveState();
-        if(focusedTable) switchFocusTable(); // re-run hub-spoke with new table set
-        refreshView(); renderTableList(); updateHiddenBar();
-        showDetails();
+        toggleBan(name);
       });
       lbl.appendChild(hb);
       item.appendChild(lbl);
