@@ -1125,10 +1125,25 @@ body.dark .snap-guide{stroke:#f87171}
 #colmode-group .diag-btn{box-shadow:none;border-radius:0;font-size:11px;margin-left:-1px}
 #colmode-group .diag-btn:first-child{border-radius:6px 0 0 6px;margin-left:0}
 #colmode-group .diag-btn:last-child{border-radius:0 6px 6px 0}
+/* toolbar grouping — clusters of related controls (what tables show /
+   where they sit / how you're viewing them / getting output out),
+   separated by a thin rule rather than merging into one pill: unlike
+   colmode-group these aren't a single radio control, just neighbors */
+.tb-group{display:flex;gap:4px;align-items:center;flex-wrap:nowrap}
+.tb-sep{width:1px;height:18px;background:#e2e8f0;flex-shrink:0}
+body.dark .tb-sep{background:#334155}
+#export-group{position:relative}
+.tb-popup{position:absolute;bottom:36px;right:0;display:none;flex-direction:column;gap:4px;
+  background:white;border:1px solid #e2e8f0;border-radius:8px;padding:6px;
+  box-shadow:0 4px 16px rgba(0,0,0,.15);min-width:220px;z-index:7}
+.tb-popup.open{display:flex}
+.tb-popup .diag-btn{width:100%;justify-content:flex-start;font-size:11px;padding:0 10px}
+body.dark .tb-popup{background:#1e293b;border-color:#334155}
 
 /* ── word-search / highlight (toolbar) ── */
 #word-search-box{height:30px;display:flex;align-items:center;gap:4px;padding:0 4px 0 8px;
-  background:white;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  background:white;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.08);
+  margin-right:auto}
 #word-search{width:110px;border:none;outline:none;font-size:12px;background:transparent;
   transition:width .15s}
 #word-search:focus{width:170px}
@@ -1450,31 +1465,46 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <span id="word-search-count"></span>
         <button id="word-search-clear" title="Clear highlight" aria-label="Clear highlight">✕</button>
       </div>
-      <select class="diag-btn" id="max-rows" title="Max column rows per table (scroll with the wheel for the rest)">
-        <option value="5">5 rows</option>
-        <option value="10">10 rows</option>
-        <option value="15">15 rows</option>
-        <option value="20">20 rows</option>
-        <option value="30">30 rows</option>
-        <option value="9999">All rows</option>
-      </select>
-      <div id="colmode-group" title="Column display (all tables)">
-        <button class="diag-btn" data-cm="0">All</button>
-        <button class="diag-btn" data-cm="1">PK/FK</button>
-        <button class="diag-btn" data-cm="2">Name</button>
+      <div class="tb-group">
+        <select class="diag-btn" id="max-rows" title="Max column rows per table (scroll with the wheel for the rest)">
+          <option value="5">5 rows</option>
+          <option value="10">10 rows</option>
+          <option value="15">15 rows</option>
+          <option value="20">20 rows</option>
+          <option value="30">30 rows</option>
+          <option value="9999">All rows</option>
+        </select>
+        <div id="colmode-group" title="Column display (all tables)">
+          <button class="diag-btn" data-cm="0">All</button>
+          <button class="diag-btn" data-cm="1">PK/FK</button>
+          <button class="diag-btn" data-cm="2">Name</button>
+        </div>
+        <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢)">Labels</button>
       </div>
-      <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢)">Labels</button>
-      <button class="diag-btn" id="btn-export" title="PNG to clipboard / download">⬇</button>
-      <button class="diag-btn" id="btn-export-svg" title="Download SVG (vector, scales without loss)">SVG</button>
-      <button class="diag-btn" id="btn-export-mmd" title="Copy Mermaid erDiagram markup to clipboard (paste into READMEs/PRs; covers displayed tables)">MMD</button>
-      <button class="diag-btn" id="btn-zoom-in" title="Zoom in">+</button>
-      <button class="diag-btn" id="btn-zoom-out" title="Zoom out">−</button>
-      <button class="diag-btn" id="btn-zoom-100" title="Zoom to 100% (text at natural size)">1:1</button>
-      <button class="diag-btn" id="btn-fit" title="Fit all">⊡</button>
-      <button class="diag-btn" id="btn-undo" title="Undo layout change (Ctrl/Cmd+Z)" disabled>↶</button>
-      <button class="diag-btn" id="btn-redo" title="Redo layout change (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
-      <button class="diag-btn" id="btn-reset" title="Re-layout now (repack to fill the screen)">↺</button>
-      <button class="diag-btn" id="btn-autolayout" title="Auto-tidy mode: re-layout and fit whenever the displayed tables change">Auto-tidy</button>
+      <div class="tb-sep"></div>
+      <div class="tb-group">
+        <button class="diag-btn" id="btn-undo" title="Undo layout change (Ctrl/Cmd+Z)" disabled>↶</button>
+        <button class="diag-btn" id="btn-redo" title="Redo layout change (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
+        <button class="diag-btn" id="btn-reset" title="Re-layout now (repack to fill the screen)">↺</button>
+        <button class="diag-btn" id="btn-autolayout" title="Auto-tidy mode: re-layout and fit whenever the displayed tables change">Auto-tidy</button>
+      </div>
+      <div class="tb-sep"></div>
+      <div class="tb-group">
+        <button class="diag-btn" id="btn-zoom-in" title="Zoom in">+</button>
+        <button class="diag-btn" id="btn-zoom-out" title="Zoom out">−</button>
+        <button class="diag-btn" id="btn-zoom-100" title="Zoom to 100% (text at natural size)">1:1</button>
+        <button class="diag-btn" id="btn-fit" title="Fit all">⊡</button>
+      </div>
+      <div class="tb-sep"></div>
+      <div class="tb-group" id="export-group">
+        <button class="diag-btn" id="btn-export-toggle" title="Export the diagram" aria-haspopup="true">⬇ Export</button>
+        <div id="export-menu" class="tb-popup">
+          <button class="diag-btn" id="btn-export">PNG — copy to clipboard / download</button>
+          <button class="diag-btn" id="btn-export-svg">SVG — vector download</button>
+          <button class="diag-btn" id="btn-export-mmd" title="Covers displayed tables; paste into READMEs/PRs">Mermaid — copy markup</button>
+        </div>
+      </div>
+      <div class="tb-sep"></div>
       <button class="diag-btn" id="btn-dark" title="Toggle dark mode (exports always use the light palette)">🌙</button>
     </div>
   </div>
@@ -3480,13 +3510,14 @@ svg.addEventListener('click', e=>{
   if(e.target===svg||e.target===erMain) selectOnly(null);
 });
 
-// Escape: search → highlight → focus → selection, in that order. Only
-// clears the highlight box when it's actually focused (matching the
-// left-pane search's own behavior) — Esc with the canvas focused keeps
-// meaning "exit focus / deselect", not a surprise highlight-clear; the ✕
-// button is there for that.
+// Escape: export menu → search → highlight → focus → selection, in that
+// order. Only clears the highlight box when it's actually focused
+// (matching the left-pane search's own behavior) — Esc with the canvas
+// focused keeps meaning "exit focus / deselect", not a surprise
+// highlight-clear; the ✕ button is there for that.
 window.addEventListener('keydown', e=>{
   if(e.key!=='Escape') return;
+  if(document.getElementById('export-menu').classList.contains('open')){ closeExportMenu(); return; }
   const sb=document.getElementById('search');
   if(document.activeElement===sb && sb.value){ sb.value=''; renderTableList(); return; }
   const wb=document.getElementById('word-search');
@@ -3543,9 +3574,20 @@ document.getElementById('btn-reset')   .addEventListener('click',()=>{
   }
   refreshView();
 });
-document.getElementById('btn-export').addEventListener('click', exportToPNG);
-document.getElementById('btn-export-svg').addEventListener('click', exportToSVG);
-document.getElementById('btn-export-mmd').addEventListener('click', exportToMermaid);
+// PNG/SVG/Mermaid used to be three separate always-visible buttons; now
+// tucked behind one "Export" toggle since they're each used ~once per
+// session, unlike the always-visible zoom/layout controls
+function closeExportMenu(){ document.getElementById('export-menu').classList.remove('open'); }
+document.getElementById('btn-export-toggle').addEventListener('click', e=>{
+  e.stopPropagation();
+  document.getElementById('export-menu').classList.toggle('open');
+});
+document.addEventListener('click', e=>{
+  if(!document.getElementById('export-group').contains(e.target)) closeExportMenu();
+});
+document.getElementById('btn-export').addEventListener('click', ()=>{ exportToPNG(); closeExportMenu(); });
+document.getElementById('btn-export-svg').addEventListener('click', ()=>{ exportToSVG(); closeExportMenu(); });
+document.getElementById('btn-export-mmd').addEventListener('click', ()=>{ exportToMermaid(); closeExportMenu(); });
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);

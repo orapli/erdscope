@@ -819,6 +819,65 @@ class TestPngExportOversizedCanvas(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestExportMenu(unittest.TestCase):
+    """PNG/SVG/Mermaid used to be three permanent toolbar buttons; they're
+    now collapsed behind one 'Export' toggle (part of a toolbar
+    decluttering pass) since each is used ~once per session, unlike the
+    always-visible zoom/layout controls."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _is_open(self):
+        return self.page.evaluate("document.getElementById('export-menu').classList.contains('open')")
+
+    def test_toggle_opens_and_a_second_click_closes(self):
+        self.assertFalse(self._is_open())
+        self.page.click('#btn-export-toggle')
+        self.assertTrue(self._is_open())
+        self.page.click('#btn-export-toggle')
+        self.assertFalse(self._is_open())
+
+    def test_outside_click_closes_the_menu(self):
+        self.page.click('#btn-export-toggle')
+        self.assertTrue(self._is_open())
+        self.page.click('#er-svg', position={'x': 10, 'y': 10})
+        self.assertFalse(self._is_open())
+
+    def test_escape_closes_the_menu_before_anything_else(self):
+        self.page.click('#btn-export-toggle')
+        self.assertTrue(self._is_open())
+        self.page.keyboard.press('Escape')
+        self.assertFalse(self._is_open())
+
+    def test_clicking_an_export_option_closes_the_menu(self):
+        self.page.click('#btn-export-toggle')
+        self.page.click('#btn-export-svg')  # triggers a download; doesn't need to complete for this check
+        self.page.wait_for_timeout(50)
+        self.assertFalse(self._is_open())
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestWordSearchHighlight(unittest.TestCase):
     """Toolbar 'Highlight' search — separate from the left-pane search box,
     which filters. This one must never hide a row; it only marks matches
