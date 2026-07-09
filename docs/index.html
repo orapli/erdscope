@@ -1028,25 +1028,37 @@ function gridLayout(tables, preferredHub) {
   const area=boxes.reduce((s,b)=>s+(b.w+gap)*(b.h+gap),0);
   const targetW=Math.max(900, Math.sqrt(area*viewAspect()));
   boxes.sort((a,b)=>b.w*b.h-a.w*a.h);
-  let cx=0, cy=0, rowH=0, maxX=0;
+  let cx=0, cy=0, rowH=0;
   boxes.forEach(b=>{
     if(cx>0 && cx+b.w>targetW){ cx=0; cy+=rowH+gap; rowH=0; }
     b.comp.forEach(t=>{
       const p=nodePos[t];
       nodePos[t]={x:cx+(p.x-b.x0), y:cy+(p.y-b.y0)};
     });
-    cx+=b.w+gap; rowH=Math.max(rowH,b.h); maxX=Math.max(maxX,cx-gap);
+    cx+=b.w+gap; rowH=Math.max(rowH,b.h);
   });
 
-  // isolated tables: plain rows underneath
+  // isolated tables (no relation to anything, or to each other): stacked
+  // in a column along the right edge, top to bottom, rather than appended
+  // as more rows underneath everything else — the connected components
+  // above already grow tallest via BFS-depth rows, so piling isolated
+  // tables on as further rows compounded that same vertical growth. The
+  // right edge has headroom the bottom edge doesn't.
   if(singles.length){
-    const rowW=Math.max(maxX,900);
-    let sx=0, sy=cy+rowH+gap, srH=0;
+    let ix0=Infinity, iy0=Infinity, ix1=-Infinity, iy1=-Infinity;
+    comps.forEach(comp=>comp.forEach(t=>{
+      const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+      ix0=Math.min(ix0,p.x-s.w/2); iy0=Math.min(iy0,p.y-s.h/2);
+      ix1=Math.max(ix1,p.x+s.w/2); iy1=Math.max(iy1,p.y+s.h/2);
+    }));
+    if(!isFinite(ix1)){ ix1=0; iy0=0; iy1=0; } // every table is isolated
+    const colTargetH=Math.max(iy1-iy0, 600);
+    let sx=ix1+gap, sy=iy0, scW=0;
     singles.sort().forEach(t=>{
       const s=nodeSize[t]||calcSize(t);
-      if(sx>0 && sx+s.w>rowW){ sx=0; sy+=srH+60; srH=0; }
+      if(sy>iy0 && sy+s.h>iy0+colTargetH){ sy=iy0; sx+=scW+gapX; scW=0; }
       nodePos[t]={x:sx+s.w/2, y:sy+s.h/2};
-      sx+=s.w+40; srH=Math.max(srH,s.h);
+      sy+=s.h+gapY; scW=Math.max(scW,s.w);
     });
   }
 }
@@ -1085,11 +1097,12 @@ function layoutAll(tables, edges) {
   // siblings across several rows purely by search order, which reads as a
   // much deeper tree than the graph actually is. Isolated additions (no
   // already-placed neighbor at all) fall back to the old append-below row.
-  let bx0=Infinity, by1=-Infinity;
+  let bx0=Infinity, by0=Infinity, bx1=-Infinity, by1=-Infinity;
   tables.forEach(t => {
     const p=nodePos[t]; if(!p) return;
     const s=nodeSize[t]||{w:160,h:100};
-    bx0=Math.min(bx0, p.x-s.w/2); by1=Math.max(by1, p.y+s.h/2);
+    bx0=Math.min(bx0, p.x-s.w/2); by0=Math.min(by0, p.y-s.h/2);
+    bx1=Math.max(bx1, p.x+s.w/2); by1=Math.max(by1, p.y+s.h/2);
   });
   if(!isFinite(bx0)){ gridLayout(tables); return; }
   const overlapsPlaced=(x,y,s)=>{
@@ -1118,13 +1131,20 @@ function layoutAll(tables, edges) {
     groups.get(key).members.push(t);
   });
 
-  let cx=bx0, cy=by1+110, rowH=0; // fallback cursor, isolated additions only
+  // Isolated additions (no already-placed neighbor at all) stack in a
+  // column along the right edge, top to bottom — appending them as more
+  // rows below (the old behavior) meant every unrelated table checked in
+  // made the whole diagram grow taller, which compounds fast since the
+  // diagram already tends to grow vertically from BFS-depth rows. The
+  // right edge has slack the old bottom-appending approach didn't use.
+  let ix=bx1+110, iy=by0, colW=0;
+  const colTargetH=Math.max(by1-by0, 500);
   groups.forEach(g=>{
     if(g.isolated){
       const t=g.members[0], s=nodeSize[t]||calcSize(t);
-      if(cx>bx0 && cx+s.w>bx0+900){ cx=bx0; cy+=rowH+40; rowH=0; }
-      nodePos[t]={x:cx+s.w/2, y:cy+s.h/2};
-      cx+=s.w+40; rowH=Math.max(rowH,s.h);
+      if(iy>by0 && iy+s.h>by0+colTargetH){ iy=by0; ix+=colW+40; colW=0; }
+      nodePos[t]={x:ix+s.w/2, y:iy+s.h/2};
+      iy+=s.h+40; colW=Math.max(colW,s.w);
       return;
     }
     // pack this group as one centered row below its shared anchor; when that

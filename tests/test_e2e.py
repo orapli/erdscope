@@ -76,6 +76,22 @@ def _build_html():
     return out
 
 
+def _build_html_with_isolated_table():
+    # same base schema as _build_html(), plus 'settings': no FK to/from
+    # anything, so it lands in the isolated ("singles") bucket gridLayout
+    # and the incremental-add placer both special-case
+    table_rows = TABLE_ROWS + [('settings', '')]
+    col_rows = COL_ROWS + [_col('settings', 'id', key='PRI'), _col('settings', 'key', dtype='varchar', ctype='varchar(100)')]
+    tables = erd.mysql_ir(table_rows, col_rows, FK_ROWS, INDEX_ROWS)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestClientJS(unittest.TestCase):
     @classmethod
@@ -666,6 +682,89 @@ class TestIncrementalAdditionPlacement(unittest.TestCase):
             y0 = min(b['y0'] for b in boxes.values()); y1 = max(b['y1'] for b in boxes.values())
             self.assertLess((y1-y0) / (x1-x0), 3.0,
                 f'diagram bbox {x1-x0:.0f}x{y1-y0:.0f} is a vertical snake')
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestIsolatedTablePlacement(unittest.TestCase):
+    """A table with no FK relation to anything currently displayed used to
+    be appended as a new row below the whole diagram — every unrelated
+    table checked in made the diagram taller, compounding the layout's
+    already-strong tendency to grow vertically via BFS-depth rows. It
+    should stack in a column along the right edge instead."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_with_isolated_table()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    CHECKBOX = '.table-item:has(.tname:text-is("{0}")) input[type=checkbox]'
+
+    def _boxes(self, page):
+        return page.evaluate('''() => {
+            const out = {};
+            for (const t of getDisplayTables()) {
+                const p = nodePos[t], s = nodeSize[t];
+                out[t] = {x0:p.x-s.w/2, y0:p.y-s.h/2, x1:p.x+s.w/2, y1:p.y+s.h/2};
+            }
+            return out;
+        }''')
+
+    def test_full_layout_puts_isolated_table_to_the_right_not_below(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.wait_for_timeout(50)
+            boxes = self._boxes(page)
+            connected_x1 = max(boxes[t]['x1'] for t in boxes if t != 'settings')
+            connected_y0 = min(boxes[t]['y0'] for t in boxes if t != 'settings')
+            connected_y1 = max(boxes[t]['y1'] for t in boxes if t != 'settings')
+            s = boxes['settings']
+            self.assertGreaterEqual(s['x0'], connected_x1,
+                'isolated table should sit to the right of the connected component, not overlap/below it')
+            # top-anchored: its top edge should be near the connected group's
+            # top, not appended past its bottom
+            self.assertLess(s['y0'], connected_y1,
+                'isolated table should start near the top of the diagram, not below everything')
+        finally:
+            page.close()
+
+    def test_incremental_add_of_isolated_table_goes_right_not_below(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.wait_for_timeout(50)
+            page.evaluate('localStorage.clear()')
+            page.reload()
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.click('#btn-none')
+            for name in ('users', 'posts', 'comments', 'likes', 'audit_logs'):
+                page.click(self.CHECKBOX.format(name))
+            page.reload()  # persisted state -> fresh gridLayout of the connected group
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            before = self._boxes(page)
+            bx1 = max(b['x1'] for b in before.values())
+            by0 = min(b['y0'] for b in before.values())
+            by1 = max(b['y1'] for b in before.values())
+            page.click(self.CHECKBOX.format('settings'))  # incremental add, no shared neighbor
+            after = self._boxes(page)
+            s = after['settings']
+            self.assertGreaterEqual(s['x0'], bx1,
+                'incrementally-added isolated table should land to the right of the existing diagram')
+            self.assertLess(s['y0'], by1,
+                'incrementally-added isolated table should not be appended below everything')
         finally:
             page.close()
 
