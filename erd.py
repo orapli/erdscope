@@ -1076,6 +1076,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .col-hit{font-size:9px;background:#ecfeff;color:#0e7490;padding:1px 4px;border-radius:3px;flex-shrink:0;
   font-family:'SF Mono','Fira Code',monospace}
 .table-item.focused .rel-badge{background:#dbeafe;color:#3b82f6}
+/* toolbar word-search hit — an inset bar, not another badge next to the
+   cyan ⌕ one above (that's the left-pane filter's own column-hit marker;
+   two visually-similar badges from two different searches would be
+   genuinely ambiguous about which search found what) */
+.table-item.word-hit label{box-shadow:inset 3px 0 0 #f59e0b}
+body.dark .table-item.word-hit label{box-shadow:inset 3px 0 0 #fbbf24}
 /* auto-expanded (in current focus view) indicator */
 .table-item.inview .tname::after{content:'●';color:#3b82f6;font-size:7px;margin-left:5px;vertical-align:middle}
 /* fully-hidden (banned) tables */
@@ -1106,7 +1112,8 @@ body.dark .snap-guide{stroke:#f87171}
 .marquee-rect{fill:rgba(59,130,246,.12);stroke:#3b82f6;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:none}
 
 /* ── toolbar ── */
-#diagram-toolbar{position:absolute;bottom:12px;right:12px;display:flex;gap:4px;align-items:center}
+#diagram-toolbar{position:absolute;bottom:12px;right:12px;left:12px;display:flex;flex-wrap:wrap;
+  gap:4px;align-items:center;justify-content:flex-end}
 .diag-btn{height:30px;min-width:30px;padding:0 8px;background:white;border:1px solid #e2e8f0;
   border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;
   font-size:13px;color:#475569;box-shadow:0 1px 3px rgba(0,0,0,.08);white-space:nowrap}
@@ -1118,6 +1125,25 @@ body.dark .snap-guide{stroke:#f87171}
 #colmode-group .diag-btn{box-shadow:none;border-radius:0;font-size:11px;margin-left:-1px}
 #colmode-group .diag-btn:first-child{border-radius:6px 0 0 6px;margin-left:0}
 #colmode-group .diag-btn:last-child{border-radius:0 6px 6px 0}
+
+/* ── word-search / highlight (toolbar) ── */
+#word-search-box{height:30px;display:flex;align-items:center;gap:4px;padding:0 4px 0 8px;
+  background:white;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+#word-search{width:110px;border:none;outline:none;font-size:12px;background:transparent;
+  transition:width .15s}
+#word-search:focus{width:170px}
+#word-search-count{font-size:10px;color:#94a3b8;min-width:12px;text-align:center;flex-shrink:0}
+#word-search-clear{border:none;background:none;cursor:pointer;font-size:10px;color:#94a3b8;
+  padding:2px 4px;line-height:1;flex-shrink:0;visibility:hidden}
+#word-search-box.has-query #word-search-clear{visibility:visible}
+#word-search-box.has-query #word-search-count{color:#b45309}
+#word-search-clear:hover{color:#475569}
+body.dark #word-search-box{background:#1e293b;border-color:#334155}
+body.dark #word-search{color:#e2e8f0}
+body.dark #word-search-count{color:#64748b}
+body.dark #word-search-box.has-query #word-search-count{color:#fbbf24}
+body.dark #word-search-clear{color:#64748b}
+body.dark #word-search-clear:hover{color:#cbd5e1}
 
 /* ── focus bar (dialog-like header while focused) ── */
 #focus-bar{position:absolute;top:0;left:0;right:0;height:36px;z-index:6;
@@ -1156,6 +1182,7 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .empty-state{color:#94a3b8;font-size:12px;text-align:center;margin-top:40px;line-height:1.8}
 .detail-name{font-size:15px;font-weight:700;font-family:'SF Mono','Fira Code',monospace;
   color:#1e293b;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #1e293b;word-break:break-all}
+.word-mark{background:#fde68a;color:#713f12;border-radius:2px;padding:0 1px}
 .sec-title{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;
   letter-spacing:.6px;margin:14px 0 5px}
 .col-list{display:flex;flex-direction:column;gap:2px}
@@ -1229,6 +1256,12 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:700;font-family:'SF Mono','Fira Code',monospace}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
+/* toolbar word-search highlight — amber, distinct from the cyan/amber-ish
+   colHighlight above so "found via Enter-locate" and "matches the live
+   Highlight box" read as related but not identical signals */
+.er-node.word-hit .n-bg{stroke:#f59e0b;stroke-width:2.5}
+.er-node.word-dim{opacity:.45}
+.er-node .n-wordhit{fill:#fde68a}
 .er-node .n-cn{fill:#1e293b;font-size:11px;font-family:'SF Mono','Fira Code',monospace}
 .er-node .n-ct{fill:#64748b;font-size:10px;font-family:'SF Mono','Fira Code',monospace}
 .er-node .n-bpk{fill:#fef08a}
@@ -1290,6 +1323,7 @@ body.dark #focus-bar button{background:#0f172a;border-color:#1e40af;color:#93c5f
 body.dark #hidden-bar{background:#450a0a;border-color:#7f1d1d;color:#fca5a5}
 body.dark #canvas-empty{color:#94a3b8}
 body.dark .detail-name{color:#e2e8f0;border-color:#e2e8f0}
+body.dark .word-mark{background:#78350f;color:#fde68a}
 body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry,body.dark .msel-chip{background:#1e293b}
 body.dark .idx-name{color:#e2e8f0}
 body.dark .col-cn,body.dark .aname,body.dark .msel-cn{color:#e2e8f0}
@@ -1299,6 +1333,8 @@ body.dark .er-node .n-alt{fill:#263447}
 body.dark .er-node .n-cn{fill:#e2e8f0}
 body.dark .er-node .n-ct{fill:#aab6c7}
 body.dark .er-node .n-colhit{fill:#713f12}
+body.dark .er-node.word-hit .n-bg{stroke:#fbbf24}
+body.dark .er-node .n-wordhit{fill:#92400e}
 /* headers had no dark override at all, so they silently inherited the
    light-mode fill (#1e293b) — identical to the dark-mode body color right
    above, making every table's title bar invisible against its own body.
@@ -1400,6 +1436,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           shift-drag on empty canvas = rubber-band select<br>
           2+ selected: align/distribute buttons appear in the right pane<br>
           List: click = locate in diagram, double-click = focus<br>
+          Toolbar "Highlight" box: marks matches everywhere (doesn't filter), Enter cycles, survives exports<br>
           Esc: exit focus</div>
       </div>
     </div>
@@ -1408,6 +1445,11 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
     <div id="canvas-empty">No tables are displayed<br>
       Check tables in the list on the left, or press "All"</div>
     <div id="diagram-toolbar">
+      <div id="word-search-box" title="Highlight matching tables/columns in the diagram (does not filter)">
+        <input type="text" id="word-search" placeholder="Highlight…">
+        <span id="word-search-count"></span>
+        <button id="word-search-clear" title="Clear highlight" aria-label="Clear highlight">✕</button>
+      </div>
       <select class="diag-btn" id="max-rows" title="Max column rows per table (scroll with the wheel for the rest)">
         <option value="5">5 rows</option>
         <option value="10">10 rows</option>
@@ -1496,6 +1538,22 @@ let manualExpanded = new Set(); // tables added with ⊕ while focused (not pers
 let noAutoExpandRoot = new Set();
 let autoLayout     = false; // re-layout automatically whenever the display set changes
 let colHighlight   = null;  // {table, q} — column-search hit to highlight in the node
+// toolbar "Highlight" search — separate from #search (which filters the
+// left-pane list). Never filters anything; marks matches everywhere
+// instead. Lowercased, empty = off. Read on demand by drawNode/
+// renderTableList/showDetails rather than pushed into per-table state, so
+// it survives every existing re-render path for free.
+let wordQuery = '';
+let wordMatchIdx = -1; // rotating cursor for Enter-to-cycle
+let wordColHitCache = new Map(); // table -> last-seen wordColHits() signature
+function wordColHits(name){
+  if(!wordQuery) return [];
+  return (DATA.tables[name]?.columns||[]).filter(c=>c.name.toLowerCase().includes(wordQuery)).map(c=>c.name);
+}
+function wordHit(name){
+  if(!wordQuery) return false;
+  return name.toLowerCase().includes(wordQuery) || wordColHits(name).length>0;
+}
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
 let showEdgeLabels = true;
@@ -2248,8 +2306,10 @@ function drawNode(parent, name) {
   const isOverviewAuto = !focusedTable && autoExpand;
   const isRoot = isOverviewAuto && !excludedTables.has(name);
   const isAuto = isOverviewAuto && excludedTables.has(name);
+  const isWordHit = wordHit(name);
   const g = svgEl('g', {
-    class: 'er-node' + (selectedTables.has(name)?' sel':'') + (name===focusedTable?' center':'') + (isAuto?' auto':'') + ringCls,
+    class: 'er-node' + (selectedTables.has(name)?' sel':'') + (name===focusedTable?' center':'') + (isAuto?' auto':'') + ringCls
+      + (isWordHit?' word-hit':'') + (wordQuery&&!isWordHit?' word-dim':''),
     transform: `translate(${lx},${ty})`,
     'data-name': name,
   });
@@ -2316,6 +2376,8 @@ function drawNode(parent, name) {
     if(i%2===1) g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-alt'})); // inset: keep off the 1px border
     if(colHighlight&&colHighlight.table===name&&col.name.toLowerCase().includes(colHighlight.q))
       g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-colhit'}));
+    if(wordQuery&&col.name.toLowerCase().includes(wordQuery))
+      g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-wordhit'}));
     const isPK=col.primary, isFK=!isPK&&isFkCol(name, col.name);
     if(isPK){
       g.appendChild(svgEl('rect',{x:4,y:ry+3,width:20,height:14,rx:2,class:'n-bpk'}));
@@ -2674,7 +2736,8 @@ function renderTableList(){
         +(focusedTable===name?' focused':'')
         +(selectedTables.has(name)&&focusedTable!==name?' selected':'')
         +(isHidden?' hidden':'')
-        +(autoShown?' inview':'');
+        +(autoShown?' inview':'')
+        +(wordHit(name)?' word-hit':'');
       const lbl=document.createElement('label');
       lbl.addEventListener('click', e => {
         if(e.target.tagName==='INPUT'||e.target.tagName==='BUTTON') return;
@@ -2736,6 +2799,35 @@ function renderTableList(){
 }
 let lastFocusScrolled=null;
 
+// Apply the current wordQuery everywhere: table-list bar (via
+// renderTableList, called above/below already), diagram node borders/dim
+// (class-toggle, no rebuild), diagram column rows (redrawNode, only for
+// tables whose match set actually changed), the counter, and the right
+// pane if a single table is selected. Called after every wordQuery change.
+function updateWordHighlight(){
+  const box=document.getElementById('word-search-box');
+  box.classList.toggle('has-query', !!wordQuery);
+  const tables=getDisplayTables();
+  const hitTables=new Set(tables.filter(wordHit));
+  document.querySelectorAll('#node-layer .er-node').forEach(el=>{
+    const name=el.getAttribute('data-name');
+    const isHit=hitTables.has(name);
+    el.classList.toggle('word-hit', isHit);
+    el.classList.toggle('word-dim', !!wordQuery && !isHit);
+  });
+  tables.forEach(name=>{
+    const sig=wordColHits(name).join('\x00');
+    if(wordColHitCache.get(name)!==sig){
+      wordColHitCache.set(name, sig);
+      redrawNode(name);
+    }
+  });
+  document.getElementById('word-search-count').textContent = wordQuery ? String(hitTables.size) : '';
+  wordMatchIdx=-1;
+  renderTableList();
+  if(selectedTables.size===1) showDetails(); // re-marks the currently-shown table
+}
+
 // ── Hidden-tables bar ───────────────────────────────────────────────────────
 function updateHiddenBar(){
   const bar=document.getElementById('hidden-bar');
@@ -2759,7 +2851,7 @@ function showDetails(){
   if(!name||!DATA.tables[name]){el.innerHTML='<div class="empty-state">Click a table<br>to see its details</div>';return;}
   const t=DATA.tables[name];
   const cols=t.columns||[], assocs=t.associations||[];
-  let h=`<div class="detail-name">${esc(name)}</div>`;
+  let h=`<div class="detail-name">${escMark(name)}</div>`;
   if(t.comment) h+=`<div class="tbl-comment">${esc(t.comment)}</div>`;
   if(t.schema_missing && cols.length===0){
     h+='<div class="sec-title">Columns</div>'
@@ -2774,7 +2866,7 @@ function showDetails(){
       const bt=isPK?'PK':isFK?'FK':'';
       const nullEl=c.nullable?'<span class="col-null">NULL</span>':'';
       const cmtEl=c.comment?`<div class="col-comment">${esc(c.comment)}</div>`:'';
-      h+=`<div class="col-entry"><div class="col-main"><span class="${bc}">${bt}</span><span class="col-cn">${esc(c.name)}</span><span class="col-ct">${esc(c.sql_type||c.type)}</span>${nullEl}</div>${cmtEl}</div>`;
+      h+=`<div class="col-entry"><div class="col-main"><span class="${bc}">${bt}</span><span class="col-cn">${escMark(c.name)}</span><span class="col-ct">${esc(c.sql_type||c.type)}</span>${nullEl}</div>${cmtEl}</div>`;
     });
     h+='</div>';
   }
@@ -2784,7 +2876,7 @@ function showDetails(){
     idxs.forEach(ix=>{
       const uq=ix.unique?'<span class="badge-uq">UNIQUE</span>':'';
       h+=`<div class="idx-entry"><div class="idx-name">${esc(ix.name)}${uq}</div>`
-        +`<div class="idx-cols">${ix.columns.map(esc).join(', ')}</div></div>`;
+        +`<div class="idx-cols">${ix.columns.map(escMark).join(', ')}</div></div>`;
     });
     h+='</div>';
   }
@@ -2811,13 +2903,13 @@ function showDetails(){
       const link=a.polymorphic
         ?`<span class="not-in-view" title="Polymorphic association (target table is decided at runtime)">(polymorphic)</span>`
         :inView
-          ?`<a data-goto="${esc(a.target)}">${esc(a.target)}</a>`
+          ?`<a data-goto="${esc(a.target)}">${escMark(a.target)}</a>`
           :isHidden
-            ?`<span class="not-in-view" title="Banned with 🚫">${esc(a.target)} 🚫</span>`
-            :`<a class="add-target" data-add="${esc(a.target)}" title="Not displayed — click to add to the diagram">${esc(a.target)} ＋</a>`;
+            ?`<span class="not-in-view" title="Banned with 🚫">${escMark(a.target)} 🚫</span>`
+            :`<a class="add-target" data-add="${esc(a.target)}" title="Not displayed — click to add to the diagram">${escMark(a.target)} ＋</a>`;
       const thr=a.through?`<div class="athrough">through: :${esc(a.through)}</div>`:'';
       // plain-language description appears as a tooltip on hover
-      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${esc(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
+      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${escMark(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
     });
     h+='</div>';
   }
@@ -2831,6 +2923,21 @@ function showDetails(){
   el.querySelectorAll('[data-add]').forEach(a=>a.addEventListener('click',()=>addTables([a.dataset.add])));
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// esc(), plus wrapping wordQuery matches in a <mark> — split the *raw*
+// string on the query first, then esc() each fragment individually and
+// rejoin. Never regex-replace inside already-escaped HTML (a query like
+// "quot" or "amp" would then match inside an entity).
+function escMark(s){
+  s=String(s);
+  if(!wordQuery) return esc(s);
+  const lower=s.toLowerCase();
+  let out='', i=0, idx;
+  while((idx=lower.indexOf(wordQuery,i))>=0){
+    out+=esc(s.slice(i,idx))+'<mark class="word-mark">'+esc(s.slice(idx,idx+wordQuery.length))+'</mark>';
+    i=idx+wordQuery.length;
+  }
+  return out+esc(s.slice(i));
+}
 
 // ── Multi-select: align / distribute panel ─────────────────────────────────
 function renderMultiSelectDetails(el){
@@ -2996,6 +3103,9 @@ const EXPORT_CSS = `
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:bold;font-family:monospace}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
+.er-node.word-hit .n-bg{stroke:#f59e0b;stroke-width:2.5}
+.er-node.word-dim{opacity:.45}
+.er-node .n-wordhit{fill:#fde68a}
 .er-node .n-cn{fill:#1e293b;font-size:11px;font-family:monospace}
 .er-node .n-ct{fill:#64748b;font-size:10px;font-family:monospace}
 .er-node .n-bpk{fill:#fef08a}.er-node .n-bfk{fill:#bfdbfe}
@@ -3049,7 +3159,10 @@ function buildExportSvg(){
   // pan/zoom transform — strip it, the viewBox already frames the diagram.
   const mainClone=erMain.cloneNode(true);
   mainClone.removeAttribute('transform');
-  // strip transient selection state — the shared image should be neutral
+  // strip transient selection state — the shared image should be neutral.
+  // Deliberately NOT stripping word-hit/word-dim/n-wordhit here — the
+  // toolbar Highlight search is meant to survive into exports (the whole
+  // point is pasting a highlighted diagram into a doc), unlike selection.
   mainClone.querySelectorAll('.sel,.hl').forEach(el=>el.classList.remove('sel','hl'));
   mainClone.querySelectorAll('path').forEach(p=>{
     ['marker-start','marker-end'].forEach(a=>{
@@ -3367,11 +3480,17 @@ svg.addEventListener('click', e=>{
   if(e.target===svg||e.target===erMain) selectOnly(null);
 });
 
-// Escape: search → focus → selection, in that order
+// Escape: search → highlight → focus → selection, in that order. Only
+// clears the highlight box when it's actually focused (matching the
+// left-pane search's own behavior) — Esc with the canvas focused keeps
+// meaning "exit focus / deselect", not a surprise highlight-clear; the ✕
+// button is there for that.
 window.addEventListener('keydown', e=>{
   if(e.key!=='Escape') return;
   const sb=document.getElementById('search');
   if(document.activeElement===sb && sb.value){ sb.value=''; renderTableList(); return; }
+  const wb=document.getElementById('word-search');
+  if(document.activeElement===wb && wb.value){ wb.value=''; wordQuery=''; updateWordHighlight(); return; }
   if(focusedTable){ clearFocus(); return; }
   if(selectedTables.size) selectOnly(null);
 });
@@ -3720,6 +3839,33 @@ document.getElementById('search').addEventListener('keydown', e=>{
     renderDiagram();
     flashNode(m);
   }
+});
+
+// ── Toolbar word-search (highlight, does not filter) ────────────────────────
+let wordSearchDebounce=null;
+document.getElementById('word-search').addEventListener('input', e=>{
+  clearTimeout(wordSearchDebounce);
+  const val=e.target.value;
+  wordSearchDebounce=setTimeout(()=>{
+    wordQuery=val.trim().toLowerCase();
+    updateWordHighlight();
+  }, 150);
+});
+document.getElementById('word-search-clear').addEventListener('click', ()=>{
+  const wb=document.getElementById('word-search');
+  wb.value=''; wordQuery='';
+  clearTimeout(wordSearchDebounce);
+  updateWordHighlight();
+  wb.focus();
+});
+document.getElementById('word-search').addEventListener('keydown', e=>{
+  if(e.key!=='Enter') return;
+  const matches=allTables().filter(wordHit);
+  if(!matches.length) return;
+  wordMatchIdx=(wordMatchIdx+1)%matches.length;
+  const m=matches[wordMatchIdx];
+  if(!hiddenTables.has(m) && !getDisplayTables().includes(m)) addTables([m]); // add hidden targets before locating
+  locateTable(m);
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────

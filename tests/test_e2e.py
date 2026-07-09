@@ -818,5 +818,118 @@ class TestPngExportOversizedCanvas(unittest.TestCase):
             page.close()
 
 
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestWordSearchHighlight(unittest.TestCase):
+    """Toolbar 'Highlight' search — separate from the left-pane search box,
+    which filters. This one must never hide a row; it only marks matches
+    across the diagram, table list, and right pane. Fixture: users.email is
+    the only 'email' column anywhere, so it isolates a single-table hit
+    (users) with everything else dimmed — a clean case for the dim/hit
+    distinction that a broader query like 'user' (which also matches every
+    *_id column) wouldn't exercise."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _highlight(self, query):
+        self.page.fill('#word-search', query)
+        self.page.wait_for_timeout(250)  # clears the 150ms debounce
+
+    def test_highlights_matching_node_and_dims_the_rest(self):
+        self._highlight('email')
+        hit = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-hit')].map(n=>n.dataset.name)''')
+        dim = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-dim')].map(n=>n.dataset.name)''')
+        self.assertEqual(hit, ['users'])
+        self.assertEqual(sorted(dim), ['audit_logs', 'comments', 'likes', 'posts'])
+
+    def test_does_not_filter_the_table_list(self):
+        before = self.page.evaluate('''[...document.querySelectorAll('.table-item')].length''')
+        self._highlight('email')
+        after = self.page.evaluate('''[...document.querySelectorAll('.table-item')].length''')
+        self.assertEqual(before, after, 'the Highlight box must never hide table-list rows')
+        marked = self.page.evaluate(
+            '''[...document.querySelectorAll('.table-item.word-hit .tname')].map(e=>e.textContent)''')
+        self.assertEqual(marked, ['users'])
+
+    def test_shows_a_match_count(self):
+        self._highlight('user_id')  # matches posts/comments/likes/audit_logs, not users
+        self.assertEqual(self.page.evaluate("document.getElementById('word-search-count').textContent"), '4')
+        self._highlight('')
+        self.assertEqual(self.page.evaluate("document.getElementById('word-search-count').textContent"), '')
+
+    def test_right_pane_marks_matches(self):
+        self._highlight('email')
+        self.page.click('[data-name="users"]')
+        self.page.wait_for_timeout(50)
+        marks = self.page.evaluate(
+            '''[...document.querySelectorAll('#right-pane mark')].map(e=>e.textContent)''')
+        self.assertTrue(marks and all(m.lower() == 'email' for m in marks))
+
+    def test_clear_button_resets_everything(self):
+        self._highlight('email')
+        self.page.click('#word-search-clear')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate("document.getElementById('word-search').value"), '')
+        self.assertEqual(self.page.evaluate(
+            '''document.querySelectorAll('.er-node.word-hit,.er-node.word-dim').length'''), 0)
+
+    def test_escape_clears_when_box_is_focused(self):
+        self.page.fill('#word-search', 'email')
+        self.page.wait_for_timeout(250)
+        self.page.press('#word-search', 'Escape')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate("document.getElementById('word-search').value"), '')
+        self.assertEqual(self.page.evaluate(
+            '''document.querySelectorAll('.er-node.word-hit').length'''), 0)
+
+    def test_enter_cycles_through_matches(self):
+        self.page.fill('#word-search', 'user_id')  # 4 matches: posts, comments, likes, audit_logs
+        self.page.wait_for_timeout(250)
+        seen=[]
+        for _ in range(4):
+            self.page.press('#word-search', 'Enter')
+            self.page.wait_for_timeout(50)
+            seen.append(self.page.evaluate('selectionAnchor'))
+        self.assertEqual(len(set(seen)), 4, f'each Enter should land on a different match, got {seen}')
+        self.assertEqual(set(seen), {'posts', 'comments', 'likes', 'audit_logs'})
+        # a 5th Enter wraps back to the first match
+        self.page.press('#word-search', 'Enter')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('selectionAnchor'), seen[0])
+
+    def test_coexists_with_the_left_pane_filter_search(self):
+        # the two searches must not interfere with each other
+        self.page.fill('#search', 'posts')  # filters the list down to 'posts'
+        self._highlight('email')            # highlights 'users' (not in the filtered list)
+        visible = self.page.evaluate(
+            '''[...document.querySelectorAll('.table-item .tname')].map(e=>e.textContent)''')
+        self.assertEqual(visible, ['posts'], 'the left-pane filter should still narrow the list')
+        hit = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-hit')].map(n=>n.dataset.name)''')
+        self.assertEqual(hit, ['users'], 'the toolbar highlight is independent of the filter')
+
+
 if __name__ == '__main__':
     unittest.main()

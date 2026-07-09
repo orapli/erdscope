@@ -150,10 +150,14 @@ Test-only, and only if you run that particular suite:
   `*_id` name alone never earns it, only a real association does
 - **Interactive exploration** — locate/focus with depth and dependency direction,
   per-table deep-dive, two-level hiding, table *and column* search, named views,
-  share links (state embedded in the URL)
-- **Readable layouts** — viewport-aware packing with crossing reduction, elliptical
-  hub-and-spoke focus view, edges detour around nodes, join-table chains, auto-tidy,
-  drag-to-snap with guide lines, multi-select (shift/ctrl-click) with
+  share links (state embedded in the URL). A separate toolbar "Highlight" search
+  marks matches everywhere (nodes, table list, right pane) without filtering
+  anything — Enter cycles through hits, and the highlight survives into PNG/SVG
+  exports, for pasting into docs
+- **Readable layouts** — viewport-aware packing with crossing reduction (the same
+  packing focus mode uses too, so focusing never looks worse than the overview),
+  edges detour around nodes, join-table chains, auto-tidy, drag-to-snap with guide
+  lines, multi-select (shift/ctrl-click or shift-drag a rubber-band) with
   align-left/top/center/middle and distribute-horizontal/vertical, and
   layout undo/redo (Ctrl/Cmd+Z)
 - **Exports** — PNG (clipboard, 2x), SVG, Mermaid `erDiagram`, and the Excel workbook
