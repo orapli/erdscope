@@ -1499,7 +1499,8 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       <div class="tb-group" id="export-group">
         <button class="diag-btn" id="btn-export-toggle" title="Export the diagram" aria-haspopup="true">⬇ Export</button>
         <div id="export-menu" class="tb-popup">
-          <button class="diag-btn" id="btn-export">PNG — copy to clipboard / download</button>
+          <button class="diag-btn" id="btn-export" title="Falls back to a file download if the browser can't write images to the clipboard">PNG — copy to clipboard</button>
+          <button class="diag-btn" id="btn-export-download">PNG — download file</button>
           <button class="diag-btn" id="btn-export-svg">SVG — vector download</button>
           <button class="diag-btn" id="btn-export-mmd" title="Covers displayed tables; paste into READMEs/PRs">Mermaid — copy markup</button>
         </div>
@@ -3321,9 +3322,12 @@ function exportToMermaid(){
   } else dl();
 }
 
-async function exportToPNG(){
+// Rasterizes the current diagram to a PNG Blob (or null on failure, having
+// already shown the relevant toast) — shared by the clipboard-copy and
+// explicit-download export actions below.
+async function rasterizePNGBlob(){
   const built=buildExportSvg();
-  if(!built) return;
+  if(!built) return null;
   // browsers cap canvas dimensions (commonly ~16384px/side, tighter on
   // Safari/mobile) — an oversized canvas makes toBlob() silently yield
   // null with no error of its own. Scale down from the ideal 2x rather
@@ -3337,7 +3341,7 @@ async function exportToPNG(){
   const blob=new Blob([svgStr],{type:'image/svg+xml;charset=utf-8'});
   const url=URL.createObjectURL(blob);
 
-  await new Promise(resolve=>{
+  return new Promise(resolve=>{
     const img=new Image();
     img.onload=()=>{
       try{
@@ -3347,27 +3351,41 @@ async function exportToPNG(){
         ctx.drawImage(img,0,0,W,H); // background stays transparent
         URL.revokeObjectURL(url);
         canvas.toBlob(pngBlob=>{
-          if(!pngBlob){
-            showToast('Export failed: diagram too large to rasterize — try SVG export instead');
-            resolve(); return;
-          }
-          const pngUrl=URL.createObjectURL(pngBlob);
-          if(navigator.clipboard?.write){
-            navigator.clipboard.write([new ClipboardItem({'image/png':pngBlob})])
-              .then(()=>showToast('Copied to clipboard ✓'))
-              .catch(()=>downloadPNG(pngUrl));
-          } else { downloadPNG(pngUrl); }
-          resolve();
+          if(!pngBlob) showToast('Export failed: diagram too large to rasterize — try SVG export instead');
+          resolve(pngBlob);
         },'image/png');
       }catch(err){
         URL.revokeObjectURL(url);
         showToast('Export failed: diagram too large to rasterize — try SVG export instead');
-        resolve();
+        resolve(null);
       }
     };
-    img.onerror=()=>{URL.revokeObjectURL(url);showToast('Export failed');resolve();};
+    img.onerror=()=>{URL.revokeObjectURL(url);showToast('Export failed');resolve(null);};
     img.src=url;
   });
+}
+
+// "PNG — copy to clipboard" menu action: clipboard is the primary intent,
+// falling back to a download only when the browser can't write images to
+// the clipboard at all (or the user denies the permission prompt) — not a
+// substitute for the explicit "download file" action below, which a user
+// who *wants* a file (not clipboard) should be able to reach directly
+// rather than only by clipboard failing.
+async function exportToPNG(){
+  const pngBlob=await rasterizePNGBlob();
+  if(!pngBlob) return;
+  const pngUrl=URL.createObjectURL(pngBlob);
+  if(navigator.clipboard?.write){
+    navigator.clipboard.write([new ClipboardItem({'image/png':pngBlob})])
+      .then(()=>showToast('Copied to clipboard ✓'))
+      .catch(()=>downloadPNG(pngUrl));
+  } else { downloadPNG(pngUrl); }
+}
+
+async function downloadPNGFile(){
+  const pngBlob=await rasterizePNGBlob();
+  if(!pngBlob) return;
+  downloadPNG(URL.createObjectURL(pngBlob));
 }
 
 function downloadPNG(url){
@@ -3654,6 +3672,7 @@ document.addEventListener('click', e=>{
   if(!document.getElementById('export-group').contains(e.target)) closeExportMenu();
 });
 document.getElementById('btn-export').addEventListener('click', ()=>{ exportToPNG(); closeExportMenu(); });
+document.getElementById('btn-export-download').addEventListener('click', ()=>{ downloadPNGFile(); closeExportMenu(); });
 document.getElementById('btn-export-svg').addEventListener('click', ()=>{ exportToSVG(); closeExportMenu(); });
 document.getElementById('btn-export-mmd').addEventListener('click', ()=>{ exportToMermaid(); closeExportMenu(); });
 document.getElementById('btn-dark').addEventListener('click',()=>{

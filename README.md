@@ -160,7 +160,7 @@ Test-only, and only if you run that particular suite:
   lines, multi-select (shift/ctrl-click or shift-drag a rubber-band) with
   align-left/top/center/middle and distribute-horizontal/vertical, and
   layout undo/redo (Ctrl/Cmd+Z)
-- **Exports** — PNG (clipboard, 2x), SVG, Mermaid `erDiagram`, and the Excel workbook
+- **Exports** — PNG (clipboard or file download, 2x), SVG, Mermaid `erDiagram`, and the Excel workbook
 - **Extras** — dark mode, print stylesheet, resizable/collapsible panes
 
 ## Tests

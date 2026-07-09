@@ -1027,6 +1027,36 @@ class TestPngExportOversizedCanvas(unittest.TestCase):
         finally:
             page.close()
 
+    def test_download_button_downloads_even_when_clipboard_write_succeeds(self):
+        # regression: PNG used to be one button that always tried the
+        # clipboard first and only fell back to a download if clipboard
+        # write failed — on a browser that supports clipboard images
+        # (most do), there was no way to explicitly get a *file* instead.
+        # "PNG — download file" must always download, regardless of
+        # clipboard support/success, and "PNG — copy to clipboard" must
+        # still prefer the clipboard when it's available.
+        page = self.browser.new_page()
+        try:
+            page.add_init_script('''
+                navigator.clipboard.write = () => Promise.resolve();
+            ''')
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            with page.expect_download() as dl_info:
+                page.evaluate('downloadPNGFile()')
+            self.assertEqual(dl_info.value.suggested_filename, 'erd.png')
+            # and the clipboard-targeted action, in the same clipboard-capable
+            # environment, must NOT also trigger a download
+            downloaded = False
+            def on_download(_): nonlocal downloaded; downloaded = True
+            page.on('download', on_download)
+            page.evaluate('exportToPNG()')
+            page.wait_for_timeout(300)
+            self.assertFalse(downloaded,
+                'exportToPNG() should use the clipboard, not fall back to a download, when clipboard.write succeeds')
+        finally:
+            page.close()
+
 
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestExportMenu(unittest.TestCase):
