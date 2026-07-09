@@ -435,6 +435,26 @@ def parse_models(models_dir, tables, table_map=None):
                         break
         return tn_m.group(1) if tn_m else class_to_table(class_name)
 
+    # An association's target is resolved from a class/symbol name via the
+    # same naive class_to_table() convention used everywhere below — which
+    # never consults table_map/self.table_name. So a model whose *own*
+    # table_name is overridden (e.g. Project -> real table aaa_projects)
+    # still gets every *reference* to it pointed at the naive guess
+    # ('projects', a table that doesn't exist) — the right-pane link for
+    # that association shows a target that can never be found. Build a
+    # naive-guess -> real-table redirect from every model whose resolved
+    # table differs from its naive one, then apply it to every computed
+    # target_table below, regardless of how that name was derived
+    # (explicit class_name:, implicit belongs_to/has_one, or has_many).
+    target_override = {}
+    for name in model_names:
+        if class_info[name]['abstract']:
+            continue
+        naive = class_to_table(name)
+        real = resolve_table_name(name if name in table_map else sti_root(name))
+        if naive != real:
+            target_override[naive] = real
+
     for class_name in sorted(model_names):
         if class_info[class_name]['abstract']:
             continue
@@ -466,6 +486,7 @@ def parse_models(models_dir, tables, table_map=None):
                 target_table = pluralize(to_snake(sym))
             else:
                 target_table = sym
+            target_table = target_override.get(target_table, target_table)
             assoc = {'type': assoc_type, 'name': sym, 'target': target_table}
             if through_m: assoc['through'] = through_m.group(1)
             if fk_m:      assoc['foreign_key'] = fk_m.group(1)

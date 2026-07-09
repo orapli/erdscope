@@ -444,6 +444,21 @@ class TestOverlayAndInference(unittest.TestCase):
         self.assertNotIn('department',
                          {a['name'] for a in self.tables['users']['associations']})
 
+    def test_associations_pointing_at_a_renamed_table_use_the_real_name(self):
+        # project.rb: `class Project < ApplicationRecord; self.table_name =
+        # 'aaa_projects'; end`. task.rb references it two ways: implicit
+        # `belongs_to :project` (no class_name:) and explicit `belongs_to
+        # :owner, class_name: 'Project'`. Both used to resolve their target
+        # via the naive class_to_table('Project') = 'projects' — a table
+        # that doesn't exist, since the real one is aaa_projects — so the
+        # right-pane link pointed nowhere and was unclickable.
+        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.assertIn('aaa_projects', self.tables)
+        self.assertNotIn('projects', self.tables)
+        targets = {a['name']: a['target'] for a in self.tables['tasks']['associations']}
+        self.assertEqual(targets['project'], 'aaa_projects')
+        self.assertEqual(targets['owner'], 'aaa_projects')
+
     def test_commented_out_table_name_does_not_win(self):
         # commented_table_name.rb has `# self.table_name = 'should_not_be_used'`
         # — the self.table_name regex must run on comment-stripped source,
