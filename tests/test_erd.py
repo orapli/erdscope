@@ -920,6 +920,152 @@ class TestExcel(unittest.TestCase):
             self.assertEqual(wb.sheetnames[0], 'Tables')
             self.assertIn('users', wb.sheetnames)
 
+    def test_sheet_xml_keeps_a_styled_cell_even_when_its_value_is_empty(self):
+        # regression: _sheet_xml used to `continue` on any empty value
+        # before even checking for a style, silently dropping the cell —
+        # invisible while only header cells carried styles, but once every
+        # data cell carries a border/zebra-fill role, a blank Default/
+        # Extra/Comment column (extremely common) punched a border-less
+        # hole in an otherwise fully-gridded table
+        xml = erd._sheet_xml([[('filled', 3), ('', 3), (None, 3), ('', 0)]])
+        self.assertIn('<c r="A1" s="3" t="inlineStr">', xml)
+        self.assertIn('<c r="B1" s="3"/>', xml, 'an empty value with a style must still emit a styled cell')
+        self.assertIn('<c r="C1" s="3"/>', xml, 'None is exactly as empty as "" for this purpose')
+        self.assertNotIn('r="D1"', xml, 'an empty value with no style (role 0) is still skipped, as before')
+
+    def test_default_styling_has_title_header_and_zebra_stripes(self):
+        try:
+            import openpyxl
+        except ImportError:
+            self.skipTest('openpyxl not installed')
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'defs.xlsx'
+            erd.write_excel(tables, out, 'testdb')
+            ws = openpyxl.load_workbook(out)['Tables']
+            self.assertTrue(ws['A1'].font.b)
+            self.assertEqual(ws['A1'].font.sz, 14)
+            self.assertIsNone(ws['A1'].fill.fgColor.rgb if ws['A1'].fill.patternType else None)
+            self.assertTrue(ws['A3'].font.b)  # header row ('#','Table',...)
+            self.assertEqual(ws['A3'].font.color.rgb, 'FFFFFFFF')
+            self.assertEqual(ws['A3'].fill.fgColor.rgb, 'FF1E293B')
+            # first two data rows must alternate (zebra stripe)
+            row0_fill = ws['A4'].fill.fgColor.rgb if ws['A4'].fill.patternType == 'solid' else None
+            row1_fill = ws['A5'].fill.fgColor.rgb if ws['A5'].fill.patternType == 'solid' else None
+            self.assertNotEqual(row0_fill, row1_fill)
+            self.assertEqual(row1_fill, 'FFF8FAFC')
+            self.assertEqual(ws['A4'].border.left.style, 'thin')
+
+    def _build_template(self, path, styled_cells=(1, 2, 3, 4, 5)):
+        """A minimal .xlsx with distinct styling on whichever of A1:A5 are
+        listed in styled_cells, via openpyxl (a real editor's OOXML shape,
+        not erd.py's own writer) — the closest a unit test gets to Fable's
+        recommendation of a fixture "saved by real Excel," without
+        checking in a binary file."""
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Border, Side
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Styles'
+        thin = Side(style='thin', color='FF00FF00')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        specs = {
+            1: (Font(bold=True, size=20, color='FFFF00FF'), None, None),
+            2: (Font(bold=True, color='FFFFFFFF'), PatternFill('solid', fgColor='FF123456'), None),
+            3: (None, None, border),
+            4: (None, PatternFill('solid', fgColor='FFEEEEEE'), border),
+            5: (Font(bold=True, italic=True), None, None),
+        }
+        for row in styled_cells:
+            font, fill, brd = specs[row]
+            cell = ws.cell(row=row, column=1, value=f'role{row}')
+            if font: cell.font = font
+            if fill: cell.fill = fill
+            if brd: cell.border = brd
+        wb.save(path)
+
+    def test_excel_template_overrides_the_default_styling(self):
+        try:
+            import openpyxl
+        except ImportError:
+            self.skipTest('openpyxl not installed')
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            template = Path(tmp) / 'template.xlsx'
+            self._build_template(template)
+            out = Path(tmp) / 'defs.xlsx'
+            erd.write_excel(tables, out, 'testdb', template_path=str(template))
+            ws = openpyxl.load_workbook(out)['Tables']
+            self.assertEqual(ws['A1'].font.sz, 20)
+            self.assertEqual(ws['A1'].font.color.rgb, 'FFFF00FF')
+            self.assertEqual(ws['A3'].fill.fgColor.rgb, 'FF123456')
+            self.assertEqual(ws['A4'].border.left.color.rgb, 'FF00FF00')
+            self.assertEqual(ws['A5'].fill.fgColor.rgb, 'FFEEEEEE')  # data-alt zebra row
+
+    def test_excel_template_falls_back_role_by_role_for_missing_cells(self):
+        try:
+            import openpyxl
+        except ImportError:
+            self.skipTest('openpyxl not installed')
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            template = Path(tmp) / 'partial_template.xlsx'
+            self._build_template(template, styled_cells=(1,))  # only the title role is styled
+            out = Path(tmp) / 'defs.xlsx'
+            erd.write_excel(tables, out, 'testdb', template_path=str(template))
+            ws = openpyxl.load_workbook(out)['Tables']
+            self.assertEqual(ws['A1'].font.sz, 20)  # from the template
+            self.assertEqual(ws['A3'].fill.fgColor.rgb, 'FF1E293B')  # built-in header fallback
+
+    def test_bad_excel_template_path_exits_with_a_clear_error(self):
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'defs.xlsx'
+            with self.assertRaises(SystemExit) as cm:
+                erd.write_excel(tables, out, 'testdb', template_path='/no/such/template.xlsx')
+            self.assertIn('excel-template', str(cm.exception))
+
+    def test_not_actually_an_xlsx_exits_with_a_clear_error(self):
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / 'not_a_workbook.xlsx'
+            fake.write_text('this is plain text, not a zip')
+            out = Path(tmp) / 'defs.xlsx'
+            with self.assertRaises(SystemExit) as cm:
+                erd.write_excel(tables, out, 'testdb', template_path=str(fake))
+            self.assertIn('not a readable .xlsx', str(cm.exception))
+
+    def test_bundled_excel_template_matches_the_built_in_default_look(self):
+        # excel-template.xlsx is meant to be a working *example* of the
+        # built-in styling (regenerated by gen_excel_template.py) — pin it
+        # against drift: using it as --excel-template must resolve to the
+        # exact same styling as using no template at all.
+        try:
+            import openpyxl
+        except ImportError:
+            self.skipTest('openpyxl not installed')
+        bundled = ROOT / 'excel-template.xlsx'
+        if not bundled.exists():
+            self.skipTest('excel-template.xlsx not generated (run gen_excel_template.py)')
+        tables = db_tables()
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / 'plain.xlsx'
+            templated = Path(tmp) / 'templated.xlsx'
+            erd.write_excel(tables, plain, 'testdb')
+            erd.write_excel(tables, templated, 'testdb', template_path=str(bundled))
+            wp, wt = openpyxl.load_workbook(plain)['Tables'], openpyxl.load_workbook(templated)['Tables']
+            for ref in ('A1', 'A3', 'A4', 'A5'):
+                cp, ct = wp[ref], wt[ref]
+                self.assertEqual(cp.font.b, ct.font.b, ref)
+                self.assertEqual(cp.font.sz, ct.font.sz, ref)
+                self.assertEqual(
+                    cp.font.color.rgb if cp.font.color else None,
+                    ct.font.color.rgb if ct.font.color else None, ref)
+                self.assertEqual(cp.fill.patternType, ct.fill.patternType, ref)
+                if cp.fill.patternType == 'solid':
+                    self.assertEqual(cp.fill.fgColor.rgb, ct.fill.fgColor.rgb, ref)
+                self.assertEqual(cp.border.left.style, ct.border.left.style, ref)
+
 
 class TestLoadConfig(unittest.TestCase):
     def _args(self, config=None, no_config=False):

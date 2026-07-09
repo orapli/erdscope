@@ -72,7 +72,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .table-item.selected label{background:#f0f7ff}
 .table-item.focused label{background:#eff6ff;color:#1d4ed8;font-weight:600}
 .table-item label input[type=checkbox]{accent-color:#3b82f6;flex-shrink:0}
-.tname{flex:1;font-size:11px;font-family:'SF Mono','Fira Code',monospace;
+.tname{flex:0 1 auto;min-width:0;font-size:11px;font-family:'SF Mono','Fira Code',monospace;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tlogical{flex:1;min-width:0;font-size:10px;color:#94a3b8;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rel-badge{font-size:10px;background:#f1f5f9;color:#94a3b8;padding:1px 4px;border-radius:3px;flex-shrink:0}
 .col-hit{font-size:9px;background:#ecfeff;color:#0e7490;padding:1px 4px;border-radius:3px;flex-shrink:0;
@@ -141,6 +143,16 @@ body.dark .tb-sep{background:#334155}
 .tb-popup.open{display:flex}
 .tb-popup .diag-btn{width:100%;justify-content:flex-start;font-size:11px;padding:0 10px}
 body.dark .tb-popup{background:#1e293b;border-color:#334155}
+.tb-popup-caption{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;
+  letter-spacing:.5px;padding:2px 6px}
+.tb-popup-check{display:flex;align-items:center;gap:6px;font-size:11px;color:#334155;
+  padding:3px 6px;cursor:pointer;border-radius:4px}
+.tb-popup-check:hover{background:#f1f5f9}
+.tb-popup-check input{accent-color:#3b82f6}
+.tb-popup-sep{height:1px;background:#e2e8f0;margin:2px 4px}
+body.dark .tb-popup-check{color:#cbd5e1}
+body.dark .tb-popup-check:hover{background:#334155}
+body.dark .tb-popup-sep{background:#334155}
 
 /* ── word-search / highlight (toolbar) ── */
 #word-search-box{height:30px;display:flex;align-items:center;gap:4px;padding:0 4px 0 8px;
@@ -271,6 +283,7 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .er-node.flash .n-bg{animation:nodeflash 1.2s ease-out}
 @keyframes nodeflash{0%{stroke:#f59e0b;stroke-width:8}100%{stroke:#3b82f6;stroke-width:2}}
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:700;font-family:'SF Mono','Fira Code',monospace}
+.er-node .n-title .n-logical{font-size:11px;font-weight:400;opacity:.7}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
 /* toolbar word-search highlight — amber, distinct from the cyan/amber-ish
@@ -481,7 +494,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <button class="diag-btn" data-cm="1">PK/FK</button>
           <button class="diag-btn" data-cm="2">Name</button>
         </div>
-        <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢)">Labels</button>
+        <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢) in this view — exports have their own toggle in the Export menu">Labels</button>
       </div>
       <div class="tb-sep"></div>
       <div class="tb-group">
@@ -501,10 +514,15 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       <div class="tb-group" id="export-group">
         <button class="diag-btn" id="btn-export-toggle" title="Export the diagram" aria-haspopup="true">⬇ Export</button>
         <div id="export-menu" class="tb-popup">
+          <div class="tb-popup-caption">Image options</div>
+          <label class="tb-popup-check"><input type="checkbox" id="export-opt-labels" checked> Join-table labels (⇢)</label>
+          <label class="tb-popup-check"><input type="checkbox" id="export-opt-roots"> ✓ root badges</label>
+          <div class="tb-popup-sep"></div>
           <button class="diag-btn" id="btn-export" title="Falls back to a file download if the browser can't write images to the clipboard">PNG — copy to clipboard</button>
           <button class="diag-btn" id="btn-export-download">PNG — download file</button>
           <button class="diag-btn" id="btn-export-svg">SVG — vector download</button>
           <button class="diag-btn" id="btn-export-mmd" title="Covers displayed tables; paste into READMEs/PRs">Mermaid — copy markup</button>
+          <button class="diag-btn" id="btn-export-puml" title="Covers displayed tables; paste into PlantUML renderers">PlantUML — copy markup</button>
         </div>
       </div>
       <div class="tb-sep"></div>
@@ -585,11 +603,17 @@ function wordColHits(name){
 }
 function wordHit(name){
   if(!wordQuery) return false;
-  return name.toLowerCase().includes(wordQuery) || wordColHits(name).length>0;
+  return name.toLowerCase().includes(wordQuery) || wordColHits(name).length>0
+    || (DATA.tables[name]?.comment||'').toLowerCase().includes(wordQuery);
 }
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
 let showEdgeLabels = true;
+// export-only options (independent of the live view — the live Labels
+// toggle above controls what YOU see while working; these control what
+// goes into a PNG/SVG someone else will look at later)
+let exportOptLabels = true;
+let exportOptRoots  = false;
 
 const nodePos  = {};  // active positions
 const basePos  = {};  // saved full-view positions
@@ -637,6 +661,8 @@ function saveState() {
   setLS(LS('lbl'),  String(showEdgeLabels));
   setLS(LS('dir'),  expandDir);
   setLS(LS('al'),   String(autoLayout));
+  setLS(LS('xlbl'),  String(exportOptLabels));
+  setLS(LS('xroot'), String(exportOptRoots));
 }
 function loadState() {
   try { excludedTables = new Set(JSON.parse(localStorage.getItem(LS('excl')) || '[]')); } catch{}
@@ -650,6 +676,8 @@ function loadState() {
   if (mr > 0) maxRows = mr; // user's choice overrides the CLI default
   expandDir = localStorage.getItem(LS('dir')) || 'both';
   autoLayout = localStorage.getItem(LS('al')) === 'true';
+  exportOptLabels = localStorage.getItem(LS('xlbl'))  !== 'false';
+  exportOptRoots  = localStorage.getItem(LS('xroot')) === 'true';
   // guard against corrupted stored values — they fail silently otherwise
   if (![0,1,2,3].includes(expandDepth)) expandDepth = 1;
   if (![0,1,2].includes(colMode)) colMode = 0;
@@ -788,10 +816,53 @@ const HDR_H=30, ROW_H=20, MIN_W=160, PAD=16;
 let maxRows = 15; // CLI --max-rows default; adjustable in the toolbar
 const colScroll = {}; // name -> first visible column index (for tall tables)
 
+// CJK glyphs render roughly 2x as wide as Latin ones in the UI's monospace
+// font — treat any codepoint outside Latin-1 as 2 width units, everything
+// else as 1, so mixed-script strings (a Japanese logical name next to an
+// English physical one) size and truncate correctly instead of assuming
+// 1 char == 1 unit like the rest of this file's plain name.length math did
+// before logical names existed.
+function displayWidthUnits(s){
+  let w=0;
+  for(const ch of s) w += /[^\x00-\xff]/.test(ch) ? 2 : 1;
+  return w;
+}
+
+// Table comments are free text (often a long paragraph, not a short
+// business name) — cap to a readable prefix: first line only, then a
+// fixed *display-width* budget so CJK comments don't balloon whatever
+// they're rendered into. Shared by the node header, the left-pane list
+// row, and PlantUML's entity alias (see exportToPlantUML).
+const LOGICAL_NAME_CAP = 16;
+function logicalName(name){
+  const c=(DATA.tables[name]?.comment||'').split('\n')[0].trim();
+  if(!c) return '';
+  let units=0, out='';
+  for(const ch of c){
+    const w=/[^\x00-\xff]/.test(ch)?2:1;
+    if(units+w>LOGICAL_NAME_CAP) return out+'…';
+    units+=w; out+=ch;
+  }
+  return out;
+}
+
+// The full header string (physical + 「logical」, when present) used both
+// to render the node title and to size the node — kept as one function so
+// the two can never drift apart (a header wider than the box it sized).
+function headerDisplayString(name){
+  const lg=logicalName(name);
+  return lg ? `${name}（${lg}）` : name;
+}
+
 function calcSize(name) {
   const cols    = visibleCols(name);
   const allCnt  = (DATA.tables[name]?.columns || []).length;
-  const nameW   = name.length * 8.5 + PAD;
+  // header icon buttons (⊖/⊕/▤) live in a ~56px-wide zone on the right of
+  // the header, unrelated to the centered title text's own width — a
+  // physical-only name was rarely wide enough to reach them, but adding a
+  // logical name made that collision common, so reserve headroom for the
+  // icon cluster whenever a logical name pushes the header wider
+  const nameW   = displayWidthUnits(headerDisplayString(name)) * 8.5 + PAD + (logicalName(name) ? 56 : 0);
   const colW    = cols.map(c => (c.name.length + c.type.length + 2) * 7.2 + 52);
   const shown   = Math.min(cols.length, maxRows);
   const noSchema = allCnt === 0 && !!DATA.tables[name]?.schema_missing;
@@ -1421,7 +1492,19 @@ function drawNode(parent, name) {
   g.appendChild(svgEl('rect',{y:HDR_H-4,width:sz.w,height:4,class:'n-hdr'}));
 
   const nt=svgEl('text',{x:sz.w/2,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-title'});
-  nt.textContent=name; g.appendChild(nt);
+  const lg=logicalName(name);
+  nt.appendChild(document.createTextNode(name));
+  if(lg){
+    const lgSpan=svgEl('tspan',{class:'n-logical'});
+    lgSpan.textContent=`（${lg}）`;
+    nt.appendChild(lgSpan);
+  }
+  if(t?.comment){
+    const ntTitle=svgEl('title',{});
+    ntTitle.textContent=t.comment;
+    nt.appendChild(ntTitle);
+  }
+  g.appendChild(nt);
 
   if(isRoot){
     const rb=svgEl('text',{x:12,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-root'});
@@ -1891,9 +1974,11 @@ function renderTableList(){
   const colHit = t => query && !t.toLowerCase().includes(query)
     ? (DATA.tables[t]?.columns||[]).find(c=>c.name.toLowerCase().includes(query))?.name
     : null;
+  const commentHit = t => (DATA.tables[t]?.comment||'').toLowerCase().includes(query);
   allTables()
     .filter(t => !query || t.toLowerCase().includes(query)
-      || (DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(query)))
+      || (DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(query))
+      || commentHit(t))
     .forEach(name => {
       const t=DATA.tables[name];
       const isHidden=hiddenTables.has(name);
@@ -1933,6 +2018,8 @@ function renderTableList(){
       });
       const nm=document.createElement('span'); nm.className='tname'; nm.textContent=name;
       lbl.appendChild(cb); lbl.appendChild(nm);
+      const lg=logicalName(name);
+      if(lg){const lgEl=document.createElement('span');lgEl.className='tlogical';lgEl.textContent=lg;lbl.appendChild(lgEl);}
       const hit=colHit(name);
       if(hit){const hb2=document.createElement('span');hb2.className='col-hit';hb2.textContent='⌕ '+hit;lbl.appendChild(hb2);}
       const ac=(t?.associations||[]).length;
@@ -2262,6 +2349,7 @@ const EXPORT_CSS = `
 .er-node.ring-2 .n-hdr{fill:#374151}
 .er-node.ring-3 .n-hdr{fill:#4b5563}
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:bold;font-family:monospace}
+.er-node .n-title .n-logical{font-size:11px;font-weight:normal;opacity:.7}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
 .er-node.word-hit .n-bg{stroke:#f59e0b;stroke-width:2.5}
@@ -2307,9 +2395,13 @@ function buildExportSvg(){
   exportSvg.setAttribute('width',Math.ceil(vw)); exportSvg.setAttribute('height',Math.ceil(vh));
   exportSvg.setAttribute('viewBox',`${x0} ${y0} ${vw} ${vh}`);
 
-  // Embed CSS
+  // Embed CSS. Deliberately reads the export-only checkboxes, not the
+  // live showEdgeLabels toggle — the two are independent by design (see
+  // exportOptLabels' declaration comment).
   const styleEl=document.createElementNS(NS,'style');
-  styleEl.textContent=EXPORT_CSS+(showEdgeLabels?'':'.e-lbg,.e-ltxt{display:none}');
+  styleEl.textContent=EXPORT_CSS
+    +(exportOptLabels?'':'.e-lbg,.e-ltxt{display:none}')
+    +(exportOptRoots?'':'.n-root{display:none}');
   exportSvg.appendChild(styleEl);
 
   // Embed arrowhead markers
@@ -2380,6 +2472,62 @@ function exportToMermaid(){
   if(navigator.clipboard?.writeText){
     navigator.clipboard.writeText(text)
       .then(()=>showToast(`Copied Mermaid markup ✓ (${tables.length} tables)`))
+      .catch(dl);
+  } else dl();
+}
+
+// PlantUML entity-relationship markup (paste into any PlantUML renderer).
+// Same shape as exportToMermaid above — edgeCard()'s three kinds map 1:1
+// onto PlantUML's own crow's-foot tokens, so the branch-and-swap logic is
+// identical; only the token spellings and entity-block syntax differ.
+function exportToPlantUML(){
+  const tables=getDisplayTables();
+  if(!tables.length){showToast('No tables are displayed');return;}
+  const lines=['@startuml','hide circle','skinparam linetype ortho',''];
+  // PlantUML identifiers (used both as the entity's own alias and in every
+  // relationship line referencing it) must themselves be \w+ — a table
+  // name that already fails that test can't just declare itself as its
+  // own alias (still broken), and relationship lines must use the SAME
+  // sanitized identifier, not the raw name, or they refer to an entity
+  // that was never declared
+  const aliasOf=t=>/^\w+$/.test(t)?t:t.replace(/\W/g,'_');
+  tables.forEach(t=>{
+    const lg=logicalName(t).replace(/"/g,"'"); // comments are free text; " would break the quoted display name
+    const alias=aliasOf(t);
+    const needsAlias=lg || alias!==t;
+    lines.push(needsAlias ? `entity "${t}${lg?`（${lg}）`:''}" as ${alias} {` : `entity ${alias} {`);
+    const cols=(DATA.tables[t]?.columns||[]).filter(c=>/^\w+$/.test(c.name)); // skip pseudo-columns from expression indexes
+    const pk=cols.filter(c=>c.primary), rest=cols.filter(c=>!c.primary);
+    pk.forEach(c=>lines.push(`  * ${c.name} : ${c.type||'string'} <<PK>>`));
+    if(pk.length && rest.length) lines.push('  --');
+    rest.forEach(c=>{
+      const mark=c.nullable?'':'* ';
+      const fk=isFkCol(t, c.name)?' <<FK>>':'';
+      lines.push(`  ${mark}${c.name} : ${c.type||'string'}${fk}`);
+    });
+    lines.push('}', '');
+  });
+  getDisplayEdges(tables).forEach(e=>{
+    const card=edgeCard(e);
+    let a=e.source, b=e.target, rel;
+    if(card.kind==='nn'){ rel='}o--o{'; }
+    else if(card.kind==='11'){ rel='||--||'; }
+    else { rel='||--o{'; if(card.many===e.source){ a=e.target; b=e.source; } }
+    const label=(e.assocs[0]?.name||'').replace(/"/g,"'");
+    lines.push(label ? `${aliasOf(a)} ${rel} ${aliasOf(b)} : ${label}` : `${aliasOf(a)} ${rel} ${aliasOf(b)}`);
+  });
+  lines.push('@enduml');
+  const text=lines.join('\n');
+  const dl=()=>{
+    const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
+    const a=document.createElement('a');
+    a.href=url; a.download='erd.puml'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    showToast('Downloaded erd.puml ✓');
+  };
+  if(navigator.clipboard?.writeText){
+    navigator.clipboard.writeText(text)
+      .then(()=>showToast(`Copied PlantUML markup ✓ (${tables.length} tables)`))
       .catch(dl);
   } else dl();
 }
@@ -2733,10 +2881,17 @@ document.getElementById('btn-export-toggle').addEventListener('click', e=>{
 document.addEventListener('click', e=>{
   if(!document.getElementById('export-group').contains(e.target)) closeExportMenu();
 });
+document.getElementById('export-opt-labels').addEventListener('change', e=>{
+  exportOptLabels=e.target.checked; saveState();
+});
+document.getElementById('export-opt-roots').addEventListener('change', e=>{
+  exportOptRoots=e.target.checked; saveState();
+});
 document.getElementById('btn-export').addEventListener('click', ()=>{ exportToPNG(); closeExportMenu(); });
 document.getElementById('btn-export-download').addEventListener('click', ()=>{ downloadPNGFile(); closeExportMenu(); });
 document.getElementById('btn-export-svg').addEventListener('click', ()=>{ exportToSVG(); closeExportMenu(); });
 document.getElementById('btn-export-mmd').addEventListener('click', ()=>{ exportToMermaid(); closeExportMenu(); });
+document.getElementById('btn-export-puml').addEventListener('click', ()=>{ exportToPlantUML(); closeExportMenu(); });
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);
@@ -3068,6 +3223,8 @@ updateFocusUI();
 updateColModeUI();
 updateLabelUI();
 document.getElementById('btn-autolayout').classList.toggle('active',autoLayout);
+document.getElementById('export-opt-labels').checked=exportOptLabels;
+document.getElementById('export-opt-roots').checked=exportOptRoots;
 document.body.classList.toggle('dark', localStorage.getItem(LS('dk'))==='true');
 (()=>{ // max-rows selector: reflect current value, adding it if non-standard
   const sel=document.getElementById('max-rows');

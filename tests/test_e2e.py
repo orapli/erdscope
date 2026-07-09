@@ -109,6 +109,25 @@ def _build_html_with_multiple_isolated_tables():
     return out
 
 
+def _build_html_with_comments():
+    # users: short English comment (typical case). posts: Japanese comment
+    # long enough to exercise the 16-display-width-unit truncation cap
+    # (8 full-width chars == 16 units). Others: no comment, unaffected.
+    table_rows = [
+        ('users', 'Customer accounts'),
+        ('posts', '投稿記事管理テーブル（本番用）'),
+        ('comments', ''), ('likes', ''), ('audit_logs', ''),
+    ]
+    tables = erd.mysql_ir(table_rows, COL_ROWS, FK_ROWS, INDEX_ROWS)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestClientJS(unittest.TestCase):
     @classmethod
@@ -1170,6 +1189,148 @@ class TestExportMenu(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestExportOptionsAndPlantUML(unittest.TestCase):
+    """The export menu's 'Image options' checkboxes (join-table labels,
+    ✓ root badges) are independent of the live view's own Labels toggle —
+    and the new PlantUML export, following exportToMermaid's shape."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_defaults_labels_on_roots_off(self):
+        self.assertTrue(self.page.evaluate('exportOptLabels'))
+        self.assertFalse(self.page.evaluate('exportOptRoots'))
+        self.page.click('#btn-export-toggle')
+        self.assertTrue(self.page.is_checked('#export-opt-labels'))
+        self.assertFalse(self.page.is_checked('#export-opt-roots'))
+
+    def test_checkbox_click_does_not_close_the_menu(self):
+        self.page.click('#btn-export-toggle')
+        self.page.click('#export-opt-roots')
+        self.page.wait_for_timeout(50)
+        self.assertTrue(self.page.evaluate(
+            "document.getElementById('export-menu').classList.contains('open')"))
+
+    def test_export_options_are_independent_of_the_live_labels_toggle(self):
+        # turning the live Labels view off must not turn export labels off,
+        # and vice versa — the two toggles used to be the same variable
+        self.page.click('#btn-labels')  # live view: labels off
+        self.page.wait_for_timeout(50)
+        self.assertFalse(self.page.evaluate('showEdgeLabels'))
+        self.assertTrue(self.page.evaluate('exportOptLabels'),
+            'the export checkbox must keep its own state, unaffected by the live toggle')
+        built_has_labels_visible = self.page.evaluate('''() => {
+            const built = buildExportSvg();
+            const css = built.svg.querySelector('style').textContent;
+            return !css.includes('.e-lbg,.e-ltxt{display:none}');
+        }''')
+        self.assertTrue(built_has_labels_visible,
+            'export should still include labels even though the live view has them off')
+
+    def test_export_options_persist_across_reload(self):
+        self.page.click('#btn-export-toggle')
+        self.page.click('#export-opt-roots')  # -> true
+        self.page.click('#export-opt-labels')  # -> false
+        self.page.wait_for_timeout(50)
+        self.page.reload()
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.assertTrue(self.page.evaluate('exportOptRoots'))
+        self.assertFalse(self.page.evaluate('exportOptLabels'))
+
+    def test_plantuml_export_produces_valid_looking_markup(self):
+        self.page.evaluate('''() => {
+            window.__clip = null;
+            navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); };
+        }''')
+        self.page.evaluate('exportToPlantUML()')
+        self.page.wait_for_timeout(100)
+        text = self.page.evaluate('window.__clip')
+        self.assertTrue(text.startswith('@startuml'))
+        self.assertTrue(text.rstrip().endswith('@enduml'))
+        self.assertIn('entity users {', text)
+        self.assertIn('* id : bigint <<PK>>', text)
+        self.assertIn('* user_id : bigint <<FK>>', text)
+        self.assertIn('||--o{', text)  # users -> posts/comments/likes/audit_logs, all 1:n
+
+    def test_plantuml_uses_logical_name_alias_when_comment_present(self):
+        html = _build_html_with_comments()
+        page = self.browser.new_page()
+        try:
+            page.goto(html.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.evaluate('''() => {
+                window.__clip = null;
+                navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); };
+            }''')
+            page.evaluate('exportToPlantUML()')
+            page.wait_for_timeout(100)
+            text = page.evaluate('window.__clip')
+            self.assertIn('entity "users（Customer account…）" as users {', text)
+            self.assertIn('entity comments {', text)  # no comment -> plain form
+        finally:
+            page.close()
+
+    def test_plantuml_sanitizes_a_non_word_table_name_and_reuses_it_consistently(self):
+        # regression: a table name failing /^\w+$/ (backtick-quoted in
+        # real SQL, e.g. a schema-qualified "shared.users") used to alias
+        # itself to *itself* — still invalid PlantUML — and relationship
+        # lines referenced the raw name, not even the (broken) alias, so
+        # they pointed at an entity that was never declared. Also checks
+        # that a comment containing a literal " doesn't terminate the
+        # quoted display name early.
+        table_rows = [('shared.users', 'A "core" table'), ('posts', '')]  # short: stays under the 16-unit truncation cap
+        col_rows = [_col('shared.users', 'id', key='PRI'), _col('posts', 'id', key='PRI'),
+                    _col('posts', 'user_id', key='MUL')]
+        fk_rows = [('posts', 'user_id', 'shared.users')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
+        args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                                only=None, exclude=None, infer_fk=False)
+        tmp = tempfile.mkdtemp()
+        out = Path(tmp) / 'out.html'
+        args.output = str(out)
+        erd._finish(tables, args, 'e2e_fixture')
+
+        page = self.browser.new_page()
+        try:
+            page.goto(out.as_uri())
+            page.wait_for_function('typeof nodePos.posts !== "undefined"')
+            page.evaluate('''() => {
+                window.__clip = null;
+                navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); };
+            }''')
+            page.evaluate('exportToPlantUML()')
+            page.wait_for_timeout(100)
+            text = page.evaluate('window.__clip')
+            self.assertIn('entity "shared.users（A \'core\' table）" as shared_users {', text,
+                'the alias must be a valid identifier, and " in the comment must not break the quoted string')
+            self.assertIn('shared_users ||--o{ posts', text,
+                'the relationship line must reference the same sanitized alias declared above')
+            self.assertNotIn('shared.users ||--o{', text, 'must not reference the raw, undeclared name')
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestWordSearchHighlight(unittest.TestCase):
     """Toolbar 'Highlight' search — separate from the left-pane search box,
     which filters. This one must never hide a row; it only marks matches
@@ -1280,6 +1441,100 @@ class TestWordSearchHighlight(unittest.TestCase):
         hit = self.page.evaluate(
             '''[...document.querySelectorAll('.er-node.word-hit')].map(n=>n.dataset.name)''')
         self.assertEqual(hit, ['users'], 'the toolbar highlight is independent of the filter')
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestLogicalNames(unittest.TestCase):
+    """Table comments displayed as a 'logical name' (physical name as-is,
+    e.g. users（Customer accounts）) — searchable through both the
+    left-pane filter and the toolbar highlight, in addition to the
+    existing table/column name matching."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_with_comments()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    # .n-title's textContent recurses into its nested <title> tooltip too
+    # (the full, untruncated comment) — read only the direct text/tspan
+    # children to get what's actually rendered on screen.
+    HEADER_TEXT_JS = '''(name) => [...document.querySelector(
+        `.er-node[data-name="${name}"] .n-title`).childNodes]
+        .filter(n => n.nodeName !== 'title')
+        .map(n => n.textContent).join('')'''
+
+    def _header_text(self, name):
+        return self.page.evaluate(self.HEADER_TEXT_JS, name)
+
+    def test_node_header_shows_physical_and_logical_name(self):
+        # 'Customer accounts' is 17 chars, one over the 16-unit cap
+        self.assertEqual(self._header_text('users'), 'users（Customer account…）')
+
+    def test_table_without_a_comment_shows_only_the_physical_name(self):
+        self.assertEqual(self._header_text('comments'), 'comments')
+
+    def test_cjk_comment_truncates_by_display_width_not_character_count(self):
+        # '投稿記事管理テーブル（本番用）' is all full-width chars (2 units
+        # each); the 16-unit cap fits exactly 8 of them before truncating
+        self.assertEqual(self._header_text('posts'), 'posts（投稿記事管理テー…）')
+
+    def test_header_icons_stay_clear_of_a_long_logical_name(self):
+        # regression: calcSize() originally sized the node to fit the
+        # header *text* only, not the icon cluster (⊖/⊕/▤) that always
+        # occupies the header's right edge — a long-enough logical name
+        # made the title text visually run into/under the icons
+        geo = self.page.evaluate('''() => {
+            const g = document.querySelector('.er-node[data-name="posts"]');
+            const titleRight = g.querySelector('.n-title').getBBox().x
+                + g.querySelector('.n-title').getBBox().width;
+            const iconLeft = [...g.querySelectorAll('text.n-mode')]
+                .map(t => t.getBBox().x)
+                .reduce((a, b) => Math.min(a, b));
+            return {titleRight, iconLeft};
+        }''')
+        self.assertLess(geo['titleRight'], geo['iconLeft'],
+            f'title text (right edge {geo["titleRight"]:.0f}) overlaps the icon cluster '
+            f'(left edge {geo["iconLeft"]:.0f})')
+
+    def test_left_pane_filter_matches_on_comment(self):
+        self.page.fill('#search', 'Customer')
+        self.page.wait_for_timeout(50)
+        visible = self.page.evaluate(
+            '''[...document.querySelectorAll('.table-item .tname')].map(e => e.textContent)''')
+        self.assertEqual(visible, ['users'])
+
+    def test_left_pane_lists_the_logical_name_alongside_the_row(self):
+        text = self.page.evaluate('''() => {
+            const item = [...document.querySelectorAll('.table-item')]
+                .find(el => el.querySelector('.tname').textContent === 'users');
+            return item.querySelector('.tlogical').textContent;
+        }''')
+        self.assertEqual(text, 'Customer account…')  # same 16-unit cap as the header
+
+    def test_highlight_search_matches_on_comment(self):
+        self.page.fill('#word-search', 'Customer')
+        self.page.wait_for_timeout(250)
+        hit = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-hit')].map(n => n.dataset.name)''')
+        self.assertEqual(hit, ['users'])
 
 
 if __name__ == '__main__':

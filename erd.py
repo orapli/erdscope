@@ -850,6 +850,14 @@ def _sheet_xml(rows, widths=None, links=None):
         for c, cell in enumerate(row):
             val, style = cell if isinstance(cell, tuple) else (cell, 0)
             if val is None or val == '':
+                # an empty value with a style (border/zebra-fill role) still
+                # needs to exist as a cell, or the styling — the whole point
+                # of a 5-role stylesheet — has visible holes wherever a
+                # column happens to be blank (very common: Default/Extra/
+                # Comment are empty far more often than not)
+                if style:
+                    ref = f'{_col_letter(c)}{r}'
+                    cells.append(f'<c r="{ref}" s="{style}"/>')
                 continue
             ref = f'{_col_letter(c)}{r}'
             s = f' s="{style}"' if style else ''
@@ -885,59 +893,212 @@ def _sheet_name(name, used):
     used.add(clean.lower())
     return clean
 
-def write_excel(tables, path, title):
+
+# Style role indices used throughout write_excel's row-building — kept as
+# named constants (rather than the old bare HDR=1) because there are now
+# six distinct looks instead of two, and "3" or "4" alone reads as noise
+# at every call site. Role 0 ("default") is never assigned explicitly;
+# it's simply what a cell looks like with no style index at all.
+S_TITLE, S_HEADER, S_DATA, S_DATA_ALT, S_SECTION = 1, 2, 3, 4, 5
+_ROLES = (S_TITLE, S_HEADER, S_DATA, S_DATA_ALT, S_SECTION)
+
+def _default_role_styles():
+    """role (1-5) -> (font, fill, border) XML fragment dict for the
+    built-in look. Colors mirror the HTML UI's own slate palette
+    (#1e293b header/title, #cbd5e1 borders, #f8fafc/#f1f5f9 light fills)
+    for a family resemblance between the diagram and the workbook."""
+    plain_font = '<font><sz val="11"/><name val="Calibri"/></font>'
+    none_fill = '<fill><patternFill patternType="none"/></fill>'
+    no_border = '<border><left/><right/><top/><bottom/><diagonal/></border>'
+    thin = '<color rgb="FFCBD5E1"/>'
+    thin_border = (f'<border><left style="thin">{thin}</left><right style="thin">{thin}</right>'
+                    f'<top style="thin">{thin}</top><bottom style="thin">{thin}</bottom><diagonal/></border>')
+    header_fill = ('<fill><patternFill patternType="solid"><fgColor rgb="FF1E293B"/>'
+                    '<bgColor indexed="64"/></patternFill></fill>')
+    alt_fill = ('<fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/>'
+                '<bgColor indexed="64"/></patternFill></fill>')
+    section_fill = ('<fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/>'
+                     '<bgColor indexed="64"/></patternFill></fill>')
+    return {
+        S_TITLE:    ('<font><b/><sz val="14"/><color rgb="FF1E293B"/><name val="Calibri"/></font>',
+                      none_fill, no_border),
+        S_HEADER:   ('<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>',
+                      header_fill, thin_border),
+        S_DATA:     (plain_font, none_fill, thin_border),
+        S_DATA_ALT: (plain_font, alt_fill, thin_border),
+        S_SECTION:  ('<font><b/><sz val="11"/><color rgb="FF1E293B"/><name val="Calibri"/></font>',
+                      section_fill, no_border),
+    }
+
+def _strip_ns_tags(elem):
+    """In-place: rewrite every tag in the subtree from '{uri}local' to
+    'local'. ElementTree's built-in namespace handling is otherwise all
+    prefix-preserving noise once serialized back out — this makes the
+    extracted fragments splice cleanly into our own hand-written XML."""
+    for e in elem.iter():
+        e.tag = e.tag.rsplit('}', 1)[-1]
+    return elem
+
+def _extract_template_role_styles(template_path):
+    """role (1-5) -> (font, fill, border) XML fragments, extracted from a
+    user-supplied .xlsx template. Contract: the template's FIRST
+    worksheet, column A, rows 1-5, hold cells styled as
+    title/header/data/data-alt/section respectively (column B is free for
+    a human-readable label, so the template self-documents when opened in
+    Excel). A role whose contract cell is missing falls back to the
+    built-in style for that one role, with a warning on stderr — only a
+    template that can't be read as a .xlsx at all is a hard error, since
+    the user asked for it explicitly and a silent fallback would hide
+    their mistake."""
     import zipfile
-    HDR = 1  # bold style index
+    import xml.etree.ElementTree as ET
+    try:
+        zf = zipfile.ZipFile(template_path)
+    except (FileNotFoundError, zipfile.BadZipFile, IsADirectoryError, PermissionError) as e:
+        sys.exit(f'Error: --excel-template {template_path!s} is not a readable .xlsx file ({e})')
+    try:
+        wb_root = _strip_ns_tags(ET.fromstring(zf.read('xl/workbook.xml')))
+        rels_root = _strip_ns_tags(ET.fromstring(zf.read('xl/_rels/workbook.xml.rels')))
+    except KeyError as e:
+        sys.exit(f'Error: --excel-template {template_path!s} is missing {e} — not a valid .xlsx')
+    first_sheet = wb_root.find('./sheets/sheet')
+    if first_sheet is None:
+        sys.exit(f'Error: --excel-template {template_path!s} has no worksheets')
+    rid = next(v for k, v in first_sheet.attrib.items() if k.rsplit('}', 1)[-1] == 'id')
+    rel = next((r for r in rels_root.findall('Relationship') if r.get('Id') == rid), None)
+    if rel is None:
+        sys.exit(f'Error: --excel-template {template_path!s} has a broken worksheet relationship')
+    # a rels Target is either package-absolute ("/xl/worksheets/sheet1.xml",
+    # openpyxl's own convention) or relative to xl/ ("worksheets/sheet1.xml",
+    # the more common convention, and what this file's own writer emits) —
+    # both are valid per the OOXML spec, so accept either
+    target = rel.get('Target')
+    sheet_path = target.lstrip('/') if target.startswith('/') else 'xl/' + target
+
+    sheet_root = _strip_ns_tags(ET.fromstring(zf.read(sheet_path)))
+    styles_root = _strip_ns_tags(ET.fromstring(zf.read('xl/styles.xml')))
+    tpl_cellxfs = styles_root.findall('./cellXfs/xf')
+    tpl_fonts = styles_root.findall('./fonts/font')
+    tpl_fills = styles_root.findall('./fills/fill')
+    tpl_borders = styles_root.findall('./borders/border')
+
+    def _at(elems, idx):  # bounds-checked list lookup — a hand-edited or
+        return elems[idx] if 0 <= idx < len(elems) else None  # corrupted template can reference an id that doesn't exist
+
+    defaults = _default_role_styles()
+    out = {}
+    for row_n, role in enumerate(_ROLES, 1):
+        cell = sheet_root.find(f'.//c[@r="A{row_n}"]')
+        xf_idx = int(cell.get('s', '0')) if cell is not None else None
+        if xf_idx is None or xf_idx >= len(tpl_cellxfs):
+            if cell is None:
+                print(f'Warning: --excel-template has no cell A{row_n} — role {role} '
+                      'falls back to the built-in style', file=sys.stderr)
+            elif xf_idx is not None:
+                print(f'Warning: --excel-template cell A{row_n} references a style that '
+                      f"doesn't exist in the template — role {role} falls back to the "
+                      'built-in style', file=sys.stderr)
+            out[role] = defaults[role]
+            continue
+        xf = tpl_cellxfs[xf_idx]
+        font = _at(tpl_fonts, int(xf.get('fontId', 0)))
+        fill = _at(tpl_fills, int(xf.get('fillId', 0)))
+        border = _at(tpl_borders, int(xf.get('borderId', 0)))
+        d_font, d_fill, d_border = defaults[role]
+        out[role] = (
+            ET.tostring(font, encoding='unicode') if font is not None else d_font,
+            ET.tostring(fill, encoding='unicode') if fill is not None else d_fill,
+            ET.tostring(border, encoding='unicode') if border is not None else d_border,
+        )
+    theme = zf.read('xl/theme/theme1.xml').decode('utf-8') if 'xl/theme/theme1.xml' in zf.namelist() else None
+    return out, theme
+
+def _build_stylesheet_parts(role_styles):
+    """role (1-5) -> (font,fill,border) dict -> (fonts,fills,borders,
+    cellxfs) XML fragment lists, in the fixed layout every generated
+    workbook uses: fills[0]/[1] reserved as none/gray125 (Excel treats
+    their absence as a corrupt file, regardless of whether any cell
+    references them), font/fill/border index 0 is the plain unstyled
+    default, then one fresh slot per role in _ROLES order — so role N's
+    cellxfs entry is always at index N, matching the S_* constants.
+    Returned as lists (not joined strings) so the caller can both count
+    and concatenate them for the count="N" attributes OOXML requires."""
+    fonts = ['<font><sz val="11"/><name val="Calibri"/></font>']
+    fills = ['<fill><patternFill patternType="none"/></fill>',
+             '<fill><patternFill patternType="gray125"/></fill>']
+    borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>']
+    cellxfs = ['<xf xfId="0"/>']
+    for role in _ROLES:
+        font, fill, border = role_styles[role]
+        fonts.append(font); fills.append(fill); borders.append(border)
+        fi, fli, bi = len(fonts)-1, len(fills)-1, len(borders)-1
+        cellxfs.append(f'<xf xfId="0" fontId="{fi}" fillId="{fli}" borderId="{bi}" '
+                        'applyFont="1" applyFill="1" applyBorder="1"/>')
+    return fonts, fills, borders, cellxfs
+
+def write_excel(tables, path, title, template_path=None):
+    import zipfile
     used = set()
     sheets = []  # (sheet_name, xml)
+    role_styles, theme_xml = (
+        _extract_template_role_styles(template_path) if template_path
+        else (_default_role_styles(), None))
+    fonts, fills, borders, cellxfs = _build_stylesheet_parts(role_styles)
+
+    def alt(i):  # zebra stripe: 0-indexed data row -> data/data-alt role
+        return S_DATA_ALT if i % 2 == 1 else S_DATA
 
     # ── overview sheet ──
     used.add('tables')
     names = sorted(tables)
     sheet_of = {n: _sheet_name(n, used) for n in names}
-    rows = [[(f'{title} — table definitions', HDR)], [],
-            [('#', HDR), ('Table', HDR), ('Comment', HDR),
-             ('Columns', HDR), ('Indexes', HDR), ('Missing schema', HDR)]]
+    rows = [[(f'{title} — table definitions', S_TITLE)], [],
+            [('#', S_HEADER), ('Table', S_HEADER), ('Comment', S_HEADER),
+             ('Columns', S_HEADER), ('Indexes', S_HEADER), ('Missing schema', S_HEADER)]]
     links = []
     for i, n in enumerate(names, 1):
         t = tables[n]
         r = len(rows) + 1
-        rows.append([i, n, t.get('comment', ''), len(t['columns']),
-                     len(t.get('indexes', [])),
-                     'yes' if t.get('schema_missing') else ''])
+        s = alt(i - 1)
+        rows.append([(i, s), (n, s), (t.get('comment', ''), s), (len(t['columns']), s),
+                     (len(t.get('indexes', [])), s),
+                     ('yes' if t.get('schema_missing') else '', s)])
         links.append((f'B{r}', f"'{sheet_of[n]}'", n))
     overview = _sheet_xml(rows, widths=[5, 32, 50, 10, 10, 14], links=links)
 
     # ── per-table sheets ──
     for n in names:
         t = tables[n]
-        rows = [[('Table', HDR), n],
-                [('Comment', HDR), t.get('comment', '')],
+        rows = [[('Table', S_HEADER), n],
+                [('Comment', S_HEADER), t.get('comment', '')],
                 [],
-                [('#', HDR), ('Column', HDR), ('Type', HDR), ('Nullable', HDR),
-                 ('Default', HDR), ('Key', HDR), ('Extra', HDR), ('Comment', HDR)]]
+                [('#', S_HEADER), ('Column', S_HEADER), ('Type', S_HEADER), ('Nullable', S_HEADER),
+                 ('Default', S_HEADER), ('Key', S_HEADER), ('Extra', S_HEADER), ('Comment', S_HEADER)]]
         fk_cols = set(t.get('fk_columns') or
                       {a.get('foreign_key') for a in t['associations'] if a.get('foreign_key')})
         for i, c in enumerate(t['columns'], 1):
             key = 'PK' if c.get('primary') else ('FK' if c['name'] in fk_cols else '')
-            rows.append([i, c['name'], c.get('sql_type', c['type']),
-                         'YES' if c['nullable'] else 'NO',
-                         c.get('default', ''), key, c.get('extra', ''),
-                         c.get('comment', '')])
+            s = alt(i - 1)
+            rows.append([(i, s), (c['name'], s), (c.get('sql_type', c['type']), s),
+                         ('YES' if c['nullable'] else 'NO', s),
+                         (c.get('default', ''), s), (key, s), (c.get('extra', ''), s),
+                         (c.get('comment', ''), s)])
         if t.get('indexes'):
-            rows += [[], [('Indexes', HDR)],
-                     [('Name', HDR), ('Columns', HDR), ('Unique', HDR)]]
-            for ix in t['indexes']:
-                rows.append([ix['name'], ', '.join(ix['columns']),
-                             'UNIQUE' if ix['unique'] else ''])
+            rows += [[], [('Indexes', S_SECTION)],
+                     [('Name', S_HEADER), ('Columns', S_HEADER), ('Unique', S_HEADER)]]
+            for i, ix in enumerate(t['indexes']):
+                s = alt(i)
+                rows.append([(ix['name'], s), (', '.join(ix['columns']), s),
+                             ('UNIQUE' if ix['unique'] else '', s)])
         if t['associations']:
-            rows += [[], [('Associations', HDR)],
-                     [('Type', HDR), ('Name', HDR), ('Target', HDR), ('Via', HDR)]]
-            for a in t['associations']:
+            rows += [[], [('Associations', S_SECTION)],
+                     [('Type', S_HEADER), ('Name', S_HEADER), ('Target', S_HEADER), ('Via', S_HEADER)]]
+            for i, a in enumerate(t['associations']):
                 via = ('DB FK' if a.get('db_fk') else
                        'inferred' if a.get('inferred') else
                        'manual' if a.get('manual') else 'code')
-                rows.append([a['type'], a['name'], a['target'], via])
+                s = alt(i)
+                rows.append([(a['type'], s), (a['name'], s), (a['target'], s), (via, s)])
         sheets.append((sheet_of[n],
                        _sheet_xml(rows, widths=[12, 28, 24, 10, 18, 6, 16, 50])))
     sheets.insert(0, ('Tables', overview))
@@ -950,22 +1111,27 @@ def write_excel(tables, path, title):
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
         f'<sheets>{sheet_entries}</sheets></workbook>')
+    styles_rid = f'rId{len(sheets)+1}'
+    theme_rid = f'rId{len(sheets)+2}'
     wb_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         + ''.join(f'<Relationship Id="rId{i+1}" '
                   'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
                   f'Target="worksheets/sheet{i+1}.xml"/>' for i in range(len(sheets)))
-        + f'<Relationship Id="rId{len(sheets)+1}" '
+        + f'<Relationship Id="{styles_rid}" '
           'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
-          'Target="styles.xml"/></Relationships>')
+          'Target="styles.xml"/>'
+        + (f'<Relationship Id="{theme_rid}" '
+           'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" '
+           'Target="theme/theme1.xml"/>' if theme_xml else '')
+        + '</Relationships>')
     styles = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
-        '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
-        '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
-        '<borders count="1"><border/></borders>'
+        f'<fonts count="{len(fonts)}">{"".join(fonts)}</fonts>'
+        f'<fills count="{len(fills)}">{"".join(fills)}</fills>'
+        f'<borders count="{len(borders)}">{"".join(borders)}</borders>'
         '<cellStyleXfs count="1"><xf/></cellStyleXfs>'
-        '<cellXfs count="2"><xf xfId="0"/><xf xfId="0" fontId="1" applyFont="1"/></cellXfs>'
+        f'<cellXfs count="{len(cellxfs)}">{"".join(cellxfs)}</cellXfs>'
         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
         '</styleSheet>')
     content_types = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -977,6 +1143,8 @@ def write_excel(tables, path, title):
         + ''.join(f'<Override PartName="/xl/worksheets/sheet{i+1}.xml" '
                   'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
                   for i in range(len(sheets)))
+        + ('<Override PartName="/xl/theme/theme1.xml" '
+           'ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>' if theme_xml else '')
         + '</Types>')
     root_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -988,6 +1156,8 @@ def write_excel(tables, path, title):
         z.writestr('[Content_Types].xml', content_types)
         z.writestr('_rels/.rels', root_rels)
         z.writestr('xl/workbook.xml', workbook)
+        if theme_xml:
+            z.writestr('xl/theme/theme1.xml', theme_xml)
         z.writestr('xl/_rels/workbook.xml.rels', wb_rels)
         z.writestr('xl/styles.xml', styles)
         for i, (_, xml) in enumerate(sheets):
@@ -1070,7 +1240,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .table-item.selected label{background:#f0f7ff}
 .table-item.focused label{background:#eff6ff;color:#1d4ed8;font-weight:600}
 .table-item label input[type=checkbox]{accent-color:#3b82f6;flex-shrink:0}
-.tname{flex:1;font-size:11px;font-family:'SF Mono','Fira Code',monospace;
+.tname{flex:0 1 auto;min-width:0;font-size:11px;font-family:'SF Mono','Fira Code',monospace;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tlogical{flex:1;min-width:0;font-size:10px;color:#94a3b8;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rel-badge{font-size:10px;background:#f1f5f9;color:#94a3b8;padding:1px 4px;border-radius:3px;flex-shrink:0}
 .col-hit{font-size:9px;background:#ecfeff;color:#0e7490;padding:1px 4px;border-radius:3px;flex-shrink:0;
@@ -1139,6 +1311,16 @@ body.dark .tb-sep{background:#334155}
 .tb-popup.open{display:flex}
 .tb-popup .diag-btn{width:100%;justify-content:flex-start;font-size:11px;padding:0 10px}
 body.dark .tb-popup{background:#1e293b;border-color:#334155}
+.tb-popup-caption{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;
+  letter-spacing:.5px;padding:2px 6px}
+.tb-popup-check{display:flex;align-items:center;gap:6px;font-size:11px;color:#334155;
+  padding:3px 6px;cursor:pointer;border-radius:4px}
+.tb-popup-check:hover{background:#f1f5f9}
+.tb-popup-check input{accent-color:#3b82f6}
+.tb-popup-sep{height:1px;background:#e2e8f0;margin:2px 4px}
+body.dark .tb-popup-check{color:#cbd5e1}
+body.dark .tb-popup-check:hover{background:#334155}
+body.dark .tb-popup-sep{background:#334155}
 
 /* ── word-search / highlight (toolbar) ── */
 #word-search-box{height:30px;display:flex;align-items:center;gap:4px;padding:0 4px 0 8px;
@@ -1269,6 +1451,7 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .er-node.flash .n-bg{animation:nodeflash 1.2s ease-out}
 @keyframes nodeflash{0%{stroke:#f59e0b;stroke-width:8}100%{stroke:#3b82f6;stroke-width:2}}
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:700;font-family:'SF Mono','Fira Code',monospace}
+.er-node .n-title .n-logical{font-size:11px;font-weight:400;opacity:.7}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
 /* toolbar word-search highlight — amber, distinct from the cyan/amber-ish
@@ -1479,7 +1662,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <button class="diag-btn" data-cm="1">PK/FK</button>
           <button class="diag-btn" data-cm="2">Name</button>
         </div>
-        <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢)">Labels</button>
+        <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢) in this view — exports have their own toggle in the Export menu">Labels</button>
       </div>
       <div class="tb-sep"></div>
       <div class="tb-group">
@@ -1499,10 +1682,15 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       <div class="tb-group" id="export-group">
         <button class="diag-btn" id="btn-export-toggle" title="Export the diagram" aria-haspopup="true">⬇ Export</button>
         <div id="export-menu" class="tb-popup">
+          <div class="tb-popup-caption">Image options</div>
+          <label class="tb-popup-check"><input type="checkbox" id="export-opt-labels" checked> Join-table labels (⇢)</label>
+          <label class="tb-popup-check"><input type="checkbox" id="export-opt-roots"> ✓ root badges</label>
+          <div class="tb-popup-sep"></div>
           <button class="diag-btn" id="btn-export" title="Falls back to a file download if the browser can't write images to the clipboard">PNG — copy to clipboard</button>
           <button class="diag-btn" id="btn-export-download">PNG — download file</button>
           <button class="diag-btn" id="btn-export-svg">SVG — vector download</button>
           <button class="diag-btn" id="btn-export-mmd" title="Covers displayed tables; paste into READMEs/PRs">Mermaid — copy markup</button>
+          <button class="diag-btn" id="btn-export-puml" title="Covers displayed tables; paste into PlantUML renderers">PlantUML — copy markup</button>
         </div>
       </div>
       <div class="tb-sep"></div>
@@ -1583,11 +1771,17 @@ function wordColHits(name){
 }
 function wordHit(name){
   if(!wordQuery) return false;
-  return name.toLowerCase().includes(wordQuery) || wordColHits(name).length>0;
+  return name.toLowerCase().includes(wordQuery) || wordColHits(name).length>0
+    || (DATA.tables[name]?.comment||'').toLowerCase().includes(wordQuery);
 }
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
 let showEdgeLabels = true;
+// export-only options (independent of the live view — the live Labels
+// toggle above controls what YOU see while working; these control what
+// goes into a PNG/SVG someone else will look at later)
+let exportOptLabels = true;
+let exportOptRoots  = false;
 
 const nodePos  = {};  // active positions
 const basePos  = {};  // saved full-view positions
@@ -1635,6 +1829,8 @@ function saveState() {
   setLS(LS('lbl'),  String(showEdgeLabels));
   setLS(LS('dir'),  expandDir);
   setLS(LS('al'),   String(autoLayout));
+  setLS(LS('xlbl'),  String(exportOptLabels));
+  setLS(LS('xroot'), String(exportOptRoots));
 }
 function loadState() {
   try { excludedTables = new Set(JSON.parse(localStorage.getItem(LS('excl')) || '[]')); } catch{}
@@ -1648,6 +1844,8 @@ function loadState() {
   if (mr > 0) maxRows = mr; // user's choice overrides the CLI default
   expandDir = localStorage.getItem(LS('dir')) || 'both';
   autoLayout = localStorage.getItem(LS('al')) === 'true';
+  exportOptLabels = localStorage.getItem(LS('xlbl'))  !== 'false';
+  exportOptRoots  = localStorage.getItem(LS('xroot')) === 'true';
   // guard against corrupted stored values — they fail silently otherwise
   if (![0,1,2,3].includes(expandDepth)) expandDepth = 1;
   if (![0,1,2].includes(colMode)) colMode = 0;
@@ -1786,10 +1984,53 @@ const HDR_H=30, ROW_H=20, MIN_W=160, PAD=16;
 let maxRows = __MAX_ROWS__; // CLI --max-rows default; adjustable in the toolbar
 const colScroll = {}; // name -> first visible column index (for tall tables)
 
+// CJK glyphs render roughly 2x as wide as Latin ones in the UI's monospace
+// font — treat any codepoint outside Latin-1 as 2 width units, everything
+// else as 1, so mixed-script strings (a Japanese logical name next to an
+// English physical one) size and truncate correctly instead of assuming
+// 1 char == 1 unit like the rest of this file's plain name.length math did
+// before logical names existed.
+function displayWidthUnits(s){
+  let w=0;
+  for(const ch of s) w += /[^\x00-\xff]/.test(ch) ? 2 : 1;
+  return w;
+}
+
+// Table comments are free text (often a long paragraph, not a short
+// business name) — cap to a readable prefix: first line only, then a
+// fixed *display-width* budget so CJK comments don't balloon whatever
+// they're rendered into. Shared by the node header, the left-pane list
+// row, and PlantUML's entity alias (see exportToPlantUML).
+const LOGICAL_NAME_CAP = 16;
+function logicalName(name){
+  const c=(DATA.tables[name]?.comment||'').split('\n')[0].trim();
+  if(!c) return '';
+  let units=0, out='';
+  for(const ch of c){
+    const w=/[^\x00-\xff]/.test(ch)?2:1;
+    if(units+w>LOGICAL_NAME_CAP) return out+'…';
+    units+=w; out+=ch;
+  }
+  return out;
+}
+
+// The full header string (physical + 「logical」, when present) used both
+// to render the node title and to size the node — kept as one function so
+// the two can never drift apart (a header wider than the box it sized).
+function headerDisplayString(name){
+  const lg=logicalName(name);
+  return lg ? `${name}（${lg}）` : name;
+}
+
 function calcSize(name) {
   const cols    = visibleCols(name);
   const allCnt  = (DATA.tables[name]?.columns || []).length;
-  const nameW   = name.length * 8.5 + PAD;
+  // header icon buttons (⊖/⊕/▤) live in a ~56px-wide zone on the right of
+  // the header, unrelated to the centered title text's own width — a
+  // physical-only name was rarely wide enough to reach them, but adding a
+  // logical name made that collision common, so reserve headroom for the
+  // icon cluster whenever a logical name pushes the header wider
+  const nameW   = displayWidthUnits(headerDisplayString(name)) * 8.5 + PAD + (logicalName(name) ? 56 : 0);
   const colW    = cols.map(c => (c.name.length + c.type.length + 2) * 7.2 + 52);
   const shown   = Math.min(cols.length, maxRows);
   const noSchema = allCnt === 0 && !!DATA.tables[name]?.schema_missing;
@@ -2419,7 +2660,19 @@ function drawNode(parent, name) {
   g.appendChild(svgEl('rect',{y:HDR_H-4,width:sz.w,height:4,class:'n-hdr'}));
 
   const nt=svgEl('text',{x:sz.w/2,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-title'});
-  nt.textContent=name; g.appendChild(nt);
+  const lg=logicalName(name);
+  nt.appendChild(document.createTextNode(name));
+  if(lg){
+    const lgSpan=svgEl('tspan',{class:'n-logical'});
+    lgSpan.textContent=`（${lg}）`;
+    nt.appendChild(lgSpan);
+  }
+  if(t?.comment){
+    const ntTitle=svgEl('title',{});
+    ntTitle.textContent=t.comment;
+    nt.appendChild(ntTitle);
+  }
+  g.appendChild(nt);
 
   if(isRoot){
     const rb=svgEl('text',{x:12,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-root'});
@@ -2889,9 +3142,11 @@ function renderTableList(){
   const colHit = t => query && !t.toLowerCase().includes(query)
     ? (DATA.tables[t]?.columns||[]).find(c=>c.name.toLowerCase().includes(query))?.name
     : null;
+  const commentHit = t => (DATA.tables[t]?.comment||'').toLowerCase().includes(query);
   allTables()
     .filter(t => !query || t.toLowerCase().includes(query)
-      || (DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(query)))
+      || (DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(query))
+      || commentHit(t))
     .forEach(name => {
       const t=DATA.tables[name];
       const isHidden=hiddenTables.has(name);
@@ -2931,6 +3186,8 @@ function renderTableList(){
       });
       const nm=document.createElement('span'); nm.className='tname'; nm.textContent=name;
       lbl.appendChild(cb); lbl.appendChild(nm);
+      const lg=logicalName(name);
+      if(lg){const lgEl=document.createElement('span');lgEl.className='tlogical';lgEl.textContent=lg;lbl.appendChild(lgEl);}
       const hit=colHit(name);
       if(hit){const hb2=document.createElement('span');hb2.className='col-hit';hb2.textContent='⌕ '+hit;lbl.appendChild(hb2);}
       const ac=(t?.associations||[]).length;
@@ -3260,6 +3517,7 @@ const EXPORT_CSS = `
 .er-node.ring-2 .n-hdr{fill:#374151}
 .er-node.ring-3 .n-hdr{fill:#4b5563}
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:bold;font-family:monospace}
+.er-node .n-title .n-logical{font-size:11px;font-weight:normal;opacity:.7}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
 .er-node.word-hit .n-bg{stroke:#f59e0b;stroke-width:2.5}
@@ -3305,9 +3563,13 @@ function buildExportSvg(){
   exportSvg.setAttribute('width',Math.ceil(vw)); exportSvg.setAttribute('height',Math.ceil(vh));
   exportSvg.setAttribute('viewBox',`${x0} ${y0} ${vw} ${vh}`);
 
-  // Embed CSS
+  // Embed CSS. Deliberately reads the export-only checkboxes, not the
+  // live showEdgeLabels toggle — the two are independent by design (see
+  // exportOptLabels' declaration comment).
   const styleEl=document.createElementNS(NS,'style');
-  styleEl.textContent=EXPORT_CSS+(showEdgeLabels?'':'.e-lbg,.e-ltxt{display:none}');
+  styleEl.textContent=EXPORT_CSS
+    +(exportOptLabels?'':'.e-lbg,.e-ltxt{display:none}')
+    +(exportOptRoots?'':'.n-root{display:none}');
   exportSvg.appendChild(styleEl);
 
   // Embed arrowhead markers
@@ -3378,6 +3640,62 @@ function exportToMermaid(){
   if(navigator.clipboard?.writeText){
     navigator.clipboard.writeText(text)
       .then(()=>showToast(`Copied Mermaid markup ✓ (${tables.length} tables)`))
+      .catch(dl);
+  } else dl();
+}
+
+// PlantUML entity-relationship markup (paste into any PlantUML renderer).
+// Same shape as exportToMermaid above — edgeCard()'s three kinds map 1:1
+// onto PlantUML's own crow's-foot tokens, so the branch-and-swap logic is
+// identical; only the token spellings and entity-block syntax differ.
+function exportToPlantUML(){
+  const tables=getDisplayTables();
+  if(!tables.length){showToast('No tables are displayed');return;}
+  const lines=['@startuml','hide circle','skinparam linetype ortho',''];
+  // PlantUML identifiers (used both as the entity's own alias and in every
+  // relationship line referencing it) must themselves be \w+ — a table
+  // name that already fails that test can't just declare itself as its
+  // own alias (still broken), and relationship lines must use the SAME
+  // sanitized identifier, not the raw name, or they refer to an entity
+  // that was never declared
+  const aliasOf=t=>/^\w+$/.test(t)?t:t.replace(/\W/g,'_');
+  tables.forEach(t=>{
+    const lg=logicalName(t).replace(/"/g,"'"); // comments are free text; " would break the quoted display name
+    const alias=aliasOf(t);
+    const needsAlias=lg || alias!==t;
+    lines.push(needsAlias ? `entity "${t}${lg?`（${lg}）`:''}" as ${alias} {` : `entity ${alias} {`);
+    const cols=(DATA.tables[t]?.columns||[]).filter(c=>/^\w+$/.test(c.name)); // skip pseudo-columns from expression indexes
+    const pk=cols.filter(c=>c.primary), rest=cols.filter(c=>!c.primary);
+    pk.forEach(c=>lines.push(`  * ${c.name} : ${c.type||'string'} <<PK>>`));
+    if(pk.length && rest.length) lines.push('  --');
+    rest.forEach(c=>{
+      const mark=c.nullable?'':'* ';
+      const fk=isFkCol(t, c.name)?' <<FK>>':'';
+      lines.push(`  ${mark}${c.name} : ${c.type||'string'}${fk}`);
+    });
+    lines.push('}', '');
+  });
+  getDisplayEdges(tables).forEach(e=>{
+    const card=edgeCard(e);
+    let a=e.source, b=e.target, rel;
+    if(card.kind==='nn'){ rel='}o--o{'; }
+    else if(card.kind==='11'){ rel='||--||'; }
+    else { rel='||--o{'; if(card.many===e.source){ a=e.target; b=e.source; } }
+    const label=(e.assocs[0]?.name||'').replace(/"/g,"'");
+    lines.push(label ? `${aliasOf(a)} ${rel} ${aliasOf(b)} : ${label}` : `${aliasOf(a)} ${rel} ${aliasOf(b)}`);
+  });
+  lines.push('@enduml');
+  const text=lines.join('\n');
+  const dl=()=>{
+    const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
+    const a=document.createElement('a');
+    a.href=url; a.download='erd.puml'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    showToast('Downloaded erd.puml ✓');
+  };
+  if(navigator.clipboard?.writeText){
+    navigator.clipboard.writeText(text)
+      .then(()=>showToast(`Copied PlantUML markup ✓ (${tables.length} tables)`))
       .catch(dl);
   } else dl();
 }
@@ -3731,10 +4049,17 @@ document.getElementById('btn-export-toggle').addEventListener('click', e=>{
 document.addEventListener('click', e=>{
   if(!document.getElementById('export-group').contains(e.target)) closeExportMenu();
 });
+document.getElementById('export-opt-labels').addEventListener('change', e=>{
+  exportOptLabels=e.target.checked; saveState();
+});
+document.getElementById('export-opt-roots').addEventListener('change', e=>{
+  exportOptRoots=e.target.checked; saveState();
+});
 document.getElementById('btn-export').addEventListener('click', ()=>{ exportToPNG(); closeExportMenu(); });
 document.getElementById('btn-export-download').addEventListener('click', ()=>{ downloadPNGFile(); closeExportMenu(); });
 document.getElementById('btn-export-svg').addEventListener('click', ()=>{ exportToSVG(); closeExportMenu(); });
 document.getElementById('btn-export-mmd').addEventListener('click', ()=>{ exportToMermaid(); closeExportMenu(); });
+document.getElementById('btn-export-puml').addEventListener('click', ()=>{ exportToPlantUML(); closeExportMenu(); });
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);
@@ -4066,6 +4391,8 @@ updateFocusUI();
 updateColModeUI();
 updateLabelUI();
 document.getElementById('btn-autolayout').classList.toggle('active',autoLayout);
+document.getElementById('export-opt-labels').checked=exportOptLabels;
+document.getElementById('export-opt-roots').checked=exportOptRoots;
 document.body.classList.toggle('dark', localStorage.getItem(LS('dk'))==='true');
 (()=>{ // max-rows selector: reflect current value, adding it if non-standard
   const sel=document.getElementById('max-rows');
@@ -4101,8 +4428,8 @@ requestAnimationFrame(fitView);
 # neither config nor CLI supplies one). `relations` is config-only (no CLI
 # equivalent — a list of individual FK declarations doesn't fit a flag).
 CONFIG_DEFAULTS = {
-    'output': 'erd.html', 'models': None, 'excel': None, 'max_rows': 15,
-    'only': None, 'exclude': None, 'infer_fk': False, 'table_map': {},
+    'output': 'erd.html', 'models': None, 'excel': None, 'excel_template': None,
+    'max_rows': 15, 'only': None, 'exclude': None, 'infer_fk': False, 'table_map': {},
 }
 # Connection fields, broken apart rather than one mysql:// URL string —
 # there's deliberately no password/url field: a single URL is one string
@@ -4120,7 +4447,7 @@ CONFIG_PASSWORD_KEYS = {'password', 'passwd', 'pwd', 'url', 'database_url'}
 # does nothing); infer_fk as the string "false" is truthy. host/port/user/
 # database get their own, more detailed checks in assemble_config_url().
 CONFIG_TYPES = {
-    'output': str, 'models': str, 'excel': str, 'max_rows': int,
+    'output': str, 'models': str, 'excel': str, 'excel_template': str, 'max_rows': int,
     'only': list, 'exclude': list, 'infer_fk': bool, 'table_map': dict,
     'relations': list,
 }
@@ -4268,6 +4595,10 @@ def main():
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
+    p.add_argument('--excel-template', metavar='FILE.xlsx', default=argparse.SUPPRESS,
+                   help="Override the workbook's colors/fonts/borders from a template "
+                        '.xlsx — see excel-template.xlsx and its Styles sheet for the '
+                        '5-cell contract (default: built-in styling)')
     p.add_argument('--max-rows', type=int, default=argparse.SUPPRESS,
                    help='Max column rows shown per table before scrolling (default: 15)')
     p.add_argument('--only', action='append', metavar='PATTERN', default=argparse.SUPPRESS,
@@ -4387,8 +4718,11 @@ def _finish(tables, args, title_name):
     print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
 
     if getattr(args, 'excel', None):
-        write_excel(tables, Path(args.excel), title_name)
+        write_excel(tables, Path(args.excel), title_name,
+                    template_path=getattr(args, 'excel_template', None))
         print(f'Generated: {args.excel}', file=sys.stderr)
+    elif getattr(args, 'excel_template', None):
+        print('Warning: --excel-template has no effect without --excel', file=sys.stderr)
 
 if __name__ == '__main__':
     main()

@@ -51,6 +51,7 @@ itself is made.
 | `-o FILE` | Output HTML path (default: `erd.html`) |
 | `--models PATH` | Merge associations parsed from code: a Rails project (or `app/models` dir), a `schema.prisma`, or a Django project — auto-detected |
 | `--excel FILE.xlsx` | Also write a table-definition workbook: an overview sheet plus one sheet per table (columns, defaults, keys, comments, indexes, associations) |
+| `--excel-template FILE.xlsx` | Override the workbook's colors/fonts/borders from a template `.xlsx` — see `excel-template.xlsx` and its `Styles` sheet for the 5-cell contract (default: built-in styling) |
 | `--max-rows N` | Max column rows shown per table (default: 15; the rest scroll) |
 | `--only 'user*,post*'` | Include only tables matching the glob pattern(s) |
 | `--exclude '*_logs'` | Exclude tables matching the glob pattern(s) |
@@ -160,7 +161,12 @@ Test-only, and only if you run that particular suite:
   lines, multi-select (shift/ctrl-click or shift-drag a rubber-band) with
   align-left/top/center/middle and distribute-horizontal/vertical, and
   layout undo/redo (Ctrl/Cmd+Z)
-- **Exports** — PNG (clipboard or file download, 2x), SVG, Mermaid `erDiagram`, and the Excel workbook
+- **Exports** — PNG (clipboard or file download, 2x), SVG, Mermaid `erDiagram`, PlantUML entity markup,
+  and the Excel workbook (borders/colors, customizable via `--excel-template`). PNG/SVG have their own
+  "Image options" — join-table labels and auto-expand ✓ badges can be excluded from the exported picture
+  independent of what your live view currently shows
+- **Logical names** — a table's DB comment doubles as a searchable "logical name," shown alongside the
+  physical name in the diagram and table list (e.g. `users（Customer accounts）`)
 - **Extras** — dark mode, print stylesheet, resizable/collapsible panes
 
 ## Tests
