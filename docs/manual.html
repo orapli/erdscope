@@ -205,9 +205,13 @@ diagram will be.
 
 <section id="installation">
 <h2>Installation &amp; requirements <a class="anchor-link" href="#installation">#</a></h2>
+<p>Install from <a href="https://pypi.org/project/erdscope/">PyPI</a> to get the <code>erdscope</code> command:</p>
+<pre><code>pip install erdscope        # or: pipx install erdscope
+erdscope mysql://readonly@127.0.0.1:3306/myapp -o erd.html</code></pre>
 <p>
-There's nothing to install. Download <a href="https://github.com/orapli/erdscope/blob/main/erd.py"><code>erd.py</code></a>
-and put it wherever you want to run it from:
+Prefer not to install anything? <a href="https://github.com/orapli/erdscope/blob/main/erd.py"><code>erd.py</code></a>
+is a single, dependency-free file — download it and run it with any Python 3, identically
+to the <code>erdscope</code> command used throughout this manual:
 </p>
 <pre><code>curl -O https://raw.githubusercontent.com/orapli/erdscope/main/erd.py
 python3 erd.py mysql://readonly@127.0.0.1:3306/myapp -o erd.html</code></pre>
@@ -230,14 +234,14 @@ generate or view diagrams.</p>
 
 <section id="quickstart">
 <h2>Quickstart <a class="anchor-link" href="#quickstart">#</a></h2>
-<pre><code>python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+<pre><code>erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 
 # enrich with association semantics parsed from application code (optional)
-python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
         --models /path/to/rails/app -o erd.html
 
 # also write a table-definition workbook
-python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
         --excel table_definitions.xlsx -o erd.html</code></pre>
 <p>Open the resulting <code>erd.html</code> in any browser — it's a single file with everything
 inlined, so it can be emailed, committed to a wiki, or dropped into a shared drive.</p>
@@ -260,14 +264,14 @@ skips the prompt.</div>
 
 <h3>Behind a bastion / SSH tunnel</h3>
 <pre><code>ssh -N -L 3307:db-host:3306 bastion &amp;
-python3 erd.py mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pre>
+erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pre>
 </section>
 
 <section id="cli-reference">
 <h2>CLI reference <a class="anchor-link" href="#cli-reference">#</a></h2>
 <p>This table is verified against <code>erd.py</code>'s <code>argparse</code> definitions — run
-<code>python3 erd.py --help</code> yourself any time to confirm it against the copy you're running.</p>
-<pre><code>python3 erd.py [mysql://user@host:port/dbname] [options]</code></pre>
+<code>erdscope --help</code> yourself any time to confirm it against the copy you're running.</p>
+<pre><code>erdscope [mysql://user@host:port/dbname] [options]</code></pre>
 <table>
 <tr><th>Argument</th><th>Description</th></tr>
 <tr><td><code>mysql://user@host:port/dbname</code></td><td>Positional. Database connection URL. Can also be assembled from <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there — see <a href="#config-file">Config file</a>).</td></tr>

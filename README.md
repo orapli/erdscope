@@ -1,7 +1,15 @@
 # erdscope
 
+[![CI](https://github.com/orapli/erdscope/actions/workflows/ci.yml/badge.svg)](https://github.com/orapli/erdscope/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/erdscope)](https://pypi.org/project/erdscope/)
+
 Generate a **self-contained, interactive ER diagram** — and an **Excel table-definition
 workbook** — from a live MySQL database, with a single-file, zero-dependency Python CLI.
+
+```bash
+pip install erdscope
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+```
 
 The database is the source of truth (tables, columns, comments, indexes, real foreign
 keys). Application code (Rails / Prisma / Django) can optionally be layered on top to
@@ -21,17 +29,26 @@ Regenerate it anytime with `python3 docs/gen_demo.py`.
 **[Read the user manual →](https://orapli.github.io/erdscope/manual.html)** — installation,
 CLI/config reference, a full viewer guide, and troubleshooting. ([日本語版 →](https://orapli.github.io/erdscope/manual.ja.html))
 
-## Usage
+## Install & usage
+
+`pip install erdscope` (or `pipx install erdscope`) gives you the `erdscope` command.
+Prefer not to install anything? `erd.py` is a single, dependency-free file — grab it
+and run it with any Python 3:
 
 ```bash
-python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+curl -O https://raw.githubusercontent.com/orapli/erdscope/main/erd.py
+python3 erd.py ...   # identical to the erdscope command below
+```
+
+```bash
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 
 # enrich with association semantics parsed from application code (optional)
-python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
         --models /path/to/rails/app -o erd.html
 
 # also write a table-definition workbook
-python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
         --excel table_definitions.xlsx -o erd.html
 ```
 
@@ -39,7 +56,7 @@ Behind a bastion? Open an SSH tunnel first and point at localhost:
 
 ```bash
 ssh -N -L 3307:db-host:3306 bastion &
-python3 erd.py mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html
+erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html
 ```
 
 Use a read-only account, and leave the password out of the URL — if it's not in
