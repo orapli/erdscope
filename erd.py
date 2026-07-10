@@ -1346,6 +1346,16 @@ body.dark .tb-popup-check{color:#cbd5e1}
 body.dark .tb-popup-check:hover{background:#334155}
 body.dark .tb-popup-sep{background:#334155}
 body.dark .tb-export-fmt{color:#cbd5e1}
+#help-group{position:relative}
+#help-menu{min-width:280px}
+.help-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:baseline;
+  font-size:11px;color:#334155;padding:2px 6px}
+.help-k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;color:#475569;white-space:nowrap}
+.help-link{font-size:11px;padding:3px 6px;color:#2563eb;text-decoration:none}
+.help-link:hover{text-decoration:underline}
+body.dark .help-row{color:#cbd5e1}
+body.dark .help-k{color:#94a3b8}
+body.dark .help-link{color:#60a5fa}
 
 /* ── word-search / highlight (toolbar) ── */
 #word-search-box{height:30px;display:flex;align-items:center;gap:4px;padding:0 4px 0 8px;
@@ -1768,6 +1778,23 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       </div>
       <div class="tb-sep"></div>
       <button class="diag-btn" id="btn-dark" title="Toggle dark mode (exports always use the light palette)">🌙</button>
+      <div class="tb-group" id="help-group">
+        <button class="diag-btn" id="btn-help" title="Shortcuts &amp; help" aria-haspopup="true">?</button>
+        <div id="help-menu" class="tb-popup">
+          <div class="tb-popup-caption">Mouse</div>
+          <div class="help-row"><span>Pan / zoom</span><span class="help-k">drag bg / Ctrl+wheel</span></div>
+          <div class="help-row"><span>Focus a table (again to exit)</span><span class="help-k">double-click</span></div>
+          <div class="help-row"><span>Move (hold Alt: no snap)</span><span class="help-k">drag table</span></div>
+          <div class="help-row"><span>Multi-select</span><span class="help-k">Shift+click / Shift+drag</span></div>
+          <div class="tb-popup-sep"></div>
+          <div class="tb-popup-caption">Keyboard</div>
+          <div class="help-row"><span>Close menu / clear search / exit focus / deselect</span><span class="help-k">Esc</span></div>
+          <div class="help-row"><span>Undo / redo layout</span><span class="help-k">Ctrl/Cmd+Z / +Shift+Z</span></div>
+          <div class="help-row"><span>Next / prev search hit</span><span class="help-k">Enter / Shift+Enter</span></div>
+          <div class="tb-popup-sep"></div>
+          <a class="help-link" href="https://orapli.github.io/erdscope/manual.html" target="_blank" rel="noopener">Full manual ↗</a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -4201,7 +4228,7 @@ svg.addEventListener('click', e=>{
   if(e.target===svg||e.target===erMain) selectOnly(null);
 });
 
-// Escape: export menu → search → highlight → focus → selection, in that
+// Escape: open toolbar menu (export/help) → search → highlight → focus → selection, in that
 // order. Only clears the highlight box when it's actually focused
 // (matching the left-pane search's own behavior) — Esc with the canvas
 // focused keeps meaning "exit focus / deselect", not a surprise
@@ -4209,6 +4236,7 @@ svg.addEventListener('click', e=>{
 window.addEventListener('keydown', e=>{
   if(e.key!=='Escape') return;
   if(document.getElementById('export-menu').classList.contains('open')){ closeExportMenu(); return; }
+  if(document.getElementById('help-menu').classList.contains('open')){ closeHelpMenu(); return; }
   const sb=document.getElementById('search');
   if(document.activeElement===sb && sb.value){ sb.value=''; renderTableList(); return; }
   const wb=document.getElementById('word-search');
@@ -4275,6 +4303,14 @@ document.getElementById('btn-export-toggle').addEventListener('click', e=>{
 });
 document.addEventListener('click', e=>{
   if(!document.getElementById('export-group').contains(e.target)) closeExportMenu();
+});
+function closeHelpMenu(){ document.getElementById('help-menu').classList.remove('open'); }
+document.getElementById('btn-help').addEventListener('click', e=>{
+  e.stopPropagation();
+  document.getElementById('help-menu').classList.toggle('open');
+});
+document.addEventListener('click', e=>{
+  if(!document.getElementById('help-group').contains(e.target)) closeHelpMenu();
 });
 document.getElementById('export-opt-labels').addEventListener('change', e=>{
   exportOptLabels=e.target.checked; saveState();

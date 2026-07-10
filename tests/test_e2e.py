@@ -1922,5 +1922,68 @@ class TestDirectionControlVisibleWithoutAutoExpand(unittest.TestCase):
         self.assertIn('No related tables to add', toast)
 
 
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestHelpMenu(unittest.TestCase):
+    """The toolbar ? button: opens the shortcuts/help popup, closes on
+    Escape (ahead of everything else in the Esc chain) and on outside
+    click, and links to the hosted manual."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _is_open(self):
+        return self.page.evaluate(
+            "document.getElementById('help-menu').classList.contains('open')")
+
+    def test_button_toggles_the_popup(self):
+        self.assertFalse(self._is_open())
+        self.page.click('#btn-help')
+        self.assertTrue(self._is_open())
+        self.page.click('#btn-help')
+        self.assertFalse(self._is_open())
+
+    def test_escape_closes_the_popup_without_touching_focus(self):
+        self.page.dblclick('.er-node[data-name="users"]')
+        self.page.wait_for_timeout(100)
+        self.page.click('#btn-help')
+        self.assertTrue(self._is_open())
+        self.page.keyboard.press('Escape')
+        self.assertFalse(self._is_open())
+        # focus survived: only the popup consumed this Esc
+        self.assertEqual(self.page.evaluate('focusedTable'), 'users')
+
+    def test_outside_click_closes_the_popup(self):
+        self.page.click('#btn-help')
+        self.assertTrue(self._is_open())
+        self.page.click('#er-svg', position={'x': 5, 'y': 5})
+        self.assertFalse(self._is_open())
+
+    def test_manual_link_targets_the_hosted_manual(self):
+        href = self.page.get_attribute('#help-menu .help-link', 'href')
+        self.assertEqual(href, 'https://orapli.github.io/erdscope/manual.html')
+        self.assertEqual(
+            self.page.get_attribute('#help-menu .help-link', 'target'), '_blank')
+
+
 if __name__ == '__main__':
     unittest.main()
