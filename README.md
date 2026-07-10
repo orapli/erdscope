@@ -18,6 +18,9 @@ is one self-contained HTML file.
 
 Regenerate it anytime with `python3 docs/gen_demo.py`.
 
+**[Read the user manual →](https://orapli.github.io/erdscope/manual.html)** — installation,
+CLI/config reference, a full viewer guide, and troubleshooting.
+
 ## Usage
 
 ```bash
@@ -62,60 +65,14 @@ itself is made.
 
 ## Config file
 
-Once the flag list above gets long, put it in a file instead — `.erdscope.json` next to
-where you run the tool is picked up automatically (no `--config` needed). JSON works
-with zero dependencies; YAML works too if PyYAML happens to be installed. Most keys
-mirror a CLI option above (snake_case); `host`/`port`/`user`/`database` (the DB
-connection) and `relations` (manual FK declarations) are config-only, with no CLI flag
-equivalent:
-
-```jsonc
-{
-  // connection, broken into parts rather than one mysql:// URL string —
-  // there's no password field, on purpose (see below). One file per
-  // database (erdscope.staging.json, erdscope.prod.json, ...) is the
-  // intended way to point --config at different targets.
-  "host": "127.0.0.1",
-  "port": 3306,
-  "user": "readonly",
-  "database": "myapp_production",
-
-  "output": "erd.html",
-  "models": "../myapp",
-  "max_rows": 15,
-  "infer_fk": true,
-  "only": ["user*", "post*"],
-  "table_map": { "Widget": "crm_widgets" },
-
-  // manually declare a relation no source (real FK, *_id inference, or
-  // --models code parsing) can find — an oddly-named column, or one a
-  // gem-provided concern/dynamic association hides from static analysis.
-  // Works standalone, with no --models at all: you can build a complete
-  // relation graph from a config file alone, e.g. before the models exist.
-  "relations": [
-    { "table": "orders", "column": "buyer_code", "references": "users" },
-    { "table": "profiles", "column": "person_ref", "references": "users",
-      "one_to_one": true, "name": "owner" }
-  ]
-}
-```
-
-An explicit CLI flag always wins over the same config key, replacing it entirely
-(list-valued keys like `only` are not merged with the config's). There's deliberately
-no `password`/`url` key — `host`/`port`/`user`/`database` are separate fields specifically
-so there's nowhere to paste a password into. Leave it out of the config the same way
-you would the CLI: `MYSQL_PWD`, `~/.my.cnf`, or the interactive prompt. If the CLI
-argument is given, it wins over the config's connection fields entirely.
-
-See [`erdscope.example.yml`](erdscope.example.yml) for a fully annotated sample (based
-on the live demo's schema) with every key explained and the situational ones commented
-out — copy it to `.erdscope.yml`/`.erdscope.json` and adapt.
-
-Precedence for a manually declared relation is the same as a code-parsed association:
-it's applied before `--infer-fk` runs (so it also suppresses a wrong name-based guess
-for that column) and takes priority over a real DB FK constraint for the same column.
-An unknown table/column/target in `relations` is always a typo, so it's a hard error,
-not a silent no-op.
+Once the flag list above gets long, put it in a config file instead — `.erdscope.json`
+(or `.yml`/`.yaml` with PyYAML) next to where you run the tool is picked up automatically.
+Most keys mirror a CLI option (an explicit flag always wins over the config); the DB
+connection is config-only as `host`/`port`/`user`/`database` — deliberately with no
+password field — and `relations` manually declares relations no FK, code, or inference
+can find. See the [Config file chapter of the manual](https://orapli.github.io/erdscope/manual.html#config-file) for the full key
+list and semantics, and [`erdscope.example.yml`](erdscope.example.yml) for a fully
+annotated sample based on the live demo's schema.
 
 ## Dependencies
 
@@ -140,37 +97,24 @@ Test-only, and only if you run that particular suite:
 
 ## What you get
 
+Feature highlights — each link goes to the relevant [manual](https://orapli.github.io/erdscope/manual.html) chapter:
+
 - **Database truth** — tables, columns (full SQL types, defaults, extras), table and
-  column **comments**, **indexes** (with uniqueness), and real FK constraints
-- **Code semantics on top** — with `--models`, framework associations are merged in;
-  DB FKs already covered by an explicit association are dropped, the rest get a
-  "DB FK" badge. Models without a matching table are flagged "no schema info"
-- **Three kinds of edges, visually distinct** — declared associations (solid),
-  DB FK constraints (solid, badged), name-based inference (`*_id`, faint dotted,
-  needs `--infer-fk`). The column-list "FK" badge is grounded the same way — a
-  `*_id` name alone never earns it, only a real association does
-- **Interactive exploration** — locate/focus with depth and dependency direction,
-  per-table deep-dive, two-level hiding, table *and column* search (names and
-  comments, both searches have independent `Aa`/`.*` case-sensitive and regex
-  toggles), named views, share links (state embedded in the URL). A separate
-  toolbar "Highlight" search marks matches everywhere (nodes, table list, right
-  pane) without filtering anything — Enter/Shift+Enter step forward/backward
-  through hits, and the highlight survives into PNG/SVG exports, for pasting
-  into docs
-- **Readable layouts** — viewport-aware packing with crossing reduction (the same
-  packing focus mode uses too, so focusing never looks worse than the overview),
-  edges detour around nodes, join-table chains, auto-tidy, drag-to-snap with guide
-  lines, multi-select (shift/ctrl-click or shift-drag a rubber-band) with
-  align-left/top/center/middle and distribute-horizontal/vertical, and
-  layout undo/redo (Ctrl/Cmd+Z)
-- **Exports** — PNG (2x), SVG, Mermaid `erDiagram`, and PlantUML entity markup, each with
-  its own copy-to-clipboard and download-file buttons, plus the Excel workbook
-  (borders/colors, customizable via `--excel-template`). PNG/SVG have their own
-  "Image options" — join-table labels and auto-expand ✓ badges can be excluded from
-  the exported picture independent of what your live view currently shows
-- **Logical names** — a table's DB comment doubles as a searchable "logical name," shown alongside the
-  physical name in the diagram and table list (e.g. `users（Customer accounts）`). A toolbar toggle
-  picks Both/Physical-only/Logical-only for the live view, with an independent choice for exports
+  column comments, indexes, and real FK constraints, read from `information_schema`
+- **Code semantics on top** — `--models` merges Rails / Prisma / Django associations;
+  declared, DB-FK, and inferred edges stay [visually distinct](https://orapli.github.io/erdscope/manual.html#viewer-edges)
+- **[Interactive exploration](https://orapli.github.io/erdscope/manual.html#viewer-guide)** — focus with depth and dependency
+  direction, two-level hiding, table *and column* search (with regex/case toggles), a
+  non-filtering Highlight search that survives into exports, named views, share links
+- **[Readable layouts](https://orapli.github.io/erdscope/manual.html#viewer-layout)** — viewport-aware packing with crossing
+  reduction, drag-to-snap with guide lines, multi-select align/distribute, Auto-tidy,
+  layout undo/redo
+- **[Exports](https://orapli.github.io/erdscope/manual.html#exports)** — PNG (2x), SVG, Mermaid, and PlantUML, each with its own
+  copy and download buttons and image options, plus the Excel workbook
+  (customizable via `--excel-template`)
+- **[Logical names](https://orapli.github.io/erdscope/manual.html#viewer-names)** — a table's DB comment doubles as a searchable
+  logical name (e.g. `users（Customer accounts）`), with independent display modes for
+  the live view and exports
 - **Extras** — dark mode, print stylesheet, resizable/collapsible panes
 
 ## Tests

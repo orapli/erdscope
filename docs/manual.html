@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>erdscope — User Manual</title>
+<meta name="description" content="How to install, run, and drive the erdscope viewer — CLI reference, config file, viewer guide, exports, and troubleshooting.">
+<style>
+:root{
+  --bg:#f8fafc; --bg-elevated:#ffffff; --bg-inset:#f1f5f9;
+  --fg:#1e293b; --fg-muted:#64748b; --fg-faint:#94a3b8;
+  --border:#e2e8f0; --border-strong:#cbd5e1;
+  --accent:#2563eb; --accent-soft:#dbeafe; --accent-fg:#1e3a5f;
+  --amber-soft:#fef9c3; --amber-fg:#854d0e;
+  --purple-soft:#ede9fe; --purple-fg:#5b21b6;
+  --code-bg:#f1f5f9; --code-fg:#334155;
+  --shadow: 0 1px 3px rgba(15,23,42,.08);
+  --mono: 'SF Mono','Fira Code',ui-monospace,Menlo,Consolas,monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+:root[data-theme="dark"]{
+  --bg:#0b1220; --bg-elevated:#0f172a; --bg-inset:#141f36;
+  --fg:#e2e8f0; --fg-muted:#94a3b8; --fg-faint:#64748b;
+  --border:#1e293b; --border-strong:#334155;
+  --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
+  --amber-soft:#3f2d05; --amber-fg:#fcd34d;
+  --purple-soft:#2e1065; --purple-fg:#d8b4fe;
+  --code-bg:#141f36; --code-fg:#cbd5e1;
+  --shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b1220; --bg-elevated:#0f172a; --bg-inset:#141f36;
+    --fg:#e2e8f0; --fg-muted:#94a3b8; --fg-faint:#64748b;
+    --border:#1e293b; --border-strong:#334155;
+    --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
+    --amber-soft:#3f2d05; --amber-fg:#fcd34d;
+    --purple-soft:#2e1065; --purple-fg:#d8b4fe;
+    --code-bg:#141f36; --code-fg:#cbd5e1;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg); font-family:var(--sans);
+  font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+code,pre,kbd{font-family:var(--mono)}
+code{background:var(--code-bg); color:var(--code-fg); padding:.1em .4em; border-radius:4px; font-size:.88em}
+pre{background:var(--code-bg); color:var(--code-fg); padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:13px; line-height:1.55; border:1px solid var(--border)}
+pre code{background:none; padding:0; border-radius:0; font-size:1em}
+kbd{background:var(--bg-inset); border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:5px; padding:1px 6px; font-size:.85em; color:var(--fg)}
+h1,h2,h3,h4{font-weight:700; line-height:1.3; scroll-margin-top:76px}
+h1{font-size:28px}
+h2{font-size:22px; margin-top:2.6em}
+h3{font-size:17px; margin-top:2em; color:var(--fg)}
+h3 .chip{font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--fg-muted); background:var(--bg-inset); border:1px solid var(--border); border-radius:4px; padding:1px 6px; margin-left:8px; vertical-align:middle}
+p{margin:.9em 0}
+ul,ol{padding-left:1.4em}
+li{margin:.35em 0}
+table{border-collapse:collapse; width:100%; margin:1.2em 0; font-size:13.5px}
+th,td{text-align:left; padding:7px 10px; border-bottom:1px solid var(--border); vertical-align:top}
+th{color:var(--fg-muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.02em}
+tr:last-child td{border-bottom:none}
+td code, th code{white-space:nowrap}
+.anchor-link{opacity:0; margin-left:.4em; font-size:.8em; color:var(--fg-faint)}
+h2:hover .anchor-link, h3:hover .anchor-link{opacity:1}
+.note, .warn{border-radius:8px; padding:12px 14px; margin:1.2em 0; font-size:14px; border:1px solid}
+.note{background:var(--accent-soft); border-color:var(--accent); color:var(--fg)}
+.warn{background:var(--amber-soft); border-color:var(--amber-fg); color:var(--fg)}
+.note strong, .warn strong{display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; opacity:.85}
+.badge{display:inline-block; font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px; margin-right:4px}
+.badge-inf{background:var(--amber-soft); color:var(--amber-fg)}
+.badge-dbfk{background:var(--accent-soft); color:var(--accent-fg)}
+.badge-manual{background:var(--purple-soft); color:var(--purple-fg)}
+.btn-example{display:inline-block; background:var(--bg-inset); border:1px solid var(--border-strong); border-radius:6px; padding:2px 9px; font-size:12.5px; font-family:var(--mono); color:var(--fg)}
+.shot{max-width:100%; border-radius:10px; border:1px solid var(--border); box-shadow:var(--shadow); display:block; margin:1.4em 0}
+.grid-cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin:1.4em 0}
+.card{background:var(--bg-elevated); border:1px solid var(--border); border-radius:10px; padding:14px 16px}
+.card h4{margin:0 0 6px; font-size:14px}
+.card p{margin:0; font-size:13.5px; color:var(--fg-muted)}
+
+/* layout */
+#topnav{
+  position:fixed; top:0; left:0; right:0; height:52px; z-index:40;
+  background:var(--bg-elevated); border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:12px; padding:0 14px;
+}
+#topnav .brand{font-weight:700; font-size:14px; font-family:var(--mono); color:var(--fg)}
+#topnav .spacer{flex:1}
+#topnav a.top-link{font-size:12.5px; color:var(--fg-muted); padding:6px 10px; border-radius:6px}
+#topnav a.top-link:hover{background:var(--bg-inset); text-decoration:none; color:var(--fg)}
+#nav-toggle{display:none; background:none; border:1px solid var(--border-strong); color:var(--fg); border-radius:6px; width:32px; height:32px; font-size:16px; cursor:pointer}
+
+.shell{display:flex; max-width:1200px; margin:0 auto; padding-top:52px}
+#toc{
+  width:250px; flex-shrink:0; position:sticky; top:52px; align-self:flex-start;
+  height:calc(100vh - 52px); overflow-y:auto; padding:22px 14px 40px 20px;
+}
+#toc a{display:block; padding:5px 10px; border-radius:6px; font-size:13px; color:var(--fg-muted); border-left:2px solid transparent}
+#toc a:hover{color:var(--fg); text-decoration:none; background:var(--bg-inset)}
+#toc a.lvl2{font-weight:600; color:var(--fg); margin-top:10px}
+#toc a.lvl3{padding-left:20px; font-size:12.5px}
+#toc a.active{color:var(--accent); border-left-color:var(--accent); background:var(--bg-inset)}
+
+main{flex:1; min-width:0; padding:34px 34px 90px; max-width:840px}
+main > section:first-child h1{margin-top:0}
+
+footer{border-top:1px solid var(--border); padding:20px 34px 60px; font-size:12.5px; color:var(--fg-muted); max-width:840px}
+
+@media (max-width:860px){
+  #nav-toggle{display:block}
+  #toc{
+    position:fixed; top:52px; left:0; bottom:0; width:78vw; max-width:300px;
+    background:var(--bg-elevated); border-right:1px solid var(--border);
+    transform:translateX(-100%); transition:transform .18s ease; z-index:39;
+    box-shadow:var(--shadow);
+  }
+  #toc.open{transform:translateX(0)}
+  main{padding:26px 18px 90px}
+  .shell{display:block}
+}
+</style>
+</head>
+<body>
+
+<nav id="topnav">
+  <button id="nav-toggle" aria-label="Toggle table of contents" aria-expanded="false">☰</button>
+  <span class="brand">erdscope</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="index.html">Live demo</a>
+  <a class="top-link" href="https://github.com/orapli/erdscope">GitHub</a>
+</nav>
+
+<div class="shell">
+<aside id="toc">
+  <a class="lvl2" href="#what-is-erdscope">What is erdscope</a>
+  <a class="lvl2" href="#installation">Installation &amp; requirements</a>
+  <a class="lvl2" href="#quickstart">Quickstart</a>
+  <a class="lvl2" href="#cli-reference">CLI reference</a>
+  <a class="lvl2" href="#config-file">Config file</a>
+  <a class="lvl2" href="#viewer-guide">Viewer guide</a>
+  <a class="lvl3" href="#viewer-panes">Panes</a>
+  <a class="lvl3" href="#viewer-focus">Focus &amp; exploration</a>
+  <a class="lvl3" href="#viewer-hiding">Hiding tables</a>
+  <a class="lvl3" href="#viewer-search">Search &amp; highlight</a>
+  <a class="lvl3" href="#viewer-layout">Layout &amp; selection</a>
+  <a class="lvl3" href="#viewer-columns">Column display</a>
+  <a class="lvl3" href="#viewer-names">Logical names</a>
+  <a class="lvl3" href="#viewer-views">Named views &amp; sharing</a>
+  <a class="lvl3" href="#viewer-edges">Edge types</a>
+  <a class="lvl3" href="#viewer-shortcuts">Keyboard shortcuts</a>
+  <a class="lvl3" href="#viewer-dark">Dark mode</a>
+  <a class="lvl3" href="#viewer-print">Print</a>
+  <a class="lvl2" href="#exports">Exports</a>
+  <a class="lvl2" href="#troubleshooting">Troubleshooting / FAQ</a>
+  <a class="lvl2" href="#extending">Extending</a>
+</aside>
+
+<main>
+
+<section id="what-is-erdscope">
+<h1>erdscope <a class="anchor-link" href="#what-is-erdscope">#</a></h1>
+<p>
+erdscope generates a <strong>self-contained, interactive ER diagram</strong> — and, optionally,
+an <strong>Excel table-definition workbook</strong> — from a live MySQL database. It ships as a
+single Python file (<code>erd.py</code>, no install step) with <strong>zero required dependencies</strong>.
+</p>
+<p>
+The database is the source of truth: tables, columns, comments, indexes, and real foreign keys
+all come from <code>information_schema</code>. Application code (Rails, Prisma, Django) can
+optionally be layered on top with <code>--models</code> to add association semantics the database
+alone can't express — <code>has_many :through</code>, polymorphic associations, and so on.
+</p>
+<p>
+<a href="https://orapli.github.io/erdscope/"><strong>Try the live demo →</strong></a> —
+a small e-commerce schema with comments, indexes, real FKs, and one inferred relation.
+Everything in the demo is a single self-contained HTML file, generated the same way your own
+diagram will be.
+</p>
+<a href="https://orapli.github.io/erdscope/"><img class="shot" src="screenshot.png" alt="erdscope diagram showing an e-commerce schema with users, orders, products and their relations"></a>
+
+<div class="grid-cards">
+  <div class="card"><h4>Database truth</h4><p>Tables, columns (full SQL types, defaults, extras), comments, indexes, and real FK constraints — read directly from the database.</p></div>
+  <div class="card"><h4>Code semantics on top</h4><p><code>--models</code> merges in Rails/Prisma/Django associations; DB FKs already covered by an association are deduplicated, the rest get a "DB FK" badge.</p></div>
+  <div class="card"><h4>Interactive exploration</h4><p>Focus with depth and direction, two-level hiding, table and column search, named views, share links.</p></div>
+  <div class="card"><h4>Readable layouts</h4><p>Viewport-aware packing, drag-to-snap, multi-select align/distribute, Auto-tidy, undo/redo.</p></div>
+  <div class="card"><h4>Exports</h4><p>PNG, SVG, Mermaid, PlantUML — each with copy and download — plus an Excel workbook.</p></div>
+  <div class="card"><h4>Logical names</h4><p>A table's DB comment doubles as a searchable logical name, shown alongside the physical name.</p></div>
+</div>
+</section>
+
+<section id="installation">
+<h2>Installation &amp; requirements <a class="anchor-link" href="#installation">#</a></h2>
+<p>
+There's nothing to install. Download <a href="https://github.com/orapli/erdscope/blob/main/erd.py"><code>erd.py</code></a>
+and put it wherever you want to run it from:
+</p>
+<pre><code>curl -O https://raw.githubusercontent.com/orapli/erdscope/main/erd.py
+python3 erd.py mysql://readonly@127.0.0.1:3306/myapp -o erd.html</code></pre>
+<p>Requirements: <strong>Python 3</strong>, nothing else, strictly speaking. Two libraries make the tool
+nicer to use but are entirely optional — erdscope degrades gracefully when they're missing:</p>
+<table>
+<tr><th>Library</th><th>Used for</th><th>If not installed</th></tr>
+<tr><td><a href="https://pypi.org/project/PyMySQL/">PyMySQL</a></td><td>The DB connection</td><td>Falls back to shelling out to the <code>mysql</code> CLI (must be on <code>PATH</code>) — see <a href="#faq-pymysql">Troubleshooting</a></td></tr>
+<tr><td><a href="https://pypi.org/project/PyYAML/">PyYAML</a></td><td>Reading a <code>.yml</code>/<code>.yaml</code> config file</td><td>A <code>.json</code> config still works with zero dependencies; pointing at a <code>.yml</code>/<code>.yaml</code> file without PyYAML exits with a clear error</td></tr>
+</table>
+<p>
+<code>--excel</code> output needs neither of the above — it's written directly via the Python
+standard library's <code>zipfile</code>/XML handling, not a spreadsheet package.
+</p>
+<p>Two more libraries are used only by the test suite, never at runtime:
+<code>openpyxl</code> (roundtrip-verifies <code>--excel</code> output in unit tests) and
+<a href="https://playwright.dev/python/">Playwright</a> (drives the generated HTML in the browser E2E suite). Neither is needed to
+generate or view diagrams.</p>
+</section>
+
+<section id="quickstart">
+<h2>Quickstart <a class="anchor-link" href="#quickstart">#</a></h2>
+<pre><code>python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+
+# enrich with association semantics parsed from application code (optional)
+python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+        --models /path/to/rails/app -o erd.html
+
+# also write a table-definition workbook
+python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+        --excel table_definitions.xlsx -o erd.html</code></pre>
+<p>Open the resulting <code>erd.html</code> in any browser — it's a single file with everything
+inlined, so it can be emailed, committed to a wiki, or dropped into a shared drive.</p>
+
+<h3>Passwords</h3>
+<p>Use a <strong>read-only</strong> database account, and leave the password out of the connection
+URL — it would otherwise land in your shell history. erdscope resolves the password in this order:</p>
+<ol>
+<li>Password embedded in the URL (<code>mysql://user:pass@host/db</code>) — avoid this in practice.</li>
+<li>The <code>MYSQL_PWD</code> environment variable, if set.</li>
+<li>Otherwise, if standard input is an interactive terminal, a hidden password prompt
+(never touches <code>argv</code> or shell history).</li>
+</ol>
+<div class="note"><strong>Non-interactive runs (CI, scripts, pipes)</strong>
+erdscope only prompts when stdin is a TTY. In a script or CI job it skips the prompt entirely
+rather than blocking — it just attempts the connection with whatever password it has (possibly
+none), and if that's wrong you get a normal connection-error message, not a hang. Writing
+<code>user:@host/db</code> (an explicit, empty password) also counts as "password provided" and
+skips the prompt.</div>
+
+<h3>Behind a bastion / SSH tunnel</h3>
+<pre><code>ssh -N -L 3307:db-host:3306 bastion &amp;
+python3 erd.py mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pre>
+</section>
+
+<section id="cli-reference">
+<h2>CLI reference <a class="anchor-link" href="#cli-reference">#</a></h2>
+<p>This table is verified against <code>erd.py</code>'s <code>argparse</code> definitions — run
+<code>python3 erd.py --help</code> yourself any time to confirm it against the copy you're running.</p>
+<pre><code>python3 erd.py [mysql://user@host:port/dbname] [options]</code></pre>
+<table>
+<tr><th>Argument</th><th>Description</th></tr>
+<tr><td><code>mysql://user@host:port/dbname</code></td><td>Positional. Database connection URL. Can also be assembled from <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there — see <a href="#config-file">Config file</a>).</td></tr>
+<tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
+<tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, or a Django project — source auto-detected</td></tr>
+<tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
+<tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
+<tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
+<tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
+<tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
+<tr><td><code>--infer-fk</code></td><td>Guess relations from <code>*_id</code> column names when no real association/FK backs them. Off by default — see <a href="#faq-infer-fk">Troubleshooting</a></td></tr>
+<tr><td><code>--table-map 'Widget=crm_widgets'</code></td><td>Rails only: override a model's table when static analysis can't determine it. Repeatable; comma-separated lists accepted — see <a href="#faq-table-map">Troubleshooting</a></td></tr>
+<tr><td><code>--config PATH</code></td><td>Load defaults from a config file. Auto-discovered as <code>.erdscope.json</code>/<code>.yml</code>/<code>.yaml</code> in the current directory if not given</td></tr>
+<tr><td><code>--no-config</code></td><td>Skip config auto-discovery even if <code>.erdscope.*</code> exists in the cwd</td></tr>
+</table>
+</section>
+
+<section id="config-file">
+<h2>Config file <a class="anchor-link" href="#config-file">#</a></h2>
+<p>
+Once the flag list gets long, put it in a file instead. <code>.erdscope.json</code> (or
+<code>.erdscope.yml</code>/<code>.yaml</code>, if PyYAML is installed) next to where you run the
+tool is picked up automatically — no <code>--config</code> needed. Most keys mirror a CLI option
+above (snake_case); <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
+(the DB connection) and <code>relations</code> (manual FK declarations) are config-only, with no
+CLI equivalent.
+</p>
+<pre><code>{
+  "host": "127.0.0.1",
+  "port": 3306,
+  "user": "readonly",
+  "database": "myapp_production",
+
+  "output": "erd.html",
+  "models": "../myapp",
+  "max_rows": 15,
+  "infer_fk": true,
+  "only": ["user*", "post*"],
+  "table_map": { "Widget": "crm_widgets" },
+
+  "relations": [
+    { "table": "orders", "column": "buyer_code", "references": "users" },
+    { "table": "profiles", "column": "person_ref", "references": "users",
+      "one_to_one": true, "name": "owner" }
+  ]
+}</code></pre>
+<p>An explicit CLI flag always wins over the same config key, replacing it entirely (list-valued
+keys like <code>only</code> are not merged with the config's). There's deliberately no
+<code>password</code>/<code>url</code> key — <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
+are separate fields specifically so there's nowhere to paste a password into. Leave it out the
+same way you would on the CLI: <code>MYSQL_PWD</code>, <code>~/.my.cnf</code>, or the interactive
+prompt.</p>
+<p>See
+<a href="https://github.com/orapli/erdscope/blob/main/erdscope.example.yml"><code>erdscope.example.yml</code></a>
+for a fully annotated sample (based on the live demo's schema) with every key explained.</p>
+
+<h3>Manual relations</h3>
+<p>
+<code>relations</code> declares a relation no other source (a real FK constraint, <code>*_id</code>
+name inference, or <code>--models</code> code parsing) can find — an oddly-named column, or one a
+gem-provided concern/dynamic association hides from static analysis. It works standalone, with no
+<code>--models</code> at all — you can build a complete relation graph from a config file alone.
+Precedence is the same as a code-parsed association: applied before <code>--infer-fk</code> runs
+(so it also suppresses a wrong name-based guess for that column), and it takes priority over a
+real DB FK constraint for the same column. An unknown table/column/target in <code>relations</code>
+is always a typo, so it's a hard error, not a silent no-op.
+</p>
+
+<div class="warn"><strong>Config value types matter</strong>
+Keys are validated by both name <em>and</em> type before erdscope runs. <code>only</code>/<code>exclude</code>
+must be a list of strings, not a bare string (a plain string would otherwise be matched
+character-by-character rather than as one pattern), and <code>infer_fk</code> must be a real JSON
+boolean, not the string <code>"true"</code>/<code>"false"</code>. A mismatched type is now a clear
+upfront error rather than a silently wrong diagram — if you hit one, check the value's type
+against the example above.</div>
+</section>
+
+<section id="viewer-guide">
+<h2>Viewer guide <a class="anchor-link" href="#viewer-guide">#</a></h2>
+<p>Everything below describes the generated HTML file itself — the diagram you open in a browser,
+not the CLI that produced it. Try each control against the
+<a href="https://orapli.github.io/erdscope/">live demo</a> as you read.</p>
+
+<h3 id="viewer-panes">Panes <a class="anchor-link" href="#viewer-panes">#</a></h3>
+<p>The page is three panes: <strong>Tables</strong> (left) — the full table list with checkboxes
+and search — the <strong>diagram</strong> (center), and <strong>Details</strong> (right) — columns,
+indexes, and associations for whatever's selected.</p>
+<ul>
+<li><strong>Resize</strong> — drag the thin divider between a side pane and the diagram (width is clamped between 140px and 560px).</li>
+<li><strong>Collapse / expand</strong> — the ◀/▶ button in a pane's title bar collapses it; a small tab reappears on that edge to bring it back.</li>
+<li>Pane widths and collapsed state are remembered by your browser for next time you open this diagram.</li>
+</ul>
+
+<h3 id="viewer-focus">Focus &amp; exploration <a class="anchor-link" href="#viewer-focus">#</a></h3>
+<p><strong>Double-click</strong> a table (in the list or on the canvas) to focus on it — the diagram
+narrows to that table and its related tables. Double-clicking the already-focused table, pressing
+<kbd>Esc</kbd>, or the <span class="btn-example">✕ Back to overview</span> / <span class="btn-example">Exit focus</span>
+buttons all return to the full overview.</p>
+<p>While focused, a bar across the top shows <code>🔍 Focused: &lt;table&gt; (depth &lt;d&gt;, &lt;direction&gt;)</code>.
+Checkboxes in the left pane only affect the overview, not the focused view — a hint says so, and
+<span class="btn-example">Apply to checks</span> checks exactly the tables the focus view is currently
+showing into the overview, then exits focus.</p>
+<p>Three controls shape what focus (and Auto-expand, below) pulls in:</p>
+<table>
+<tr><th>Control</th><th>Options</th><th>Effect</th></tr>
+<tr><td>Depth</td><td><code>1</code> / <code>2</code> / <code>3</code> / <code>∞</code></td><td>How many relation hops out from the focused table to include</td></tr>
+<tr><td>Direction</td><td><code>Both</code> / <code>Deps</code> / <code>Dependents</code></td><td><code>Deps</code> follows what this table depends on (parents it references via FK); <code>Dependents</code> follows what depends on this table (children referencing it). This also governs each table's <code>⊕</code> button, regardless of Auto-expand.</td></tr>
+<tr><td>Auto-expand</td><td>toolbar checkbox</td><td>When on, every <em>checked</em> table in the overview acts as a traversal root, pulling in its neighbors up to the current depth/direction. Focus mode always expands from the focused table regardless of this setting.</td></tr>
+</table>
+<p>Each node also has a <code>⊕</code> button that pulls in just that table's direct neighbors
+(respecting the current direction) as a one-off — it doesn't itself become a new expansion root, so
+one click can't cascade the whole schema in.</p>
+
+<h3 id="viewer-hiding">Hiding tables — two levels <a class="anchor-link" href="#viewer-hiding">#</a></h3>
+<p>erdscope has two independent ways to remove a table from view, with different strength:</p>
+<table>
+<tr><th></th><th>Exclude</th><th>Ban (hide)</th></tr>
+<tr><td>Trigger</td><td>Uncheck its box in the list, or the node's <code>⊖</code> button</td><td>The list row's <code>🚫</code> button only</td></tr>
+<tr><td>Strength</td><td>Light — can come back via Auto-expand as someone else's neighbor, or by re-checking the box / another table's <code>⊕</code></td><td>Hard — never shown again, even by Auto-expand, until unbanned</td></tr>
+<tr><td>Undo</td><td>Re-check the box</td><td><code>🚫</code> again on that row, or <span class="btn-example">Unban all</span> in the red banner that appears while anything is banned</td></tr>
+</table>
+<p>Banning the currently-focused table exits focus. Both excluded and banned sets are remembered by
+your browser and are captured in named views and share links.</p>
+
+<h3 id="viewer-search">Search &amp; highlight <a class="anchor-link" href="#viewer-search">#</a></h3>
+<p>There are two different search boxes, and they do different things:</p>
+<div class="grid-cards">
+<div class="card"><h4>Filter (left pane, "Search tables / columns…")</h4><p>Matches table name, column name, column comment, and table comment. Live-filters the table list as you type. <strong>Enter</strong> jumps to the best match in the diagram (pulling it back into view if needed) and highlights the matched column.</p></div>
+<div class="card"><h4>Highlight (toolbar, "Highlight…")</h4><p>Same match fields, but never removes anything from view — it marks matching tables/columns and dims the rest, purely as an overlay. <strong>Enter</strong>/<strong>Shift+Enter</strong> step to the next/previous match. Unlike selection, a Highlight query is preserved into PNG/SVG exports.</p></div>
+</div>
+<p>Each box has its own, independent <code>Aa</code> (match case) and <code>.*</code> (regular
+expression) toggle — turning on regex mode in the filter box doesn't affect the Highlight box.</p>
+
+<h3 id="viewer-layout">Layout &amp; selection <a class="anchor-link" href="#viewer-layout">#</a></h3>
+<ul>
+<li><strong>Pan</strong> — drag empty canvas, or two-finger scroll.</li>
+<li><strong>Zoom</strong> — pinch / Ctrl+scroll, or the toolbar <code>+</code> / <code>−</code> / <code>1:1</code> / <code>⊡ Fit</code> buttons.</li>
+<li><strong>Multi-select</strong> — click selects one table; <kbd>Shift</kbd>-click or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>-click adds/removes it from the selection; <kbd>Shift</kbd>-drag from empty canvas draws a rubber-band. Clicking empty canvas deselects everything.</li>
+<li><strong>Drag to move</strong> — dragging a selected table moves the whole selection together. Dragged edges snap to nearby tables' edges/centers within a few pixels, drawn as red guide lines (Figma-style) — hold <kbd>Alt</kbd> to disable snapping for a drag.</li>
+<li><strong>Align / distribute</strong> — with 2+ tables selected, the right pane offers <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span>; with 3+ selected, <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> distribute becomes available too (it keeps the two outermost tables fixed and equalizes the gaps between the rest).</li>
+<li><strong>Auto-tidy</strong> — a toolbar toggle that re-packs and re-fits the layout automatically whenever the set of displayed tables changes. The <code>↺</code> button re-lays-out immediately on demand, regardless of Auto-tidy.</li>
+<li><strong>Undo/redo</strong> — toolbar <code>↶</code>/<code>↷</code> buttons or <kbd>Ctrl/Cmd+Z</kbd> / <kbd>Ctrl/Cmd+Shift+Z</kbd> (or <kbd>Ctrl/Cmd+Y</kbd>). Covers table position changes only; the history clears whenever you enter/exit focus or load a saved view, since those replace the whole layout.</li>
+</ul>
+
+<h3 id="viewer-columns">Column display modes <a class="anchor-link" href="#viewer-columns">#</a></h3>
+<p>A toolbar control switches every table between <code>All</code> columns, <code>PK/FK</code> only,
+and <code>Name</code> only (table names, no columns). Each node also has its own <code>▤</code>
+button that cycles <em>that one table's</em> mode independently — handy for zooming in on one big
+table while keeping the rest compact. A global mode change resets any per-table overrides.</p>
+
+<h3 id="viewer-names">Logical names <a class="anchor-link" href="#viewer-names">#</a></h3>
+<p>A table's DB comment doubles as a searchable "logical name" — e.g. <code>users（Customer accounts）</code>.
+A toolbar toggle picks <code>Both</code> / <code>Physical</code> / <code>Logical</code> for the live
+view. Exports have their <em>own</em>, independent Both/Phys./Log. choice inside the export panel
+(see <a href="#exports">Exports</a>) — changing what you're looking at doesn't change what gets
+exported, and vice versa.</p>
+
+<h3 id="viewer-views">Named views &amp; share links <a class="anchor-link" href="#viewer-views">#</a></h3>
+<p><span class="btn-example">💾 Save</span> prompts for a name and stores the current view under it
+(an existing name overwrites). A saved view captures: excluded tables, banned tables, Auto-expand,
+depth, direction, column mode, and every currently-displayed table's position.</p>
+<div class="note"><strong>What a saved view does <em>not</em> capture</strong>
+Name mode (Both/Physical/Logical), dark mode, max-rows, and label visibility are not part of a
+saved view or share link — they're separate, page-wide preferences.</div>
+<p>Load a saved view from the <span class="btn-example">Views…</span> dropdown, or delete it with
+<code>🗑</code>. <span class="btn-example">🔗</span> copies a <strong>share link</strong> — the current
+view, JSON-encoded, appended to the page's own URL. Opening that link reproduces the view
+automatically, so you can paste it straight into a PR description or chat.</p>
+
+<h3 id="viewer-edges">Edge types <a class="anchor-link" href="#viewer-edges">#</a></h3>
+<p>Three kinds of relation feed the diagram, but they render as <strong>two</strong> distinct line
+styles on the canvas, plus badges in the Details pane:</p>
+<ul>
+<li><strong>Solid line</strong> — the default: a declared association (from <code>--models</code>) or a real DB FK constraint. On the canvas these two look the same; the Details pane's association list distinguishes them with a <span class="badge badge-dbfk">DB FK</span> badge for constraint-backed edges, or no badge for a plain declared association.</li>
+<li><strong>Dashed line</strong> — a many-to-many relation (only reachable via a join table / <code>has_and_belongs_to_many</code> / <code>through</code>, no direct <code>belongs_to</code>/<code>has_one</code>).</li>
+<li><strong>Faint dotted line</strong> — a name-based guess from <code>--infer-fk</code>, shown only when every association backing that edge is inferred. Marked with a <span class="badge badge-inf">inferred</span> badge in the Details pane. The column-list "FK" badge is <em>never</em> granted by inference alone — only a real association earns it.</li>
+</ul>
+<p>A <span class="badge badge-manual">manual</span> badge marks an association that came from the
+config file's <code>relations</code> list. A dashed <em>node border</em> (as opposed to a dashed
+edge) means that table was pulled in by Auto-expand rather than checked directly.</p>
+
+<h3 id="viewer-shortcuts">Keyboard shortcuts <a class="anchor-link" href="#viewer-shortcuts">#</a></h3>
+<p>This is the complete list — there's no shortcut for zoom, save, or export.</p>
+<table>
+<tr><th>Key</th><th>Action</th></tr>
+<tr><td><kbd>Esc</kbd></td><td>Context-dependent, in order: close the export menu if open → clear the filter box if it's focused and non-empty → clear the Highlight box the same way → exit focus mode → otherwise, deselect everything</td></tr>
+<tr><td><kbd>Ctrl/Cmd+Z</kbd></td><td>Undo the last layout change</td></tr>
+<tr><td><kbd>Ctrl/Cmd+Shift+Z</kbd> or <kbd>Ctrl/Cmd+Y</kbd></td><td>Redo</td></tr>
+<tr><td><kbd>Enter</kbd> (in the filter box)</td><td>Jump to the best matching table/column</td></tr>
+<tr><td><kbd>Enter</kbd> / <kbd>Shift+Enter</kbd> (in the Highlight box)</td><td>Next / previous match</td></tr>
+</table>
+
+<h3 id="viewer-dark">Dark mode <a class="anchor-link" href="#viewer-dark">#</a></h3>
+<p>The <code>🌙</code> toolbar button toggles dark mode for the diagram. It's a manual toggle only —
+the viewer does not follow your OS/browser color scheme automatically — and your choice is
+remembered by your browser for next time. Exports (PNG/SVG) always render with the light palette,
+regardless of which mode you're currently viewing in.</p>
+
+<h3 id="viewer-print">Print <a class="anchor-link" href="#viewer-print">#</a></h3>
+<p>There's no dedicated print button — use your browser's own print command
+(<kbd>Ctrl/Cmd+P</kbd>). A print stylesheet hides all the chrome (panes, toolbar, legend, focus
+bar) automatically, leaving just the diagram on a plain white background.</p>
+</section>
+
+<section id="exports">
+<h2>Exports <a class="anchor-link" href="#exports">#</a></h2>
+<p>The toolbar's <span class="btn-example">⬇ Export</span> button opens a panel with image options
+at the top and one row per format below, each with separate <strong>Copy</strong> and
+<strong>Download</strong> buttons — copying and downloading were deliberately split into distinct
+actions so a browser that <em>can</em> write images to the clipboard doesn't stand between you and
+just saving a file.</p>
+
+<h3>Image options <span class="chip">PNG / SVG only</span></h3>
+<p>These two checkboxes and one toggle apply only to the PNG and SVG exports — Mermaid, PlantUML,
+and the Excel workbook are unaffected by them:</p>
+<ul>
+<li><strong>Join-table labels</strong> (⇢) — on by default; turn off to exclude the small
+"via join table" edge labels from the exported image.</li>
+<li><strong>✓ root badges</strong> — off by default; turn on to exclude the checkmark badges that
+mark Auto-expand roots from the exported image.</li>
+<li><strong>Names: Both / Phys. / Log.</strong> — independent of the live view's own name-mode
+toggle (<a href="#viewer-names">Viewer guide</a>); lets you export logical-only names for a
+stakeholder deck while still viewing physical names yourself.</li>
+</ul>
+<p>A live <a href="#viewer-search">Highlight</a> search is preserved into both PNG and SVG exports
+(unlike table/edge <em>selection</em>, which is always stripped) — the point is being able to paste
+a highlighted diagram straight into a doc.</p>
+
+<h3>PNG</h3>
+<p>Rendered by drawing the diagram as SVG, loading it into an offscreen <code>&lt;canvas&gt;</code>,
+and rasterizing at up to <strong>2×</strong> scale — clamped down (never up) if that would exceed an
+~8000px canvas dimension, since browsers cap canvas size well below that and silently fail beyond
+it. <strong>Copy</strong> writes directly to the clipboard, falling back to a file download
+automatically if the browser can't write images to the clipboard. <strong>Download</strong> always
+saves a file.</p>
+
+<h3>SVG</h3>
+<p><strong>Copy</strong> copies the raw SVG markup as text (falling back to download on failure);
+<strong>Download</strong> saves an <code>.svg</code> file. The exported SVG always uses the light
+color palette, independent of the live view's current dark/light mode.</p>
+
+<h3>Mermaid</h3>
+<p>Generates an <code>erDiagram</code> block covering whatever's <em>currently displayed</em> —
+focus, hidden, and excluded state all apply, so this isn't necessarily the whole schema. Each table
+becomes an entity block listing column name, type, and a PK/FK marker; each edge becomes a
+relationship line using Mermaid's crow's-foot notation, labeled with the first association's name.
+Column comments, nullability, defaults, and logical names are not included in Mermaid output — only
+name, type, and key marker.</p>
+
+<h3>PlantUML</h3>
+<p>Same scope and limitations as Mermaid (currently-displayed tables, no column comments), but with
+entity markup: primary-key columns are listed first above a divider, non-nullable columns are
+marked <code>*</code>, foreign-key columns are marked <code>&lt;&lt;FK&gt;&gt;</code>, and a
+table's logical name (if it has one) appears alongside the physical name in full-width parentheses.</p>
+
+<h3 id="excel-template">Excel workbook</h3>
+<p><code>--excel FILE.xlsx</code> writes a workbook with no external spreadsheet library involved:</p>
+<ul>
+<li><strong>Overview sheet</strong> — one row per table: <code>#</code>, <code>Table</code> (hyperlinked to that table's own sheet), <code>Comment</code>, <code>Columns</code> (count), <code>Indexes</code> (count), <code>Missing schema</code>.</li>
+<li><strong>One sheet per table</strong> — table name and comment, then a column table (<code>#</code>, <code>Column</code>, <code>Type</code>, <code>Nullable</code>, <code>Default</code>, <code>Key</code> — <code>PK</code>/<code>FK</code>/blank, <code>Extra</code>, <code>Comment</code>), an <strong>Indexes</strong> section if the table has any (name, columns, unique), and an <strong>Associations</strong> section if it has any (type, name, target, and how it was sourced: <code>DB FK</code> / <code>inferred</code> / <code>manual</code> / <code>code</code>).</li>
+</ul>
+<p>
+<code>--excel-template FILE.xlsx</code> lets you restyle the workbook — colors, fonts, borders —
+without touching erdscope's code, via a <strong>5-cell contract</strong>: on the template's first
+worksheet, column A, rows 1 through 5 must be styled as Title / Header / Data / Data (alternate row)
+/ Section respectively. Only each cell's <em>style</em> (font, fill, border) is read — the cell's
+text content doesn't matter. A missing contract cell falls back to erdscope's built-in style for
+just that one role, with a warning on stderr; only a file that can't be opened as a
+<code>.xlsx</code> at all is a hard error.
+</p>
+<p>The repo ships
+<a href="https://github.com/orapli/erdscope/blob/main/excel-template.xlsx"><code>excel-template.xlsx</code></a>
+(regenerated by <code>gen_excel_template.py</code>) as a ready-to-edit starting point — its
+<strong>Styles</strong> sheet has the five contract cells pre-styled with erdscope's own default
+look and a plain-language description of each role in column B.</p>
+<div class="warn"><strong>Heads up</strong>
+<code>--excel-template</code> has no effect without <code>--excel</code> — erdscope prints a
+warning to stderr and otherwise ignores it if you pass a template with no <code>--excel</code>
+target to style.</div>
+</section>
+
+<section id="troubleshooting">
+<h2>Troubleshooting / FAQ <a class="anchor-link" href="#troubleshooting">#</a></h2>
+
+<h3>Japanese (or other multi-byte) comments show up as mojibake</h3>
+<p>erdscope explicitly connects with <code>utf8mb4</code>, on both the PyMySQL path and the
+<code>mysql</code>-CLI fallback path — it doesn't rely on the server's or session's default
+charset. If comments are still garbled after that, the most likely explanation is that the data
+was already mangled when it was written to the database (a prior import through a
+non-<code>utf8mb4</code> connection, for instance) — check the comment directly in the database
+with a client you know is <code>utf8mb4</code>-correct before assuming it's an erdscope bug.</p>
+
+<h3 id="faq-pymysql">PyMySQL isn't installed — what happens?</h3>
+<p>erdscope shells out to the <code>mysql</code> CLI instead (it must be on <code>PATH</code>),
+using batch/tab-separated output so the connection stays otherwise identical. The password is
+still passed via the <code>MYSQL_PWD</code> environment variable, never as a CLI argument. If
+<em>neither</em> PyMySQL <em>nor</em> the <code>mysql</code> CLI is available, you get a clear
+error telling you to install one or the other — erdscope never fails silently here.</p>
+
+<h3>Why don't I see any VIEWs in the diagram?</h3>
+<p>By design — erdscope only reads tables where <code>information_schema.TABLES.TABLE_TYPE = 'BASE TABLE'</code>,
+which excludes VIEWs. This keeps the diagram focused on real, storage-backed schema.</p>
+
+<h3 id="faq-infer-fk">Why is <code>--infer-fk</code> off by default?</h3>
+<p>Because a bare <code>*_id</code> column name is a guess, and guesses can be wrong when nothing
+backs them — no real association, no DB FK constraint. Turning the flag on doesn't retroactively
+promote those guesses either: the column-list "FK" badge and the PK/FK column-display mode are
+grounded strictly in real associations, so an inferred edge always stays visually distinct (a
+faint dotted line, see <a href="#viewer-edges">Edge types</a>) rather than looking identical to a
+verified relation.</p>
+
+<h3 id="faq-table-map">When do I need <code>--table-map</code>?</h3>
+<p>It's a Rails-only escape hatch for the rare case where erdscope's static analysis can't work out
+a model's real table — most commonly, a <code>self.table_name = ...</code> assignment that lives
+inside a <code>concern</code> module shipped by a gem rather than in the app itself, so there's no
+app-local source to scan. Pass <code>--table-map 'Widget=crm_widgets'</code> (repeatable,
+comma-separated lists accepted) to override it explicitly; the override also fixes up any other
+model's association that points <em>at</em> that model, so right-pane links resolve to the correct
+table.</p>
+
+<h3>A related table isn't showing up even though Auto-expand is on</h3>
+<p>Auto-expand only pulls in tables reachable by BFS traversal from a checked/focused root, and
+several things can legitimately stop that traversal short — worth checking in order:</p>
+<ul>
+<li>The <a href="#viewer-focus">direction</a> filter (<code>Deps</code>/<code>Dependents</code>) may not match the direction the relation actually points.</li>
+<li>The target table might be <a href="#viewer-hiding">banned</a> (<code>🚫</code>) — banned tables are never crossed by Auto-expand, even as a pass-through.</li>
+<li>The <a href="#viewer-focus">depth</a> limit may be too shallow for that hop count.</li>
+<li>If you pulled the table in with a node's <code>⊕</code> button, it deliberately doesn't become a new Auto-expand root — it won't cascade further on its own.</li>
+<li>The table may simply be outside the diagram entirely, if it was excluded at generation time via <code>--only</code>/<code>--exclude</code>.</li>
+</ul>
+</section>
+
+<section id="extending">
+<h2>Extending <a class="anchor-link" href="#extending">#</a></h2>
+<p>
+Everything downstream of parsing — the HTML/JS viewer, layouts, and every export format — consumes
+one intermediate representation (IR), documented in <code>erd.py</code>'s own module docstring:
+</p>
+<pre><code>tables = {
+  "table_name": {
+    "primary_key": "id" | None,
+    "comment"?: str,
+    "schema_missing"?: bool,        # model exists but no DB table
+    "columns": [{"name","type","nullable","primary",
+                 "sql_type"?, "default"?, "extra"?, "comment"?}],
+    "indexes": [{"name","columns":[...],"unique":bool}],
+    "associations": [{"type": has_many|belongs_to|has_one|has_and_belongs_to_many,
+                      "name", "target",
+                      "through"?, "foreign_key"?, "polymorphic"?,
+                      "db_fk"?, "inferred"?}],
+  }
+}</code></pre>
+<p>
+Adding a new source database means adding one parser that produces this same shape — for
+PostgreSQL specifically, that's a <code>parse_postgres()</code> alongside the existing
+<code>parse_mysql()</code>. There's no PostgreSQL code in the repo yet, but the groundwork is
+already partly there: erdscope's internal SQL-type-shorthand table already carries PostgreSQL-native
+type names (<code>character varying</code>, <code>timestamp with/without time zone</code>,
+<code>bigserial</code>, <code>jsonb</code>, <code>bytea</code>, <code>inet</code>, ...) alongside the
+MySQL ones, so the IR's type vocabulary was designed with more than one engine in mind even though
+only the MySQL path currently populates it.
+</p>
+</section>
+
+</main>
+</div>
+
+<footer>
+erdscope is MIT-licensed. Source, issues, and the live demo live at
+<a href="https://github.com/orapli/erdscope">github.com/orapli/erdscope</a>.
+</footer>
+
+<script>
+(function(){
+  var btn = document.getElementById('nav-toggle');
+  var toc = document.getElementById('toc');
+  btn.addEventListener('click', function(){
+    var open = toc.classList.toggle('open');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  toc.addEventListener('click', function(e){
+    if(e.target.tagName === 'A' && window.innerWidth <= 860){
+      toc.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
+  var sections = links
+    .map(function(a){ return document.getElementById(a.getAttribute('href').slice(1)); })
+    .filter(Boolean);
+  function onScroll(){
+    var pos = window.scrollY + 90;
+    var current = sections[0];
+    for(var i = 0; i < sections.length; i++){
+      if(sections[i].offsetTop <= pos) current = sections[i];
+    }
+    links.forEach(function(a){ a.classList.remove('active'); });
+    if(current){
+      var match = links.find(function(a){ return a.getAttribute('href') === '#' + current.id; });
+      if(match) match.classList.add('active');
+    }
+  }
+  document.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+</script>
+</body>
+</html>
