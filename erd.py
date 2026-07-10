@@ -1229,10 +1229,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 #left-controls button{flex:1;min-width:0;padding:4px 5px;font-size:10px;border:1px solid #e2e8f0;
   background:#f8fafc;border-radius:4px;cursor:pointer;color:#475569;white-space:nowrap}
 #left-controls button:hover{background:#e2e8f0}
-#search-box{padding:6px 8px;border-bottom:1px solid #f1f5f9;flex-shrink:0}
-#search-box input{width:100%;padding:4px 8px;font-size:12px;border:1px solid #e2e8f0;
+#search-box{padding:6px 8px;border-bottom:1px solid #f1f5f9;flex-shrink:0;
+  display:flex;align-items:center;gap:2px;border:1px solid transparent}
+#search-box input{flex:1;min-width:0;padding:4px 8px;font-size:12px;border:1px solid #e2e8f0;
   border-radius:4px;outline:none;background:#f8fafc}
 #search-box input:focus{border-color:#3b82f6;background:#fff}
+#search-box.bad-re input{border-color:#dc2626}
+/* Aa / .* mode toggles — shared by both search boxes (left-pane filter
+   and toolbar Highlight). Blue active state, not amber: amber elsewhere
+   in word-search means "this has matches," and these buttons must not
+   be confused with match-state indicators. */
+.srch-tgl{border:1px solid transparent;background:none;cursor:pointer;flex-shrink:0;
+  width:20px;height:20px;border-radius:4px;padding:0;line-height:1;
+  font:600 10px ui-monospace,'SF Mono','Fira Code',monospace;color:#94a3b8}
+.srch-tgl:hover{color:#475569;background:#f1f5f9}
+.srch-tgl.active{color:#1d4ed8;background:#dbeafe;border-color:#93c5fd}
+body.dark .srch-tgl{color:#64748b}
+body.dark .srch-tgl:hover{color:#cbd5e1;background:#334155}
+body.dark .srch-tgl.active{color:#93c5fd;background:#1e3a5f;border-color:#3b82f6}
 #table-list{flex:1;overflow-y:auto;padding:3px 0;min-height:0}
 .table-item label{display:flex;align-items:center;gap:7px;width:100%;
   padding:4px 10px;cursor:pointer;color:#334155}
@@ -1293,10 +1307,13 @@ body.dark .snap-guide{stroke:#f87171}
 .diag-btn.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
 .diag-btn:disabled{opacity:.4;cursor:not-allowed}
 .diag-btn:disabled:hover{background:white}
-#colmode-group{display:flex;box-shadow:0 1px 3px rgba(0,0,0,.08);border-radius:6px}
-#colmode-group .diag-btn{box-shadow:none;border-radius:0;font-size:11px;margin-left:-1px}
-#colmode-group .diag-btn:first-child{border-radius:6px 0 0 6px;margin-left:0}
-#colmode-group .diag-btn:last-child{border-radius:0 6px 6px 0}
+#colmode-group,#namemode-group,.seg-group{display:flex;box-shadow:0 1px 3px rgba(0,0,0,.08);border-radius:6px}
+#colmode-group .diag-btn,#namemode-group .diag-btn,.seg-group .diag-btn{box-shadow:none;border-radius:0;font-size:11px;margin-left:-1px}
+#colmode-group .diag-btn:first-child,#namemode-group .diag-btn:first-child,.seg-group .diag-btn:first-child{border-radius:6px 0 0 6px;margin-left:0}
+#colmode-group .diag-btn:last-child,#namemode-group .diag-btn:last-child,.seg-group .diag-btn:last-child{border-radius:0 6px 6px 0}
+.tb-popup .seg-group{box-shadow:none;border:1px solid #e2e8f0}
+body.dark .tb-popup .seg-group{border-color:#334155}
+.tb-popup .seg-group .diag-btn{width:auto;flex:1;font-size:10px;padding:0 6px}
 /* toolbar grouping — clusters of related controls (what tables show /
    where they sit / how you're viewing them / getting output out),
    separated by a thin rule rather than merging into one pill: unlike
@@ -1333,10 +1350,12 @@ body.dark .tb-export-fmt{color:#cbd5e1}
 #word-search-box{height:30px;display:flex;align-items:center;gap:4px;padding:0 4px 0 8px;
   background:white;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.08);
   margin-right:auto}
-#word-search{width:110px;border:none;outline:none;font-size:12px;background:transparent;
+#word-search-box.bad-re{border-color:#dc2626}
+#word-search{width:90px;border:none;outline:none;font-size:12px;background:transparent;
   transition:width .15s}
-#word-search:focus{width:170px}
+#word-search:focus{width:150px}
 #word-search-count{font-size:10px;color:#94a3b8;min-width:12px;text-align:center;flex-shrink:0}
+#word-search-box.bad-re #word-search-count{color:#dc2626;font-weight:700}
 #word-search-clear{border:none;background:none;cursor:pointer;font-size:10px;color:#94a3b8;
   padding:2px 4px;line-height:1;flex-shrink:0;visibility:hidden}
 #word-search-box.has-query #word-search-clear{visibility:visible}
@@ -1496,6 +1515,13 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .er-edge .e-lbg{fill:white;opacity:.88}
 .er-edge .e-ltxt{font-size:10px;font-family:sans-serif;fill:#64748b}
 body.no-edge-labels .e-lbg,body.no-edge-labels .e-ltxt{display:none}
+/* physical/logical name display mode — the node header always renders
+   both tspans (see drawNode); which one(s) show is decided here, purely
+   by CSS, so exports can apply a different mode via the same rule shape
+   injected into the export stylesheet instead of a second render path */
+body.namemode-physical .n-logical,body.namemode-physical .n-paren{display:none}
+body.namemode-logical .er-node.has-logical .n-physical,
+body.namemode-logical .er-node.has-logical .n-paren{display:none}
 #legend .lsvg{flex-shrink:0}
 
 /* ── dark mode ── */
@@ -1604,7 +1630,11 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       <button id="btn-none">None</button>
       <button id="btn-unfocus">Exit focus</button>
     </div>
-    <div id="search-box"><input type="text" id="search" placeholder="Search tables / columns…"></div>
+    <div id="search-box">
+      <input type="text" id="search" placeholder="Search tables / columns…">
+      <button class="srch-tgl" id="fs-case" title="Match case" aria-pressed="false">Aa</button>
+      <button class="srch-tgl" id="fs-regex" title="Use regular expression" aria-pressed="false">.*</button>
+    </div>
     <div id="hidden-bar"><span id="hidden-count"></span><a id="hidden-clear">Unban all</a></div>
     <div id="table-list"></div>
   </div>
@@ -1655,6 +1685,8 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       <div id="word-search-box" title="Highlight matching tables/columns in the diagram (does not filter). Enter = next match, Shift+Enter = previous">
         <input type="text" id="word-search" placeholder="Highlight…">
         <span id="word-search-count"></span>
+        <button class="srch-tgl" id="ws-case" title="Match case" aria-pressed="false">Aa</button>
+        <button class="srch-tgl" id="ws-regex" title="Use regular expression" aria-pressed="false">.*</button>
         <button id="word-search-clear" title="Clear highlight" aria-label="Clear highlight">✕</button>
       </div>
       <div class="tb-group">
@@ -1670,6 +1702,11 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <button class="diag-btn" data-cm="0">All</button>
           <button class="diag-btn" data-cm="1">PK/FK</button>
           <button class="diag-btn" data-cm="2">Name</button>
+        </div>
+        <div id="namemode-group" title="Table name display (physical vs. logical/comment name)">
+          <button class="diag-btn" data-nm="0">Both</button>
+          <button class="diag-btn" data-nm="1">Physical</button>
+          <button class="diag-btn" data-nm="2">Logical</button>
         </div>
         <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢) in this view — exports have their own toggle in the Export menu">Labels</button>
       </div>
@@ -1694,6 +1731,14 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <div class="tb-popup-caption">Image options</div>
           <label class="tb-popup-check"><input type="checkbox" id="export-opt-labels" checked> Join-table labels (⇢)</label>
           <label class="tb-popup-check"><input type="checkbox" id="export-opt-roots"> ✓ root badges</label>
+          <div class="tb-export-row" style="grid-template-columns:60px 1fr" title="Independent of the live view's own Both/Physical/Logical toggle in the toolbar">
+            <span class="tb-export-fmt">Names</span>
+            <div id="export-namemode-group" class="seg-group">
+              <button class="diag-btn" data-xnm="0">Both</button>
+              <button class="diag-btn" data-xnm="1">Phys.</button>
+              <button class="diag-btn" data-xnm="2">Log.</button>
+            </div>
+          </div>
           <div class="tb-popup-sep"></div>
           <div class="tb-popup-caption">Export — copy or download</div>
           <div class="tb-export-row">
@@ -1781,23 +1826,83 @@ let manualExpanded = new Set(); // tables added with ⊕ while focused (not pers
 // expand again on the next getDisplayTables() pass). Not persisted.
 let noAutoExpandRoot = new Set();
 let autoLayout     = false; // re-layout automatically whenever the display set changes
-let colHighlight   = null;  // {table, q} — column-search hit to highlight in the node
+let colHighlight   = null;  // {table, match} — column-search hit to highlight in the node
+// left-pane #search's own regex/case toggles — independent of the toolbar
+// Highlight box's wordRegexMode/wordCaseSensitive below (see makeMatcher's
+// declaration comment for why the two boxes don't share one mode)
+let filterRegexMode = false;
+let filterCaseSensitive = false;
+
+// Shared substring/regex matcher used by both search boxes (left-pane
+// filter and toolbar Highlight) — centralized after a bug where column
+// *comments* were matched at some call sites but not others, because the
+// same "toLowerCase().includes()" logic was independently duplicated in
+// ~12 places. Every match site now goes through one of two matcher
+// instances (wordMatcher for the toolbar box, filterMatcher for the
+// left-pane box) instead of reimplementing string matching itself.
+//
+// makeMatcher(query, {regex, cs}): query='' -> null (callers treat null
+// as "no query, matches nothing"). Otherwise:
+//   .test(s)   - boolean, the common case
+//   .ranges(s) - [[start,end],...] of every match, for escMark()
+//   .error     - regex SyntaxError message, or null (drives the red
+//                "invalid pattern" state instead of silently matching
+//                nothing with no explanation, or silently falling back
+//                to substring mode, which would make the same query mean
+//                two different things as the user keeps typing)
+function makeMatcher(query, {regex=false, cs=false}={}){
+  if(!query) return null;
+  if(regex){
+    let re, reG;
+    try{
+      re=new RegExp(query, cs?'':'i');    // no 'g' — .test() must stay stateless
+      reG=new RegExp(query, cs?'g':'gi'); // 'g' copy used only by matchAll below
+    }catch(e){
+      return {test:()=>false, ranges:()=>[], error:e.message};
+    }
+    return {
+      test:s=>re.test(String(s)),
+      ranges:s=>[...String(s).matchAll(reG)].map(m=>[m.index,m.index+m[0].length]).filter(([a,b])=>b>a),
+      error:null,
+    };
+  }
+  const q=cs?query:query.toLowerCase();
+  return {
+    test:s=>(cs?String(s):String(s).toLowerCase()).includes(q),
+    ranges:s=>{
+      const str=cs?String(s):String(s).toLowerCase();
+      const out=[]; let i=0, idx;
+      while((idx=str.indexOf(q,i))>=0){ out.push([idx,idx+q.length]); i=idx+q.length; }
+      return out;
+    },
+    error:null,
+  };
+}
+
 // toolbar "Highlight" search — separate from #search (which filters the
 // left-pane list). Never filters anything; marks matches everywhere
-// instead. Lowercased, empty = off. Read on demand by drawNode/
-// renderTableList/showDetails rather than pushed into per-table state, so
-// it survives every existing re-render path for free.
+// instead. wordQuery is the raw input value (empty = off, and still used
+// for cheap truthy checks); wordMatcher is the compiled matcher derived
+// from it plus the regex/case toggles, rebuilt whenever either changes.
+// Read on demand by drawNode/renderTableList/showDetails rather than
+// pushed into per-table state, so it survives every existing re-render
+// path for free.
 let wordQuery = '';
+let wordMatcher = null;
+let wordRegexMode = false;
+let wordCaseSensitive = false;
 let wordMatchIdx = -1; // rotating cursor for Enter-to-cycle
 let wordColHitCache = new Map(); // table -> last-seen wordColHits() signature
 function wordColHits(name){
-  if(!wordQuery) return [];
-  return (DATA.tables[name]?.columns||[]).filter(c=>c.name.toLowerCase().includes(wordQuery)).map(c=>c.name);
+  if(!wordMatcher) return [];
+  return (DATA.tables[name]?.columns||[])
+    .filter(c=>wordMatcher.test(c.name) || wordMatcher.test(c.comment||''))
+    .map(c=>c.name);
 }
 function wordHit(name){
-  if(!wordQuery) return false;
-  return name.toLowerCase().includes(wordQuery) || wordColHits(name).length>0
-    || (DATA.tables[name]?.comment||'').toLowerCase().includes(wordQuery);
+  if(!wordMatcher) return false;
+  return wordMatcher.test(name) || wordColHits(name).length>0
+    || wordMatcher.test(DATA.tables[name]?.comment||'');
 }
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
@@ -1856,6 +1961,12 @@ function saveState() {
   setLS(LS('al'),   String(autoLayout));
   setLS(LS('xlbl'),  String(exportOptLabels));
   setLS(LS('xroot'), String(exportOptRoots));
+  setLS(LS('wre'),  String(wordRegexMode));
+  setLS(LS('wcs'),  String(wordCaseSensitive));
+  setLS(LS('fre'),  String(filterRegexMode));
+  setLS(LS('fcs'),  String(filterCaseSensitive));
+  setLS(LS('nm'),   String(nameMode));
+  setLS(LS('xnm'),  String(exportNameMode));
 }
 function loadState() {
   try { excludedTables = new Set(JSON.parse(localStorage.getItem(LS('excl')) || '[]')); } catch{}
@@ -1871,9 +1982,17 @@ function loadState() {
   autoLayout = localStorage.getItem(LS('al')) === 'true';
   exportOptLabels = localStorage.getItem(LS('xlbl'))  !== 'false';
   exportOptRoots  = localStorage.getItem(LS('xroot')) === 'true';
+  wordRegexMode      = localStorage.getItem(LS('wre')) === 'true';
+  wordCaseSensitive  = localStorage.getItem(LS('wcs')) === 'true';
+  filterRegexMode     = localStorage.getItem(LS('fre')) === 'true';
+  filterCaseSensitive = localStorage.getItem(LS('fcs')) === 'true';
+  nameMode       = parseInt(localStorage.getItem(LS('nm'))  || '0', 10);
+  exportNameMode = parseInt(localStorage.getItem(LS('xnm')) || '0', 10);
   // guard against corrupted stored values — they fail silently otherwise
   if (![0,1,2,3].includes(expandDepth)) expandDepth = 1;
   if (![0,1,2].includes(colMode)) colMode = 0;
+  if (![0,1,2].includes(nameMode)) nameMode = 0;
+  if (![0,1,2].includes(exportNameMode)) exportNameMode = 0;
   if (!['both','out','in'].includes(expandDir)) expandDir = 'both';
   for (const [k,v] of Object.entries(colOverride)) if (![0,1,2].includes(v)) delete colOverride[k];
 }
@@ -2039,12 +2158,31 @@ function logicalName(name){
   return out;
 }
 
+// Which of physical/logical name(s) the header shows — a *display*
+// setting, not a data one: search/matching always considers both
+// regardless of this mode (see wordHit/renderTableList's filter, which
+// read DATA.tables[name].comment directly, never headerDisplayString).
+// 0 = both (default, physical（logical）) · 1 = physical only ·
+// 2 = logical only (falls back to physical when a table has no comment —
+// there's nothing else to show). Persisted like colMode/showEdgeLabels.
+let nameMode = 0;
+// Export gets its own independent copy — same reasoning as
+// exportOptLabels/exportOptRoots above: what you're currently looking at
+// and what you hand to someone else are different questions, and forcing
+// them to match would mean changing your own view just to export a
+// specific look.
+let exportNameMode = 0;
+
 // The full header string (physical + 「logical」, when present) used both
 // to render the node title and to size the node — kept as one function so
 // the two can never drift apart (a header wider than the box it sized).
+// Reflects the *live* nameMode (export's own mode only affects which
+// pre-rendered tspan CSS hides — see buildExportSvg — not node sizing).
 function headerDisplayString(name){
   const lg=logicalName(name);
-  return lg ? `${name}（${lg}）` : name;
+  if(!lg || nameMode===1) return name;
+  if(nameMode===2) return lg;
+  return `${name}（${lg}）`;
 }
 
 function calcSize(name) {
@@ -2052,10 +2190,12 @@ function calcSize(name) {
   const allCnt  = (DATA.tables[name]?.columns || []).length;
   // header icon buttons (⊖/⊕/▤) live in a ~56px-wide zone on the right of
   // the header, unrelated to the centered title text's own width — a
-  // physical-only name was rarely wide enough to reach them, but adding a
-  // logical name made that collision common, so reserve headroom for the
-  // icon cluster whenever a logical name pushes the header wider
-  const nameW   = displayWidthUnits(headerDisplayString(name)) * 8.5 + PAD + (logicalName(name) ? 56 : 0);
+  // header showing only the physical name was rarely wide enough to reach
+  // them, but a header that's grown with a logical name commonly is, so
+  // reserve headroom for the icon cluster whenever the *displayed* header
+  // (not just the physical name) pushes the header wider
+  const nameW   = displayWidthUnits(headerDisplayString(name)) * 8.5 + PAD
+    + (headerDisplayString(name)!==name ? 56 : 0);
   const colW    = cols.map(c => (c.name.length + c.type.length + 2) * 7.2 + 52);
   const shown   = Math.min(cols.length, maxRows);
   const noSchema = allCnt === 0 && !!DATA.tables[name]?.schema_missing;
@@ -2672,9 +2812,10 @@ function drawNode(parent, name) {
   const isRoot = isOverviewAuto && !excludedTables.has(name);
   const isAuto = isOverviewAuto && excludedTables.has(name);
   const isWordHit = wordHit(name);
+  const hasLogical = !!logicalName(name);
   const g = svgEl('g', {
     class: 'er-node' + (selectedTables.has(name)?' sel':'') + (name===focusedTable?' center':'') + (isAuto?' auto':'') + ringCls
-      + (isWordHit?' word-hit':'') + (wordQuery&&!isWordHit?' word-dim':''),
+      + (isWordHit?' word-hit':'') + (wordMatcher&&!isWordHit?' word-dim':'') + (hasLogical?' has-logical':''),
     transform: `translate(${lx},${ty})`,
     'data-name': name,
   });
@@ -2686,20 +2827,32 @@ function drawNode(parent, name) {
 
   const nt=svgEl('text',{x:sz.w/2,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-title'});
   const lg=logicalName(name);
-  // the whole node already gets an amber border on any match (name,
+  // Physical and logical spans are ALWAYS both rendered here (mode-
+  // independent DOM) — which one(s) actually show is a pure CSS decision
+  // (body.namemode-* below), so the exact same node markup works for the
+  // live view (toggled by a body class) and for an export (toggled by a
+  // rule buildExportSvg injects into the cloned SVG's own stylesheet,
+  // exactly like exportOptLabels/exportOptRoots already do) without
+  // needing two different render paths.
+  //
+  // The whole node already gets an amber border on any match (name,
   // column, or comment) via word-hit above — but a match that's ONLY in
   // the comment had no visible sign at all on the text itself, unlike a
   // matching column (which gets its own highlighted row). Mark whichever
   // part of the header text actually matched, the same amber as elsewhere
   // in the word-search color language.
-  const nameSpan=svgEl('tspan',{class:wordQuery&&name.toLowerCase().includes(wordQuery)?'n-namehit':''});
+  const nameSpan=svgEl('tspan',{class:'n-physical'+(wordMatcher&&wordMatcher.test(name)?' n-namehit':'')});
   nameSpan.textContent=name;
   nt.appendChild(nameSpan);
   if(lg){
-    const lgHit=wordQuery&&(t?.comment||'').toLowerCase().includes(wordQuery);
+    const lgHit=wordMatcher&&wordMatcher.test(t?.comment||'');
+    const openParen=svgEl('tspan',{class:'n-paren'}); openParen.textContent='（';
+    nt.appendChild(openParen);
     const lgSpan=svgEl('tspan',{class:'n-logical'+(lgHit?' n-namehit':'')});
-    lgSpan.textContent=`（${lg}）`;
+    lgSpan.textContent=lg;
     nt.appendChild(lgSpan);
+    const closeParen=svgEl('tspan',{class:'n-paren'}); closeParen.textContent='）';
+    nt.appendChild(closeParen);
   }
   if(t?.comment){
     const ntTitle=svgEl('title',{});
@@ -2784,9 +2937,9 @@ function drawNode(parent, name) {
     const i=off+vi; // absolute index keeps stripes stable while scrolling
     const ry=HDR_H+vi*ROW_H+3;
     if(i%2===1) g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-alt'})); // inset: keep off the 1px border
-    if(colHighlight&&colHighlight.table===name&&col.name.toLowerCase().includes(colHighlight.q))
+    if(colHighlight&&colHighlight.table===name&&colHighlight.match.test(col.name))
       g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-colhit'}));
-    if(wordQuery&&col.name.toLowerCase().includes(wordQuery))
+    if(wordMatcher&&(wordMatcher.test(col.name)||wordMatcher.test(col.comment||'')))
       g.appendChild(svgEl('rect',{x:1,y:ry,width:sz.w-2,height:ROW_H,class:'n-wordhit'}));
     const isPK=col.primary, isFK=!isPK&&isFkCol(name, col.name);
     if(isPK){
@@ -3169,17 +3322,20 @@ function canExclude(name){
 // ── Left pane ─────────────────────────────────────────────────────────────
 function renderTableList(){
   const list  = document.getElementById('table-list');
-  const query = document.getElementById('search').value.toLowerCase();
+  const filterMatcher = makeMatcher(document.getElementById('search').value,
+    {regex:filterRegexMode, cs:filterCaseSensitive});
+  const searchBox = document.getElementById('search-box');
+  searchBox.classList.toggle('bad-re', !!filterMatcher?.error);
   const prevScroll = list.scrollTop;
   list.innerHTML='';
   const inView = (focusedTable||autoExpand) ? new Set(getDisplayTables()) : null;
-  const colHit = t => query && !t.toLowerCase().includes(query)
-    ? (DATA.tables[t]?.columns||[]).find(c=>c.name.toLowerCase().includes(query))?.name
+  const colHit = t => filterMatcher && !filterMatcher.test(t)
+    ? (DATA.tables[t]?.columns||[]).find(c=>filterMatcher.test(c.name) || filterMatcher.test(c.comment||''))?.name
     : null;
-  const commentHit = t => (DATA.tables[t]?.comment||'').toLowerCase().includes(query);
+  const commentHit = t => filterMatcher && filterMatcher.test(DATA.tables[t]?.comment||'');
   allTables()
-    .filter(t => !query || t.toLowerCase().includes(query)
-      || (DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(query))
+    .filter(t => !filterMatcher || filterMatcher.test(t)
+      || (DATA.tables[t]?.columns||[]).some(c=>filterMatcher.test(c.name) || filterMatcher.test(c.comment||''))
       || commentHit(t))
     .forEach(name => {
       const t=DATA.tables[name];
@@ -3255,15 +3411,17 @@ let lastFocusScrolled=null;
 // tables whose match set actually changed), the counter, and the right
 // pane if a single table is selected. Called after every wordQuery change.
 function updateWordHighlight(){
+  wordMatcher=makeMatcher(wordQuery, {regex:wordRegexMode, cs:wordCaseSensitive});
   const box=document.getElementById('word-search-box');
   box.classList.toggle('has-query', !!wordQuery);
+  box.classList.toggle('bad-re', !!wordMatcher?.error);
   const tables=getDisplayTables();
   const hitTables=new Set(tables.filter(wordHit));
   document.querySelectorAll('#node-layer .er-node').forEach(el=>{
     const name=el.getAttribute('data-name');
     const isHit=hitTables.has(name);
     el.classList.toggle('word-hit', isHit);
-    el.classList.toggle('word-dim', !!wordQuery && !isHit);
+    el.classList.toggle('word-dim', !!wordMatcher && !isHit);
   });
   tables.forEach(name=>{
     const sig=wordColHits(name).join('\x00');
@@ -3272,7 +3430,9 @@ function updateWordHighlight(){
       redrawNode(name);
     }
   });
-  document.getElementById('word-search-count').textContent = wordQuery ? String(hitTables.size) : '';
+  const countEl=document.getElementById('word-search-count');
+  if(wordMatcher?.error){ countEl.textContent='!'; countEl.title=wordMatcher.error; }
+  else { countEl.textContent = wordQuery ? String(hitTables.size) : ''; countEl.title=''; }
   wordMatchIdx=-1;
   renderTableList();
   if(selectedTables.size===1) showDetails(); // re-marks the currently-shown table
@@ -3373,19 +3533,21 @@ function showDetails(){
   el.querySelectorAll('[data-add]').forEach(a=>a.addEventListener('click',()=>addTables([a.dataset.add])));
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-// esc(), plus wrapping wordQuery matches in a <mark> — split the *raw*
-// string on the query first, then esc() each fragment individually and
-// rejoin. Never regex-replace inside already-escaped HTML (a query like
-// "quot" or "amp" would then match inside an entity).
+// esc(), plus wrapping wordMatcher matches in a <mark> — get every match
+// range first (works for both substring and regex mode, including
+// variable-length regex matches), then esc() each fragment individually
+// and rejoin. Never regex-replace inside already-escaped HTML (a query
+// like "quot" or "amp" would then match inside an entity).
 function escMark(s){
   s=String(s);
-  if(!wordQuery) return esc(s);
-  const lower=s.toLowerCase();
-  let out='', i=0, idx;
-  while((idx=lower.indexOf(wordQuery,i))>=0){
-    out+=esc(s.slice(i,idx))+'<mark class="word-mark">'+esc(s.slice(idx,idx+wordQuery.length))+'</mark>';
-    i=idx+wordQuery.length;
-  }
+  if(!wordMatcher) return esc(s);
+  const ranges=wordMatcher.ranges(s);
+  if(!ranges.length) return esc(s);
+  let out='', i=0;
+  ranges.forEach(([a,b])=>{
+    out+=esc(s.slice(i,a))+'<mark class="word-mark">'+esc(s.slice(a,b))+'</mark>';
+    i=b;
+  });
   return out+esc(s.slice(i));
 }
 
@@ -3598,13 +3760,17 @@ function buildExportSvg(){
   exportSvg.setAttribute('width',Math.ceil(vw)); exportSvg.setAttribute('height',Math.ceil(vh));
   exportSvg.setAttribute('viewBox',`${x0} ${y0} ${vw} ${vh}`);
 
-  // Embed CSS. Deliberately reads the export-only checkboxes, not the
-  // live showEdgeLabels toggle — the two are independent by design (see
-  // exportOptLabels' declaration comment).
+  // Embed CSS. Deliberately reads the export-only checkboxes/mode, not
+  // the live showEdgeLabels/nameMode — independent by design (see
+  // exportOptLabels' declaration comment). Same shape as the live view's
+  // body.namemode-* rules, just scoped to this export's own <style> since
+  // there's no <body> in an exported SVG to hang a class off of.
   const styleEl=document.createElementNS(NS,'style');
   styleEl.textContent=EXPORT_CSS
     +(exportOptLabels?'':'.e-lbg,.e-ltxt{display:none}')
-    +(exportOptRoots?'':'.n-root{display:none}');
+    +(exportOptRoots?'':'.n-root{display:none}')
+    +(exportNameMode===1?'.n-logical,.n-paren{display:none}':
+      exportNameMode===2?'.er-node.has-logical .n-physical,.er-node.has-logical .n-paren{display:none}':'');
   exportSvg.appendChild(styleEl);
 
   // Embed arrowhead markers
@@ -4113,6 +4279,17 @@ document.getElementById('export-opt-labels').addEventListener('change', e=>{
 document.getElementById('export-opt-roots').addEventListener('change', e=>{
   exportOptRoots=e.target.checked; saveState();
 });
+function updateExportNameModeUI(){
+  document.querySelectorAll('#export-namemode-group .diag-btn').forEach(b=>
+    b.classList.toggle('active', parseInt(b.dataset.xnm,10)===exportNameMode));
+}
+document.querySelectorAll('#export-namemode-group .diag-btn').forEach(btn=>{
+  btn.addEventListener('click', e=>{
+    e.stopPropagation(); // stay inside the still-open popup, like the checkboxes above
+    exportNameMode=parseInt(btn.dataset.xnm,10);
+    saveState(); updateExportNameModeUI();
+  });
+});
 document.getElementById('btn-export').addEventListener('click', ()=>{ exportToPNG(); closeExportMenu(); });
 document.getElementById('btn-export-download').addEventListener('click', ()=>{ downloadPNGFile(); closeExportMenu(); });
 document.getElementById('btn-export-svg-copy').addEventListener('click', ()=>{ copySVGToClipboard(); closeExportMenu(); });
@@ -4221,6 +4398,35 @@ document.querySelectorAll('#colmode-group .diag-btn').forEach(btn=>{
     // Auto-tidy ON: node sizes change drastically, so re-layout.
     // OFF: nodes resize in place — the display set didn't change, so
     // positions (incl. manual arrangement) are kept.
+    if(autoLayout){
+      pushUndoSnapshot();
+      Object.keys(nodePos).forEach(k=>delete nodePos[k]);
+      Object.keys(basePos).forEach(k=>delete basePos[k]);
+      Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
+    }
+    refreshView();
+  });
+});
+
+// Physical/logical name display mode (segmented buttons, whole diagram) —
+// same node-size-invalidation shape as colMode above, since the header
+// text width changes with the mode. The body class is what actually
+// hides/shows the pre-rendered tspans (see the CSS + drawNode comments);
+// updateNameModeUI() below just keeps the buttons' active state in sync.
+function updateNameModeUI(){
+  document.querySelectorAll('#namemode-group .diag-btn').forEach(b=>
+    b.classList.toggle('active', parseInt(b.dataset.nm,10)===nameMode));
+  document.body.classList.remove('namemode-physical','namemode-logical');
+  if(nameMode===1) document.body.classList.add('namemode-physical');
+  if(nameMode===2) document.body.classList.add('namemode-logical');
+}
+document.querySelectorAll('#namemode-group .diag-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const m=parseInt(btn.dataset.nm,10);
+    if(m===nameMode) return;
+    nameMode=m;
+    saveState(); updateNameModeUI();
+    Object.keys(nodeSize).forEach(k=>delete nodeSize[k]);
     if(autoLayout){
       pushUndoSnapshot();
       Object.keys(nodePos).forEach(k=>delete nodePos[k]);
@@ -4389,6 +4595,29 @@ document.getElementById('view-share').addEventListener('click',()=>{
   document.getElementById('legend-head').addEventListener('click',()=>setLg(!lg.classList.contains('collapsed')));
 })();
 
+// Aa / .* mode toggles — each button flips one boolean, refocuses its
+// input (matching the existing clear-button behavior), and re-runs
+// whichever render the box drives. sync() (reflecting persisted state
+// into the button's visual .active state) is called separately from
+// Init, below, once loadState() has actually run — binding this early
+// (search boxes are wired well before the loadState() call at the
+// bottom of this script) would otherwise always sync to each flag's
+// pre-load default (false), never the restored value.
+function bindSearchToggle(btnId, get, set, onChange){
+  const btn=document.getElementById(btnId);
+  const sync=()=>{ const on=get(); btn.classList.toggle('active',on); btn.setAttribute('aria-pressed',String(on)); };
+  btn.addEventListener('click', ()=>{ set(!get()); sync(); saveState(); onChange(); });
+  return sync;
+}
+const syncFsCase=bindSearchToggle('fs-case', ()=>filterCaseSensitive, v=>filterCaseSensitive=v,
+  ()=>{ renderTableList(); document.getElementById('search').focus(); });
+const syncFsRegex=bindSearchToggle('fs-regex', ()=>filterRegexMode, v=>filterRegexMode=v,
+  ()=>{ renderTableList(); document.getElementById('search').focus(); });
+const syncWsCase=bindSearchToggle('ws-case', ()=>wordCaseSensitive, v=>wordCaseSensitive=v,
+  ()=>{ updateWordHighlight(); document.getElementById('word-search').focus(); });
+const syncWsRegex=bindSearchToggle('ws-regex', ()=>wordRegexMode, v=>wordRegexMode=v,
+  ()=>{ updateWordHighlight(); document.getElementById('word-search').focus(); });
+
 // Search: filter the list; Enter jumps to the first match in the diagram
 document.getElementById('search').addEventListener('input', e=>{
   if(!e.target.value && colHighlight){ const t=colHighlight.table; colHighlight=null; redrawNode(t); }
@@ -4396,19 +4625,26 @@ document.getElementById('search').addEventListener('input', e=>{
 });
 document.getElementById('search').addEventListener('keydown', e=>{
   if(e.key!=='Enter') return;
-  const q=e.target.value.toLowerCase();
-  if(!q) return;
-  const m=allTables().find(t=>t.toLowerCase().startsWith(q)) || allTables().find(t=>t.toLowerCase().includes(q))
-       || allTables().find(t=>(DATA.tables[t]?.columns||[]).some(c=>c.name.toLowerCase().includes(q)));
+  const q=e.target.value;
+  const matcher=makeMatcher(q, {regex:filterRegexMode, cs:filterCaseSensitive});
+  if(!matcher) return;
+  const colTest=t=>(DATA.tables[t]?.columns||[]).some(c=>matcher.test(c.name)||matcher.test(c.comment||''));
+  // prefer a table whose match starts at position 0 — generalizes the old
+  // "startsWith" preference (which has no regex analog) to "earliest match
+  // begins at the very first character," identical behavior in substring mode
+  const startsAtZero=t=>matcher.ranges(t)[0]?.[0]===0;
+  const m=allTables().find(t=>startsAtZero(t)) || allTables().find(t=>matcher.test(t))
+       || allTables().find(t=>colTest(t));
   if(!m) return;
   if(!hiddenTables.has(m) && !getDisplayTables().includes(m)) addTables([m]); // add hidden targets before locating
   locateTable(m);
   // column hit: make sure the column is visible and highlighted in the node
-  const colQ=(DATA.tables[m]?.columns||[]).some(c=>c.name.toLowerCase().includes(q))?q:null;
-  colHighlight=colQ?{table:m,q:colQ}:null;
-  if(colQ){
-    if(!visibleCols(m).some(c=>c.name.toLowerCase().includes(colQ))) colOverride[m]=0; // reveal columns hidden by the mode
-    const idx=visibleCols(m).findIndex(c=>c.name.toLowerCase().includes(colQ));
+  const colHit=colTest(m);
+  colHighlight=colHit?{table:m,match:matcher}:null;
+  if(colHit){
+    const colPred=c=>matcher.test(c.name)||matcher.test(c.comment||'');
+    if(!visibleCols(m).some(colPred)) colOverride[m]=0; // reveal columns hidden by the mode
+    const idx=visibleCols(m).findIndex(colPred);
     if(idx>=0) colScroll[m]=Math.max(0, Math.min(idx-2, Math.max(0, visibleCols(m).length-maxRows)));
     delete nodeSize[m];
     renderDiagram();
@@ -4422,7 +4658,7 @@ document.getElementById('word-search').addEventListener('input', e=>{
   clearTimeout(wordSearchDebounce);
   const val=e.target.value;
   wordSearchDebounce=setTimeout(()=>{
-    wordQuery=val.trim().toLowerCase();
+    wordQuery=val.trim(); // NOT lowercased here — makeMatcher() needs the raw case to support case-sensitive mode
     updateWordHighlight();
   }, 150);
 });
@@ -4451,10 +4687,13 @@ document.getElementById('ae-label').className=autoExpand?'ae-on':'';
 updateDepthCtrl();
 updateFocusUI();
 updateColModeUI();
+updateNameModeUI();
 updateLabelUI();
 document.getElementById('btn-autolayout').classList.toggle('active',autoLayout);
 document.getElementById('export-opt-labels').checked=exportOptLabels;
 document.getElementById('export-opt-roots').checked=exportOptRoots;
+updateExportNameModeUI();
+syncFsCase(); syncFsRegex(); syncWsCase(); syncWsRegex();
 document.body.classList.toggle('dark', localStorage.getItem(LS('dk'))==='true');
 (()=>{ // max-rows selector: reflect current value, adding it if non-standard
   const sel=document.getElementById('max-rows');

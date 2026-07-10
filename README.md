@@ -150,12 +150,13 @@ Test-only, and only if you run that particular suite:
   needs `--infer-fk`). The column-list "FK" badge is grounded the same way — a
   `*_id` name alone never earns it, only a real association does
 - **Interactive exploration** — locate/focus with depth and dependency direction,
-  per-table deep-dive, two-level hiding, table *and column* search, named views,
-  share links (state embedded in the URL). A separate toolbar "Highlight" search
-  marks matches everywhere (nodes, table list, right pane, including a table's DB
-  comment shown as its logical name) without filtering anything — Enter/Shift+Enter
-  step forward/backward through hits, and the highlight survives into PNG/SVG
-  exports, for pasting into docs
+  per-table deep-dive, two-level hiding, table *and column* search (names and
+  comments, both searches have independent `Aa`/`.*` case-sensitive and regex
+  toggles), named views, share links (state embedded in the URL). A separate
+  toolbar "Highlight" search marks matches everywhere (nodes, table list, right
+  pane) without filtering anything — Enter/Shift+Enter step forward/backward
+  through hits, and the highlight survives into PNG/SVG exports, for pasting
+  into docs
 - **Readable layouts** — viewport-aware packing with crossing reduction (the same
   packing focus mode uses too, so focusing never looks worse than the overview),
   edges detour around nodes, join-table chains, auto-tidy, drag-to-snap with guide
@@ -168,7 +169,8 @@ Test-only, and only if you run that particular suite:
   "Image options" — join-table labels and auto-expand ✓ badges can be excluded from
   the exported picture independent of what your live view currently shows
 - **Logical names** — a table's DB comment doubles as a searchable "logical name," shown alongside the
-  physical name in the diagram and table list (e.g. `users（Customer accounts）`)
+  physical name in the diagram and table list (e.g. `users（Customer accounts）`). A toolbar toggle
+  picks Both/Physical-only/Logical-only for the live view, with an independent choice for exports
 - **Extras** — dark mode, print stylesheet, resizable/collapsible panes
 
 ## Tests

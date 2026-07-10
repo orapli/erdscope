@@ -1612,5 +1612,253 @@ class TestLogicalNames(unittest.TestCase):
         self.assertEqual(hit, ['users'])
 
 
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestSearchModifiers(unittest.TestCase):
+    """Aa (case-sensitive) / .* (regex) toggles — independent per search
+    box (left-pane filter vs. toolbar Highlight), each defaulting off
+    (case-insensitive substring, matching every prior release's
+    behavior)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_column_comment_is_searchable(self):
+        # a dedicated fixture with a real "Stock keeping unit"-style
+        # column comment — this is the maintainer's original bug report
+        table_rows = [('products', '')]
+        col_rows = [_col('products', 'id', key='PRI'),
+                    ('products', 'sku', 'varchar', 'varchar(40)', 'NO', '', '', '', 'Stock keeping unit')]
+        tables = erd.mysql_ir(table_rows, col_rows, [], [])
+        args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                                only=None, exclude=None, infer_fk=False)
+        tmp = tempfile.mkdtemp()
+        out = Path(tmp) / 'out.html'
+        args.output = str(out)
+        erd._finish(tables, args, 'e2e_fixture')
+        page = self.browser.new_page()
+        try:
+            page.goto(out.as_uri())
+            page.wait_for_function('typeof nodePos.products !== "undefined"')
+            page.fill('#word-search', 'stock')
+            page.wait_for_timeout(250)
+            hit = page.evaluate(
+                '''[...document.querySelectorAll('.er-node.word-hit')].map(n => n.dataset.name)''')
+            self.assertEqual(hit, ['products'])
+            page.fill('#word-search', '')
+            page.wait_for_timeout(100)
+            page.fill('#search', 'stock')
+            page.wait_for_timeout(150)
+            visible = page.evaluate(
+                '''[...document.querySelectorAll('.table-item .tname')].map(e => e.textContent)''')
+            self.assertEqual(visible, ['products'])
+        finally:
+            page.close()
+
+    def test_toggles_are_off_by_default(self):
+        for btn_id in ('fs-case', 'fs-regex', 'ws-case', 'ws-regex'):
+            self.assertFalse(self.page.evaluate(
+                f'''document.getElementById('{btn_id}').classList.contains('active')'''), btn_id)
+
+    def test_highlight_case_sensitivity_toggle(self):
+        self.page.click('#ws-case')
+        self.page.fill('#word-search', 'Users')  # capital U; table name is lowercase 'users'
+        self.page.wait_for_timeout(250)
+        hit = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-hit')].map(n => n.dataset.name)''')
+        self.assertEqual(hit, [], 'case-sensitive mode must not match differently-cased text')
+        self.page.fill('#word-search', 'users')
+        self.page.wait_for_timeout(250)
+        hit2 = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-hit')].map(n => n.dataset.name)''')
+        self.assertIn('users', hit2)
+
+    def test_highlight_regex_toggle(self):
+        self.page.click('#ws-regex')
+        self.page.fill('#word-search', '^users$')
+        self.page.wait_for_timeout(250)
+        hit = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-hit')].map(n => n.dataset.name)''')
+        self.assertEqual(hit, ['users'])
+
+    def test_invalid_regex_matches_nothing_and_shows_error_state(self):
+        self.page.click('#ws-regex')
+        self.page.fill('#word-search', '(unclosed')
+        self.page.wait_for_timeout(250)
+        self.assertTrue(self.page.evaluate(
+            "document.getElementById('word-search-box').classList.contains('bad-re')"))
+        self.assertEqual(self.page.evaluate("document.getElementById('word-search-count').textContent"), '!')
+        hit = self.page.evaluate(
+            '''[...document.querySelectorAll('.er-node.word-hit')].map(n => n.dataset.name)''')
+        self.assertEqual(hit, [], 'an invalid pattern must match nothing, not silently fall back to substring mode')
+
+    def test_left_pane_filter_case_and_regex_toggles(self):
+        self.page.click('#fs-regex')
+        self.page.fill('#search', '^users$')
+        self.page.wait_for_timeout(150)
+        visible = self.page.evaluate(
+            '''[...document.querySelectorAll('.table-item .tname')].map(e => e.textContent)''')
+        self.assertEqual(visible, ['users'])
+
+    def test_left_pane_invalid_regex_shows_error_and_empties_the_list(self):
+        self.page.click('#fs-regex')
+        self.page.fill('#search', '[unclosed')
+        self.page.wait_for_timeout(150)
+        self.assertTrue(self.page.evaluate(
+            "document.getElementById('search-box').classList.contains('bad-re')"))
+        visible = self.page.evaluate(
+            '''[...document.querySelectorAll('.table-item .tname')].map(e => e.textContent)''')
+        self.assertEqual(visible, [])
+
+    def test_toggles_are_independent_per_search_box(self):
+        self.page.click('#ws-case')
+        self.assertTrue(self.page.evaluate("document.getElementById('ws-case').classList.contains('active')"))
+        self.assertFalse(self.page.evaluate("document.getElementById('fs-case').classList.contains('active')"))
+
+    def test_toggles_persist_across_reload(self):
+        self.page.click('#fs-regex')
+        self.page.click('#ws-case')
+        self.page.wait_for_timeout(50)
+        self.page.reload()
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.assertTrue(self.page.evaluate("document.getElementById('fs-regex').classList.contains('active')"))
+        self.assertTrue(self.page.evaluate("document.getElementById('ws-case').classList.contains('active')"))
+        self.assertFalse(self.page.evaluate("document.getElementById('fs-case').classList.contains('active')"))
+        self.assertFalse(self.page.evaluate("document.getElementById('ws-regex').classList.contains('active')"))
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestNameDisplayMode(unittest.TestCase):
+    """Both/Physical/Logical toolbar toggle (live view) and its
+    independent export-time counterpart in the Export menu's Image
+    options. Default for both is 'Both' — today's existing behavior."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_with_comments()  # users: 'Customer accounts'; comments/posts/likes/audit_logs vary
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _header_text(self, name='users'):
+        # the mode toggle hides tspans via CSS (display:none), not by
+        # removing them from the DOM — filter to what's actually visible,
+        # not just what's present
+        return self.page.evaluate(f'''() => [...document.querySelector(
+            `.er-node[data-name="{name}"] .n-title`).childNodes]
+            .filter(n => n.nodeName !== 'title')
+            .filter(n => n.nodeType === Node.TEXT_NODE || getComputedStyle(n).display !== 'none')
+            .map(n => n.textContent).join('')''')
+
+    def test_default_mode_is_both(self):
+        self.assertTrue(self.page.evaluate("document.querySelector('[data-nm=\"0\"]').classList.contains('active')"))
+        self.assertEqual(self._header_text(), 'users（Customer account…）')
+
+    def test_physical_only_mode_hides_the_logical_name(self):
+        self.page.click('[data-nm="1"]')
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self._header_text(), 'users')
+
+    def test_logical_only_mode_hides_the_physical_name(self):
+        self.page.click('[data-nm="2"]')
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self._header_text(), 'Customer account…')
+
+    def test_logical_only_mode_falls_back_to_physical_when_no_comment(self):
+        self.page.click('[data-nm="2"]')
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self._header_text('comments'), 'comments')
+
+    def test_left_pane_lists_reacts_are_unaffected_by_display_mode(self):
+        # the .tlogical span in the list is a separate, always-both
+        # feature (finding *why* a row matched); the toolbar mode only
+        # controls the diagram node headers
+        self.page.click('[data-nm="1"]')
+        self.page.wait_for_timeout(100)
+        text = self.page.evaluate('''() => {
+            const item = [...document.querySelectorAll('.table-item')]
+                .find(el => el.querySelector('.tname').textContent === 'users');
+            return item.querySelector('.tlogical')?.textContent;
+        }''')
+        self.assertEqual(text, 'Customer account…')
+
+    def test_export_mode_is_independent_of_the_live_mode(self):
+        self.page.click('[data-nm="1"]')  # live: physical only
+        self.page.wait_for_timeout(100)
+        svg = self.page.evaluate('''() => {
+            const built = buildExportSvg();
+            return new XMLSerializer().serializeToString(built.svg);
+        }''')
+        self.assertNotIn('.n-logical,.n-paren{display:none}', svg,
+            'export should still default to Both even though the live view is Physical-only')
+
+    def test_export_mode_can_be_set_independently_via_the_popup(self):
+        self.page.click('#btn-export-toggle')
+        self.page.wait_for_timeout(50)
+        self.page.click('[data-xnm="2"]')  # export: logical only
+        self.page.wait_for_timeout(50)
+        svg = self.page.evaluate('''() => {
+            const built = buildExportSvg();
+            return new XMLSerializer().serializeToString(built.svg);
+        }''')
+        self.assertIn('.er-node.has-logical .n-physical,.er-node.has-logical .n-paren{display:none}', svg)
+        # live view must stay on Both — the popup click must not leak back
+        self.assertEqual(self._header_text(), 'users（Customer account…）')
+
+    def test_export_namemode_click_does_not_close_the_popup(self):
+        self.page.click('#btn-export-toggle')
+        self.page.wait_for_timeout(50)
+        self.page.click('[data-xnm="1"]')
+        self.page.wait_for_timeout(50)
+        self.assertTrue(self.page.evaluate(
+            "document.getElementById('export-menu').classList.contains('open')"))
+
+    def test_modes_persist_across_reload(self):
+        self.page.click('[data-nm="1"]')
+        self.page.click('#btn-export-toggle')
+        self.page.wait_for_timeout(50)
+        self.page.click('[data-xnm="2"]')
+        self.page.wait_for_timeout(50)
+        self.page.reload()
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.assertEqual(self.page.evaluate('nameMode'), 1)
+        self.assertEqual(self.page.evaluate('exportNameMode'), 2)
+
+
 if __name__ == '__main__':
     unittest.main()
