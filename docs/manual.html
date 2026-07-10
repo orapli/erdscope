@@ -77,7 +77,8 @@ h2:hover .anchor-link, h3:hover .anchor-link{opacity:1}
 .badge-dbfk{background:var(--accent-soft); color:var(--accent-fg)}
 .badge-manual{background:var(--purple-soft); color:var(--purple-fg)}
 .btn-example{display:inline-block; background:var(--bg-inset); border:1px solid var(--border-strong); border-radius:6px; padding:2px 9px; font-size:12.5px; font-family:var(--mono); color:var(--fg)}
-.shot{max-width:100%; border-radius:10px; border:1px solid var(--border); box-shadow:var(--shadow); display:block; margin:1.4em 0}
+.shot{max-width:100%; border-radius:10px; border:1px solid var(--border); box-shadow:var(--shadow); display:block; margin:1.4em 0 .4em}
+.cap{font-size:12.5px; color:var(--fg-muted); margin:0 0 1.4em}
 .grid-cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin:1.4em 0}
 .card{background:var(--bg-elevated); border:1px solid var(--border); border-radius:10px; padding:14px 16px}
 .card h4{margin:0 0 6px; font-size:14px}
@@ -370,6 +371,8 @@ showing into the overview, then exits focus.</p>
 <p>Each node also has a <code>⊕</code> button that pulls in just that table's direct neighbors
 (respecting the current direction) as a one-off — it doesn't itself become a new expansion root, so
 one click can't cascade the whole schema in.</p>
+<img class="shot" src="img/focus.png" alt="Focused view on the orders table at depth 2, Deps direction, showing orders and its upstream dependencies (shipments, users, addresses)">
+<p class="cap">Focused on <code>orders</code> — depth 2, <code>Deps</code> direction. The focus bar shows both settings; the toolbar's depth/direction controls only appear while focused or Auto-expand is on.</p>
 
 <h3 id="viewer-hiding">Hiding tables — two levels <a class="anchor-link" href="#viewer-hiding">#</a></h3>
 <p>erdscope has two independent ways to remove a table from view, with different strength:</p>
@@ -381,6 +384,8 @@ one click can't cascade the whole schema in.</p>
 </table>
 <p>Banning the currently-focused table exits focus. Both excluded and banned sets are remembered by
 your browser and are captured in named views and share links.</p>
+<img class="shot" src="img/hiding.png" alt="Left pane showing a red 'banned: 1 table(s)' banner with an Unban all link, and the products row struck through and greyed out below it">
+<p class="cap"><code>products</code> banned via the list's <code>🚫</code> button — struck through, checkbox locked, and counted in the red banner above.</p>
 
 <h3 id="viewer-search">Search &amp; highlight <a class="anchor-link" href="#viewer-search">#</a></h3>
 <p>There are two different search boxes, and they do different things:</p>
@@ -390,6 +395,8 @@ your browser and are captured in named views and share links.</p>
 </div>
 <p>Each box has its own, independent <code>Aa</code> (match case) and <code>.*</code> (regular
 expression) toggle — turning on regex mode in the filter box doesn't affect the Highlight box.</p>
+<img class="shot" src="img/highlight.png" alt="Toolbar Highlight box with the query 'user', showing amber-outlined matching tables and columns while unrelated tables are dimmed but still present">
+<p class="cap">Highlighting <code>user</code> — matching tables/columns get an amber outline, everything else dims, but nothing is removed from the diagram.</p>
 
 <h3 id="viewer-layout">Layout &amp; selection <a class="anchor-link" href="#viewer-layout">#</a></h3>
 <ul>
@@ -401,6 +408,8 @@ expression) toggle — turning on regex mode in the filter box doesn't affect th
 <li><strong>Auto-tidy</strong> — a toolbar toggle that re-packs and re-fits the layout automatically whenever the set of displayed tables changes. The <code>↺</code> button re-lays-out immediately on demand, regardless of Auto-tidy.</li>
 <li><strong>Undo/redo</strong> — toolbar <code>↶</code>/<code>↷</code> buttons or <kbd>Ctrl/Cmd+Z</kbd> / <kbd>Ctrl/Cmd+Shift+Z</kbd> (or <kbd>Ctrl/Cmd+Y</kbd>). Covers table position changes only; the history clears whenever you enter/exit focus or load a saved view, since those replace the whole layout.</li>
 </ul>
+<img class="shot" src="img/multiselect.png" alt="Three tables (payments, shipments, order_coupons) multi-selected and highlighted blue, with the right pane's Align and Distribute button groups both enabled">
+<p class="cap">Three tables selected — with 3+, both <strong>Align</strong> and <strong>Distribute</strong> are available (2 selected enables Align only).</p>
 
 <h3 id="viewer-columns">Column display modes <a class="anchor-link" href="#viewer-columns">#</a></h3>
 <p>A toolbar control switches every table between <code>All</code> columns, <code>PK/FK</code> only,
@@ -469,6 +478,8 @@ at the top and one row per format below, each with separate <strong>Copy</strong
 <strong>Download</strong> buttons — copying and downloading were deliberately split into distinct
 actions so a browser that <em>can</em> write images to the clipboard doesn't stand between you and
 just saving a file.</p>
+<img class="shot" src="img/export.png" alt="Export panel open, showing Image options (Join-table labels checked, root badges unchecked, Names: Both) above four format rows — PNG, SVG, Mermaid, PlantUML — each with Copy and Download buttons">
+<p class="cap">The export panel: image options at the top, one Copy/Download row per format below.</p>
 
 <h3>Image options <span class="chip">PNG / SVG only</span></h3>
 <p>These two checkboxes and one toggle apply only to the PNG and SVG exports — Mermaid, PlantUML,
