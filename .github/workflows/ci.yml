@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # First pass with zero optional dependencies installed — this is the
+      # configuration erd.py promises to work in, so the optional-dep tests
+      # must skip cleanly rather than fail.
+      - name: Unit tests (no optional dependencies)
+        run: python3 -m unittest discover -s tests
+
+      - name: Install optional dependencies + browser
+        run: |
+          pip install playwright openpyxl pyyaml
+          playwright install --with-deps chromium
+
+      - name: Full test suite (browser E2E + optional-dep tests)
+        run: python3 -m unittest discover -s tests -v
+
+      # The demo HTML is a committed build artifact of erd.py + gen_demo.py;
+      # regeneration is byte-deterministic, so any drift means someone changed
+      # the generator without re-running it. PNGs (screenshot.png, img/*) are
+      # rendering-dependent and NOT diff-checked — gen_shots.py is only smoke-
+      # tested, and the diff check below is pinned to index.html.
+      - name: Demo is regenerated and committed
+        run: |
+          python3 docs/gen_demo.py
+          git diff --exit-code docs/index.html
+
+      - name: Screenshot script smoke test
+        run: python3 docs/gen_shots.py
