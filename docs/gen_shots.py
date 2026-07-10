@@ -8,7 +8,7 @@ demo (docs/index.html) with Playwright.
 Any Playwright-equipped interpreter works — this script has no hardcoded
 path, it just needs `playwright` importable by `sys.executable`. (Sandbox
 hint, safe to ignore elsewhere: a working venv lives at
-/tmp/claude-1000/-Users-tashiro-work-er/0b173e9c-655a-4a70-ae30-57b6a10ac401/scratchpad/pwvenv/bin/python)
+~/.venvs/erdscope-dev/bin/python)
 
 Each shot drives the real UI (clicks, typing, keyboard) rather than poking
 internal JS state, so it looks like what a user actually sees. Viewport and

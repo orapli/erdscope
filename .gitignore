@@ -5,3 +5,6 @@ mastodon/
 __pycache__/
 HANDOFF.md
 COLLAB_SONNET.md
+dist/
+build/
+*.egg-info/
