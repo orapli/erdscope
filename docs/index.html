@@ -150,9 +150,16 @@ body.dark .tb-popup{background:#1e293b;border-color:#334155}
 .tb-popup-check:hover{background:#f1f5f9}
 .tb-popup-check input{accent-color:#3b82f6}
 .tb-popup-sep{height:1px;background:#e2e8f0;margin:2px 4px}
+/* one row per export format: a label plus copy/download side by side —
+   keeps 4 formats x 2 actions to 4 compact rows instead of 8 stacked
+   full-width buttons */
+.tb-export-row{display:grid;grid-template-columns:60px 1fr 1fr;gap:4px;align-items:center;padding:0 6px}
+.tb-export-fmt{font-size:11px;font-weight:600;color:#475569}
+.tb-export-row .diag-btn{width:100%;justify-content:center;font-size:10px;padding:0 4px}
 body.dark .tb-popup-check{color:#cbd5e1}
 body.dark .tb-popup-check:hover{background:#334155}
 body.dark .tb-popup-sep{background:#334155}
+body.dark .tb-export-fmt{color:#cbd5e1}
 
 /* ── word-search / highlight (toolbar) ── */
 #word-search-box{height:30px;display:flex;align-items:center;gap:4px;padding:0 4px 0 8px;
@@ -284,6 +291,7 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 @keyframes nodeflash{0%{stroke:#f59e0b;stroke-width:8}100%{stroke:#3b82f6;stroke-width:2}}
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:700;font-family:'SF Mono','Fira Code',monospace}
 .er-node .n-title .n-logical{font-size:11px;font-weight:400;opacity:.7}
+.er-node .n-title .n-namehit{fill:#f59e0b;opacity:1}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
 /* toolbar word-search highlight — amber, distinct from the cyan/amber-ish
@@ -466,7 +474,8 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           shift-drag on empty canvas = rubber-band select<br>
           2+ selected: align/distribute buttons appear in the right pane<br>
           List: click = locate in diagram, double-click = focus<br>
-          Toolbar "Highlight" box: marks matches everywhere (doesn't filter), Enter cycles, survives exports<br>
+          Toolbar "Highlight" box: marks matches everywhere (doesn't filter), survives exports.<br>
+          Enter = next match, Shift+Enter = previous match<br>
           Esc: exit focus</div>
       </div>
     </div>
@@ -475,7 +484,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
     <div id="canvas-empty">No tables are displayed<br>
       Check tables in the list on the left, or press "All"</div>
     <div id="diagram-toolbar">
-      <div id="word-search-box" title="Highlight matching tables/columns in the diagram (does not filter)">
+      <div id="word-search-box" title="Highlight matching tables/columns in the diagram (does not filter). Enter = next match, Shift+Enter = previous">
         <input type="text" id="word-search" placeholder="Highlight…">
         <span id="word-search-count"></span>
         <button id="word-search-clear" title="Clear highlight" aria-label="Clear highlight">✕</button>
@@ -518,11 +527,27 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <label class="tb-popup-check"><input type="checkbox" id="export-opt-labels" checked> Join-table labels (⇢)</label>
           <label class="tb-popup-check"><input type="checkbox" id="export-opt-roots"> ✓ root badges</label>
           <div class="tb-popup-sep"></div>
-          <button class="diag-btn" id="btn-export" title="Falls back to a file download if the browser can't write images to the clipboard">PNG — copy to clipboard</button>
-          <button class="diag-btn" id="btn-export-download">PNG — download file</button>
-          <button class="diag-btn" id="btn-export-svg">SVG — vector download</button>
-          <button class="diag-btn" id="btn-export-mmd" title="Covers displayed tables; paste into READMEs/PRs">Mermaid — copy markup</button>
-          <button class="diag-btn" id="btn-export-puml" title="Covers displayed tables; paste into PlantUML renderers">PlantUML — copy markup</button>
+          <div class="tb-popup-caption">Export — copy or download</div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">PNG</span>
+            <button class="diag-btn" id="btn-export" title="Falls back to a file download if the browser can't write images to the clipboard">Copy</button>
+            <button class="diag-btn" id="btn-export-download">Download</button>
+          </div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">SVG</span>
+            <button class="diag-btn" id="btn-export-svg-copy">Copy</button>
+            <button class="diag-btn" id="btn-export-svg">Download</button>
+          </div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">Mermaid</span>
+            <button class="diag-btn" id="btn-export-mmd" title="Covers displayed tables; paste into READMEs/PRs">Copy</button>
+            <button class="diag-btn" id="btn-export-mmd-download">Download</button>
+          </div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">PlantUML</span>
+            <button class="diag-btn" id="btn-export-puml" title="Covers displayed tables; paste into PlantUML renderers">Copy</button>
+            <button class="diag-btn" id="btn-export-puml-download">Download</button>
+          </div>
         </div>
       </div>
       <div class="tb-sep"></div>
@@ -1493,9 +1518,18 @@ function drawNode(parent, name) {
 
   const nt=svgEl('text',{x:sz.w/2,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-title'});
   const lg=logicalName(name);
-  nt.appendChild(document.createTextNode(name));
+  // the whole node already gets an amber border on any match (name,
+  // column, or comment) via word-hit above — but a match that's ONLY in
+  // the comment had no visible sign at all on the text itself, unlike a
+  // matching column (which gets its own highlighted row). Mark whichever
+  // part of the header text actually matched, the same amber as elsewhere
+  // in the word-search color language.
+  const nameSpan=svgEl('tspan',{class:wordQuery&&name.toLowerCase().includes(wordQuery)?'n-namehit':''});
+  nameSpan.textContent=name;
+  nt.appendChild(nameSpan);
   if(lg){
-    const lgSpan=svgEl('tspan',{class:'n-logical'});
+    const lgHit=wordQuery&&(t?.comment||'').toLowerCase().includes(wordQuery);
+    const lgSpan=svgEl('tspan',{class:'n-logical'+(lgHit?' n-namehit':'')});
     lgSpan.textContent=`（${lg}）`;
     nt.appendChild(lgSpan);
   }
@@ -2350,6 +2384,7 @@ const EXPORT_CSS = `
 .er-node.ring-3 .n-hdr{fill:#4b5563}
 .er-node .n-title{fill:#f8fafc;font-size:12px;font-weight:bold;font-family:monospace}
 .er-node .n-title .n-logical{font-size:11px;font-weight:normal;opacity:.7}
+.er-node .n-title .n-namehit{fill:#f59e0b;opacity:1}
 .er-node .n-alt{fill:#f8fafc}
 .er-node .n-colhit{fill:#fef3c7}
 .er-node.word-hit .n-bg{stroke:#f59e0b;stroke-width:2.5}
@@ -2427,21 +2462,46 @@ function buildExportSvg(){
   return {svg:exportSvg, vw, vh};
 }
 
-function exportToSVG(){
-  const built=buildExportSvg();
-  if(!built) return;
-  const svgStr=new XMLSerializer().serializeToString(built.svg);
-  const url=URL.createObjectURL(new Blob([svgStr],{type:'image/svg+xml;charset=utf-8'}));
+// Shared by every text-markup export (SVG source, Mermaid, PlantUML) — each
+// format below is a small "build the text" function plus a copy/download
+// pair built on these, the same copy-vs-download split PNG already has
+// (exportToPNG copies, downloadPNGFile downloads). Copying still falls back
+// to a download on failure (clipboard unsupported/denied) — same as PNG —
+// but on success it does NOT also download, now that there's a dedicated
+// button for that.
+function downloadTextFile(text, filename, mimetype, successMsg){
+  const url=URL.createObjectURL(new Blob([text],{type:`${mimetype};charset=utf-8`}));
   const a=document.createElement('a');
-  a.href=url; a.download='erd.svg'; a.click();
+  a.href=url; a.download=filename; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
-  showToast('Downloaded erd.svg ✓');
+  showToast(successMsg);
+}
+function copyTextToClipboard(text, successMsg, onFail){
+  if(navigator.clipboard?.writeText){
+    navigator.clipboard.writeText(text).then(()=>showToast(successMsg)).catch(onFail);
+  } else onFail();
+}
+
+function buildSVGText(){
+  const built=buildExportSvg();
+  return built ? new XMLSerializer().serializeToString(built.svg) : null;
+}
+function exportToSVG(){
+  const text=buildSVGText();
+  if(text==null) return;
+  downloadTextFile(text, 'erd.svg', 'image/svg+xml', 'Downloaded erd.svg ✓');
+}
+function copySVGToClipboard(){
+  const text=buildSVGText();
+  if(text==null) return;
+  copyTextToClipboard(text, 'Copied SVG markup ✓',
+    ()=>downloadTextFile(text, 'erd.svg', 'image/svg+xml', 'Downloaded erd.svg ✓'));
 }
 
 // Mermaid erDiagram markup (paste straight into READMEs / PRs)
-function exportToMermaid(){
+function buildMermaidText(){
   const tables=getDisplayTables();
-  if(!tables.length){showToast('No tables are displayed');return;}
+  if(!tables.length){showToast('No tables are displayed');return null;}
   const lines=['erDiagram'];
   getDisplayEdges(tables).forEach(e=>{
     const card=edgeCard(e);
@@ -2461,28 +2521,27 @@ function exportToMermaid(){
     });
     lines.push('    }');
   });
-  const text=lines.join('\n');
-  const dl=()=>{
-    const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
-    const a=document.createElement('a');
-    a.href=url; a.download='erd.mmd'; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
-    showToast('Downloaded erd.mmd ✓');
-  };
-  if(navigator.clipboard?.writeText){
-    navigator.clipboard.writeText(text)
-      .then(()=>showToast(`Copied Mermaid markup ✓ (${tables.length} tables)`))
-      .catch(dl);
-  } else dl();
+  return lines.join('\n');
+}
+function exportToMermaid(){
+  const text=buildMermaidText();
+  if(text==null) return;
+  copyTextToClipboard(text, `Copied Mermaid markup ✓ (${getDisplayTables().length} tables)`,
+    ()=>downloadTextFile(text, 'erd.mmd', 'text/plain', 'Downloaded erd.mmd ✓'));
+}
+function downloadMermaidFile(){
+  const text=buildMermaidText();
+  if(text==null) return;
+  downloadTextFile(text, 'erd.mmd', 'text/plain', 'Downloaded erd.mmd ✓');
 }
 
 // PlantUML entity-relationship markup (paste into any PlantUML renderer).
-// Same shape as exportToMermaid above — edgeCard()'s three kinds map 1:1
+// Same shape as buildMermaidText above — edgeCard()'s three kinds map 1:1
 // onto PlantUML's own crow's-foot tokens, so the branch-and-swap logic is
 // identical; only the token spellings and entity-block syntax differ.
-function exportToPlantUML(){
+function buildPlantUMLText(){
   const tables=getDisplayTables();
-  if(!tables.length){showToast('No tables are displayed');return;}
+  if(!tables.length){showToast('No tables are displayed');return null;}
   const lines=['@startuml','hide circle','skinparam linetype ortho',''];
   // PlantUML identifiers (used both as the entity's own alias and in every
   // relationship line referencing it) must themselves be \w+ — a table
@@ -2517,19 +2576,18 @@ function exportToPlantUML(){
     lines.push(label ? `${aliasOf(a)} ${rel} ${aliasOf(b)} : ${label}` : `${aliasOf(a)} ${rel} ${aliasOf(b)}`);
   });
   lines.push('@enduml');
-  const text=lines.join('\n');
-  const dl=()=>{
-    const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
-    const a=document.createElement('a');
-    a.href=url; a.download='erd.puml'; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
-    showToast('Downloaded erd.puml ✓');
-  };
-  if(navigator.clipboard?.writeText){
-    navigator.clipboard.writeText(text)
-      .then(()=>showToast(`Copied PlantUML markup ✓ (${tables.length} tables)`))
-      .catch(dl);
-  } else dl();
+  return lines.join('\n');
+}
+function exportToPlantUML(){
+  const text=buildPlantUMLText();
+  if(text==null) return;
+  copyTextToClipboard(text, `Copied PlantUML markup ✓ (${getDisplayTables().length} tables)`,
+    ()=>downloadTextFile(text, 'erd.puml', 'text/plain', 'Downloaded erd.puml ✓'));
+}
+function downloadPlantUMLFile(){
+  const text=buildPlantUMLText();
+  if(text==null) return;
+  downloadTextFile(text, 'erd.puml', 'text/plain', 'Downloaded erd.puml ✓');
 }
 
 // Rasterizes the current diagram to a PNG Blob (or null on failure, having
@@ -2889,9 +2947,12 @@ document.getElementById('export-opt-roots').addEventListener('change', e=>{
 });
 document.getElementById('btn-export').addEventListener('click', ()=>{ exportToPNG(); closeExportMenu(); });
 document.getElementById('btn-export-download').addEventListener('click', ()=>{ downloadPNGFile(); closeExportMenu(); });
+document.getElementById('btn-export-svg-copy').addEventListener('click', ()=>{ copySVGToClipboard(); closeExportMenu(); });
 document.getElementById('btn-export-svg').addEventListener('click', ()=>{ exportToSVG(); closeExportMenu(); });
 document.getElementById('btn-export-mmd').addEventListener('click', ()=>{ exportToMermaid(); closeExportMenu(); });
+document.getElementById('btn-export-mmd-download').addEventListener('click', ()=>{ downloadMermaidFile(); closeExportMenu(); });
 document.getElementById('btn-export-puml').addEventListener('click', ()=>{ exportToPlantUML(); closeExportMenu(); });
+document.getElementById('btn-export-puml-download').addEventListener('click', ()=>{ downloadPlantUMLFile(); closeExportMenu(); });
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);
@@ -3208,7 +3269,8 @@ document.getElementById('word-search').addEventListener('keydown', e=>{
   if(e.key!=='Enter') return;
   const matches=allTables().filter(wordHit);
   if(!matches.length) return;
-  wordMatchIdx=(wordMatchIdx+1)%matches.length;
+  const dir=e.shiftKey?-1:1; // Enter = next match, Shift+Enter = previous
+  wordMatchIdx=(wordMatchIdx+dir+matches.length)%matches.length;
   const m=matches[wordMatchIdx];
   if(!hiddenTables.has(m) && !getDisplayTables().includes(m)) addTables([m]); // add hidden targets before locating
   locateTable(m);

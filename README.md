@@ -152,8 +152,9 @@ Test-only, and only if you run that particular suite:
 - **Interactive exploration** — locate/focus with depth and dependency direction,
   per-table deep-dive, two-level hiding, table *and column* search, named views,
   share links (state embedded in the URL). A separate toolbar "Highlight" search
-  marks matches everywhere (nodes, table list, right pane) without filtering
-  anything — Enter cycles through hits, and the highlight survives into PNG/SVG
+  marks matches everywhere (nodes, table list, right pane, including a table's DB
+  comment shown as its logical name) without filtering anything — Enter/Shift+Enter
+  step forward/backward through hits, and the highlight survives into PNG/SVG
   exports, for pasting into docs
 - **Readable layouts** — viewport-aware packing with crossing reduction (the same
   packing focus mode uses too, so focusing never looks worse than the overview),
@@ -161,10 +162,11 @@ Test-only, and only if you run that particular suite:
   lines, multi-select (shift/ctrl-click or shift-drag a rubber-band) with
   align-left/top/center/middle and distribute-horizontal/vertical, and
   layout undo/redo (Ctrl/Cmd+Z)
-- **Exports** — PNG (clipboard or file download, 2x), SVG, Mermaid `erDiagram`, PlantUML entity markup,
-  and the Excel workbook (borders/colors, customizable via `--excel-template`). PNG/SVG have their own
-  "Image options" — join-table labels and auto-expand ✓ badges can be excluded from the exported picture
-  independent of what your live view currently shows
+- **Exports** — PNG (2x), SVG, Mermaid `erDiagram`, and PlantUML entity markup, each with
+  its own copy-to-clipboard and download-file buttons, plus the Excel workbook
+  (borders/colors, customizable via `--excel-template`). PNG/SVG have their own
+  "Image options" — join-table labels and auto-expand ✓ badges can be excluded from
+  the exported picture independent of what your live view currently shows
 - **Logical names** — a table's DB comment doubles as a searchable "logical name," shown alongside the
   physical name in the diagram and table list (e.g. `users（Customer accounts）`)
 - **Extras** — dark mode, print stylesheet, resizable/collapsible panes

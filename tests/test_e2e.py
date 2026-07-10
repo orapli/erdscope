@@ -1329,6 +1329,42 @@ class TestExportOptionsAndPlantUML(unittest.TestCase):
         finally:
             page.close()
 
+    def test_svg_copy_writes_markup_to_the_clipboard(self):
+        # SVG used to be download-only; it now has the same copy/download
+        # pair as every other format
+        self.page.evaluate('''() => {
+            window.__clip = null;
+            navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); };
+        }''')
+        self.page.evaluate('copySVGToClipboard()')
+        self.page.wait_for_timeout(100)
+        text = self.page.evaluate('window.__clip')
+        self.assertTrue(text.startswith('<svg'))
+
+    def test_svg_download_still_works_alongside_the_new_copy_button(self):
+        with self.page.expect_download() as dl:
+            self.page.evaluate('exportToSVG()')
+        self.assertEqual(dl.value.suggested_filename, 'erd.svg')
+
+    def test_mermaid_download_writes_a_file_without_touching_the_clipboard(self):
+        downloaded = []
+        self.page.on('download', lambda d: downloaded.append(d))
+        with self.page.expect_download() as dl:
+            self.page.evaluate('downloadMermaidFile()')
+        self.assertEqual(dl.value.suggested_filename, 'erd.mmd')
+
+    def test_plantuml_download_writes_a_file_without_touching_the_clipboard(self):
+        with self.page.expect_download() as dl:
+            self.page.evaluate('downloadPlantUMLFile()')
+        self.assertEqual(dl.value.suggested_filename, 'erd.puml')
+
+    def test_export_menu_has_a_copy_and_download_button_for_every_format(self):
+        self.page.click('#btn-export-toggle')
+        for fmt_id in ('btn-export', 'btn-export-svg-copy', 'btn-export-mmd', 'btn-export-puml'):
+            self.assertEqual(self.page.inner_text(f'#{fmt_id}'), 'Copy', fmt_id)
+        for fmt_id in ('btn-export-download', 'btn-export-svg', 'btn-export-mmd-download', 'btn-export-puml-download'):
+            self.assertEqual(self.page.inner_text(f'#{fmt_id}'), 'Download', fmt_id)
+
 
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestWordSearchHighlight(unittest.TestCase):
@@ -1430,6 +1466,45 @@ class TestWordSearchHighlight(unittest.TestCase):
         self.page.press('#word-search', 'Enter')
         self.page.wait_for_timeout(50)
         self.assertEqual(self.page.evaluate('selectionAnchor'), seen[0])
+
+    def test_shift_enter_cycles_backward(self):
+        self.page.fill('#word-search', 'user_id')  # same 4 matches as above
+        self.page.wait_for_timeout(250)
+        forward=[]
+        for _ in range(3):
+            self.page.press('#word-search', 'Enter')
+            self.page.wait_for_timeout(50)
+            forward.append(self.page.evaluate('selectionAnchor'))
+        # walking back should retrace the same path in reverse
+        self.page.press('#word-search', 'Shift+Enter')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('selectionAnchor'), forward[-2])
+        self.page.press('#word-search', 'Shift+Enter')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('selectionAnchor'), forward[-3])
+
+    def test_comment_only_match_highlights_the_logical_name_text_itself(self):
+        # regression: the whole node already got an amber border on any
+        # match (name/column/comment), but a comment-only match had no
+        # visible mark on the text itself — unlike a matching column,
+        # which gets its own highlighted row. The logical-name tspan must
+        # turn amber when the match is specifically in the comment.
+        html = _build_html_with_comments()  # users: 'Customer accounts'
+        page = self.browser.new_page()
+        try:
+            page.goto(html.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.fill('#word-search', 'customer')
+            page.wait_for_timeout(250)
+            info = page.evaluate('''() => {
+                const g = document.querySelector('.er-node[data-name="users"]');
+                const span = g.querySelector('.n-title .n-logical');
+                return {cls: span.getAttribute('class'), fill: getComputedStyle(span).fill};
+            }''')
+            self.assertIn('n-namehit', info['cls'])
+            self.assertEqual(info['fill'], 'rgb(245, 158, 11)')  # amber, same as elsewhere in word-search
+        finally:
+            page.close()
 
     def test_coexists_with_the_left_pane_filter_search(self):
         # the two searches must not interfere with each other
