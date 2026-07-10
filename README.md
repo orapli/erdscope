@@ -4,11 +4,13 @@
 [![PyPI](https://img.shields.io/pypi/v/erdscope)](https://pypi.org/project/erdscope/)
 
 Generate a **self-contained, interactive ER diagram** — and an **Excel table-definition
-workbook** — from a live MySQL database, with a single-file, zero-dependency Python CLI.
+workbook** — from a live MySQL or PostgreSQL database, with a single-file,
+zero-dependency Python CLI.
 
 ```bash
 pip install erdscope
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
 ```
 
 The database is the source of truth (tables, columns, comments, indexes, real foreign
@@ -42,6 +44,9 @@ python3 erd.py ...   # identical to the erdscope command below
 
 ```bash
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+
+# PostgreSQL: same thing (schema defaults to public; override with ?schema=name)
+erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
 
 # enrich with association semantics parsed from application code (optional)
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
@@ -85,8 +90,8 @@ itself is made.
 Once the flag list above gets long, put it in a config file instead — `.erdscope.json`
 (or `.yml`/`.yaml` with PyYAML) next to where you run the tool is picked up automatically.
 Most keys mirror a CLI option (an explicit flag always wins over the config); the DB
-connection is config-only as `host`/`port`/`user`/`database` — deliberately with no
-password field — and `relations` manually declares relations no FK, code, or inference
+connection is config-only as `engine`/`host`/`port`/`user`/`database` — deliberately with
+no password field — and `relations` manually declares relations no FK, code, or inference
 can find. See the [Config file chapter of the manual](https://orapli.github.io/erdscope/manual.html#config-file) for the full key
 list and semantics, and [`erdscope.example.yml`](erdscope.example.yml) for a fully
 annotated sample based on the live demo's schema.
@@ -96,14 +101,16 @@ annotated sample based on the live demo's schema.
 `erd.py` runs with **zero required dependencies** — everything below is optional, and
 the tool degrades gracefully (falls back, or fails with a clear message) when a piece
 is missing. If you installed via pip, extras pull them in for you:
-`pip install 'erdscope[mysql]'` (PyMySQL), `'erdscope[yaml]'` (PyYAML), or `'erdscope[all]'`.
+`pip install 'erdscope[mysql]'` (PyMySQL), `'erdscope[postgres]'` (psycopg),
+`'erdscope[yaml]'` (PyYAML), or `'erdscope[all]'`.
 
 | Library | Used for | If not installed |
 |---|---|---|
-| [PyMySQL](https://pypi.org/project/PyMySQL/) | The DB connection | Falls back to shelling out to the `mysql` CLI (must be on `PATH`) |
+| [PyMySQL](https://pypi.org/project/PyMySQL/) | MySQL connections | Falls back to shelling out to the `mysql` CLI (must be on `PATH`) |
+| [psycopg](https://pypi.org/project/psycopg/) (or psycopg2) | PostgreSQL connections | Falls back to shelling out to the `psql` CLI (must be on `PATH`) |
 | [PyYAML](https://pypi.org/project/PyYAML/) | Reading a `.yml`/`.yaml` config file | A `.json` config still works with no dependency; pointing `--config`/auto-discovery at a `.yml`/`.yaml` file without PyYAML installed exits with a clear error |
 
-Excel output (`--excel`) needs neither — it's written directly via the stdlib
+Excel output (`--excel`) needs none of these — it's written directly via the stdlib
 `zipfile`/XML, not a spreadsheet library.
 
 Test-only, and only if you run that particular suite:
@@ -118,7 +125,8 @@ Test-only, and only if you run that particular suite:
 Feature highlights — each link goes to the relevant [manual](https://orapli.github.io/erdscope/manual.html) chapter:
 
 - **Database truth** — tables, columns (full SQL types, defaults, extras), table and
-  column comments, indexes, and real FK constraints, read from `information_schema`
+  column comments, indexes, and real FK constraints, read from the database catalog
+  (`information_schema` on MySQL, `pg_catalog` on PostgreSQL)
 - **Code semantics on top** — `--models` merges Rails / Prisma / Django associations;
   declared, DB-FK, and inferred edges stay [visually distinct](https://orapli.github.io/erdscope/manual.html#viewer-edges)
 - **[Interactive exploration](https://orapli.github.io/erdscope/manual.html#viewer-guide)** — focus with depth and dependency
@@ -158,8 +166,9 @@ python3 -m unittest tests.test_e2e -v
 ## Extending
 
 Everything downstream (UI, layouts, exports) consumes the intermediate representation
-documented at the top of `erd.py`. Adding PostgreSQL support means adding one
-`parse_postgres()` that produces that shape.
+documented at the top of `erd.py`. Adding another database engine means adding one
+parser that produces that shape — `parse_postgres()` (which reuses the MySQL
+adapter's IR builder wholesale) is the working example of the pattern.
 
 ## License
 

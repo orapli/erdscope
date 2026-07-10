@@ -176,12 +176,13 @@ footer{border-top:1px solid var(--border); padding:20px 34px 60px; font-size:12.
 <h1>erdscope <a class="anchor-link" href="#what-is-erdscope">#</a></h1>
 <p>
 erdscope generates a <strong>self-contained, interactive ER diagram</strong> — and, optionally,
-an <strong>Excel table-definition workbook</strong> — from a live MySQL database. It ships as a
+an <strong>Excel table-definition workbook</strong> — from a live MySQL or PostgreSQL database. It ships as a
 single Python file (<code>erd.py</code>, no install step) with <strong>zero required dependencies</strong>.
 </p>
 <p>
 The database is the source of truth: tables, columns, comments, indexes, and real foreign keys
-all come from <code>information_schema</code>. Application code (Rails, Prisma, Django) can
+all come from the database catalog (<code>information_schema</code> on MySQL, <code>pg_catalog</code> on
+PostgreSQL). Application code (Rails, Prisma, Django) can
 optionally be layered on top with <code>--models</code> to add association semantics the database
 alone can't express — <code>has_many :through</code>, polymorphic associations, and so on.
 </p>
@@ -218,14 +219,16 @@ python3 erd.py mysql://readonly@127.0.0.1:3306/myapp -o erd.html</code></pre>
 <p>Requirements: <strong>Python 3.9+</strong>, nothing else, strictly speaking. Two libraries make the tool
 nicer to use but are entirely optional — erdscope degrades gracefully when they're missing.
 With the pip package, extras pull them in for you: <code>pip install 'erdscope[mysql]'</code> (PyMySQL),
-<code>'erdscope[yaml]'</code> (PyYAML), or <code>'erdscope[all]'</code>:</p>
+<code>'erdscope[postgres]'</code> (psycopg), <code>'erdscope[yaml]'</code> (PyYAML), or
+<code>'erdscope[all]'</code>:</p>
 <table>
 <tr><th>Library</th><th>Used for</th><th>If not installed</th></tr>
-<tr><td><a href="https://pypi.org/project/PyMySQL/">PyMySQL</a></td><td>The DB connection</td><td>Falls back to shelling out to the <code>mysql</code> CLI (must be on <code>PATH</code>) — see <a href="#faq-pymysql">Troubleshooting</a></td></tr>
+<tr><td><a href="https://pypi.org/project/PyMySQL/">PyMySQL</a></td><td>MySQL connections</td><td>Falls back to shelling out to the <code>mysql</code> CLI (must be on <code>PATH</code>) — see <a href="#faq-pymysql">Troubleshooting</a></td></tr>
+<tr><td><a href="https://pypi.org/project/psycopg/">psycopg</a> (or psycopg2)</td><td>PostgreSQL connections</td><td>Falls back to shelling out to the <code>psql</code> CLI (must be on <code>PATH</code>) — see <a href="#faq-pymysql">Troubleshooting</a></td></tr>
 <tr><td><a href="https://pypi.org/project/PyYAML/">PyYAML</a></td><td>Reading a <code>.yml</code>/<code>.yaml</code> config file</td><td>A <code>.json</code> config still works with zero dependencies; pointing at a <code>.yml</code>/<code>.yaml</code> file without PyYAML exits with a clear error</td></tr>
 </table>
 <p>
-<code>--excel</code> output needs neither of the above — it's written directly via the Python
+<code>--excel</code> output needs none of the above — it's written directly via the Python
 standard library's <code>zipfile</code>/XML handling, not a spreadsheet package.
 </p>
 <p>Two more libraries are used only by the test suite, never at runtime:
@@ -244,7 +247,10 @@ erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
 
 # also write a table-definition workbook
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
-        --excel table_definitions.xlsx -o erd.html</code></pre>
+        --excel table_definitions.xlsx -o erd.html
+
+# PostgreSQL: same thing — schema defaults to public, override with ?schema=name
+erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html</code></pre>
 <p>Open the resulting <code>erd.html</code> in any browser — it's a single file with everything
 inlined, so it can be emailed, committed to a wiki, or dropped into a shared drive.</p>
 
@@ -253,7 +259,7 @@ inlined, so it can be emailed, committed to a wiki, or dropped into a shared dri
 URL — it would otherwise land in your shell history. erdscope resolves the password in this order:</p>
 <ol>
 <li>Password embedded in the URL (<code>mysql://user:pass@host/db</code>) — avoid this in practice.</li>
-<li>The <code>MYSQL_PWD</code> environment variable, if set.</li>
+<li>The <code>MYSQL_PWD</code> (MySQL) / <code>PGPASSWORD</code> (PostgreSQL) environment variable, if set.</li>
 <li>Otherwise, if standard input is an interactive terminal, a hidden password prompt
 (never touches <code>argv</code> or shell history).</li>
 </ol>
@@ -262,7 +268,8 @@ erdscope only prompts when stdin is a TTY. In a script or CI job it skips the pr
 rather than blocking — it just attempts the connection with whatever password it has (possibly
 none), and if that's wrong you get a normal connection-error message, not a hang. Writing
 <code>user:@host/db</code> (an explicit, empty password) also counts as "password provided" and
-skips the prompt.</div>
+skips the prompt. On PostgreSQL, answering the prompt with an empty line leaves
+<code>PGPASSWORD</code> unset, so libpq's own <code>~/.pgpass</code> lookup still applies.</div>
 
 <h3>Behind a bastion / SSH tunnel</h3>
 <pre><code>ssh -N -L 3307:db-host:3306 bastion &amp;
@@ -273,10 +280,10 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <h2>CLI reference <a class="anchor-link" href="#cli-reference">#</a></h2>
 <p>This table is verified against <code>erd.py</code>'s <code>argparse</code> definitions — run
 <code>erdscope --help</code> yourself any time to confirm it against the copy you're running.</p>
-<pre><code>erdscope [mysql://user@host:port/dbname] [options]</code></pre>
+<pre><code>erdscope [mysql://user@host/db | postgres://user@host/db] [options]</code></pre>
 <table>
 <tr><th>Argument</th><th>Description</th></tr>
-<tr><td><code>mysql://user@host:port/dbname</code></td><td>Positional. Database connection URL. Can also be assembled from <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there — see <a href="#config-file">Config file</a>).</td></tr>
+<tr><td><code>mysql://…</code> or <code>postgres://…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. Can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there — see <a href="#config-file">Config file</a>).</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
 <tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, or a Django project — source auto-detected</td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
@@ -297,9 +304,10 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 Once the flag list gets long, put it in a file instead. <code>.erdscope.json</code> (or
 <code>.erdscope.yml</code>/<code>.yaml</code>, if PyYAML is installed) next to where you run the
 tool is picked up automatically — no <code>--config</code> needed. Most keys mirror a CLI option
-above (snake_case); <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
-(the DB connection) and <code>relations</code> (manual FK declarations) are config-only, with no
-CLI equivalent.
+above (snake_case); <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
+(the DB connection — <code>engine</code> is <code>"mysql"</code>, the default, or <code>"postgres"</code>,
+which also flips the default port to 5432) and <code>relations</code> (manual FK declarations) are
+config-only, with no CLI equivalent.
 </p>
 <pre><code>{
   "host": "127.0.0.1",
@@ -324,7 +332,7 @@ CLI equivalent.
 keys like <code>only</code> are not merged with the config's). There's deliberately no
 <code>password</code>/<code>url</code> key — <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
 are separate fields specifically so there's nowhere to paste a password into. Leave it out the
-same way you would on the CLI: <code>MYSQL_PWD</code>, <code>~/.my.cnf</code>, or the interactive
+same way you would on the CLI: <code>MYSQL_PWD</code>/<code>PGPASSWORD</code>, <code>~/.my.cnf</code>/<code>~/.pgpass</code>, or the interactive
 prompt.</p>
 <p>See
 <a href="https://github.com/orapli/erdscope/blob/main/erdscope.example.yml"><code>erdscope.example.yml</code></a>
@@ -578,15 +586,18 @@ was already mangled when it was written to the database (a prior import through 
 non-<code>utf8mb4</code> connection, for instance) — check the comment directly in the database
 with a client you know is <code>utf8mb4</code>-correct before assuming it's an erdscope bug.</p>
 
-<h3 id="faq-pymysql">PyMySQL isn't installed — what happens?</h3>
-<p>erdscope shells out to the <code>mysql</code> CLI instead (it must be on <code>PATH</code>),
-using batch/tab-separated output so the connection stays otherwise identical. The password is
-still passed via the <code>MYSQL_PWD</code> environment variable, never as a CLI argument. If
-<em>neither</em> PyMySQL <em>nor</em> the <code>mysql</code> CLI is available, you get a clear
-error telling you to install one or the other — erdscope never fails silently here.</p>
+<h3 id="faq-pymysql">PyMySQL / psycopg isn't installed — what happens?</h3>
+<p>erdscope shells out to the database's own CLI instead — <code>mysql</code> for MySQL,
+<code>psql</code> for PostgreSQL (wrapping queries in <code>COPY … TO STDOUT</code>, whose
+escaped text format keeps free-text comments from corrupting the output). It must be on
+<code>PATH</code>; the password is still passed via the <code>MYSQL_PWD</code> /
+<code>PGPASSWORD</code> environment variable, never as a CLI argument. The two paths produce
+byte-identical HTML. If <em>neither</em> the driver <em>nor</em> the CLI is available, you get
+a clear error telling you to install one or the other — erdscope never fails silently here.</p>
 
 <h3>Why don't I see any VIEWs in the diagram?</h3>
-<p>By design — erdscope only reads tables where <code>information_schema.TABLES.TABLE_TYPE = 'BASE TABLE'</code>,
+<p>By design — erdscope only reads real, storage-backed tables: <code>TABLE_TYPE = 'BASE TABLE'</code>
+on MySQL; ordinary and partitioned parent tables (never views or individual partitions) on PostgreSQL,
 which excludes VIEWs. This keeps the diagram focused on real, storage-backed schema.</p>
 
 <h3 id="faq-infer-fk">Why is <code>--infer-fk</code> off by default?</h3>
@@ -639,14 +650,14 @@ one intermediate representation (IR), documented in <code>erd.py</code>'s own mo
   }
 }</code></pre>
 <p>
-Adding a new source database means adding one parser that produces this same shape — for
-PostgreSQL specifically, that's a <code>parse_postgres()</code> alongside the existing
-<code>parse_mysql()</code>. There's no PostgreSQL code in the repo yet, but the groundwork is
-already partly there: erdscope's internal SQL-type-shorthand table already carries PostgreSQL-native
-type names (<code>character varying</code>, <code>timestamp with/without time zone</code>,
-<code>bigserial</code>, <code>jsonb</code>, <code>bytea</code>, <code>inet</code>, ...) alongside the
-MySQL ones, so the IR's type vocabulary was designed with more than one engine in mind even though
-only the MySQL path currently populates it.
+Adding a new source database means adding one parser that produces this same shape.
+<code>parse_postgres()</code> is the working example of the pattern: it shapes
+<code>pg_catalog</code> query results into the exact row layout the MySQL adapter's IR builder
+consumes, so PK detection, unique-index 1:1 promotion, and index assembly are shared rather than
+duplicated — the whole adapter is four queries plus a connection layer. The SQL-type-shorthand
+table already carries names from both engines (<code>character varying</code>,
+<code>bigserial</code>, <code>jsonb</code>, <code>bytea</code>, <code>inet</code>, ...), so a
+further engine mostly means mapping its catalog into the same five-column row shapes.
 </p>
 </section>
 

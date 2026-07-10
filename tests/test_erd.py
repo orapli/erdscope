@@ -1449,5 +1449,152 @@ class TestAssembleConfigUrl(unittest.TestCase):
             erd.assemble_config_url({'host': 'h', 'database': 'shop', 'port': 3306.9})
 
 
+class TestPostgresQueryRows(unittest.TestCase):
+    """postgres_query_rows prefers psycopg (v3), then psycopg2; the last
+    resort is the psql CLI wrapping the query in COPY (...) TO STDOUT.
+    Mirrors TestPyMysqlErrorHandling: driver failures must exit cleanly,
+    and the CLI path must unescape COPY's text format."""
+    def setUp(self):
+        class FakePgError(Exception):
+            pass
+        self.FakePgError = FakePgError
+        self.fake_psycopg = types.SimpleNamespace(Error=FakePgError, connect=None)
+        self.addCleanup(sys.modules.pop, 'psycopg', None)
+        sys.modules['psycopg'] = self.fake_psycopg
+
+    def test_connect_failure_exits_cleanly(self):
+        def fail_connect(**kw):
+            raise self.FakePgError('password authentication failed for user "x"')
+        self.fake_psycopg.connect = fail_connect
+        with self.assertRaises(SystemExit) as cm:
+            erd.postgres_query_rows('postgres://x@127.0.0.1:5432/db', 'SELECT 1')
+        self.assertIn('authentication failed', str(cm.exception))
+
+    def test_query_failure_exits_cleanly(self):
+        class FakeCursor:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, sql):
+                raise self.outer.FakePgError('relation does not exist')
+        FakeCursor.outer = self
+        class FakeConn:
+            def cursor(self): return FakeCursor()
+            def close(self): pass
+        self.fake_psycopg.connect = lambda **kw: FakeConn()
+        with self.assertRaises(SystemExit) as cm:
+            erd.postgres_query_rows('postgres://x@127.0.0.1:5432/db', 'SELECT 1')
+        self.assertIn('relation does not exist', str(cm.exception))
+
+    def test_none_values_become_empty_strings(self):
+        class FakeCursor:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, sql): pass
+            def fetchall(self): return [('users', None), (None, 42)]
+        class FakeConn:
+            def cursor(self): return FakeCursor()
+            def close(self): pass
+        self.fake_psycopg.connect = lambda **kw: FakeConn()
+        rows = erd.postgres_query_rows('postgres://x@h:5432/db', 'SELECT 1')
+        self.assertEqual(rows, [('users', ''), ('', '42')])
+
+
+class TestPostgresCliFallback(unittest.TestCase):
+    """The psql path, forced by making both driver imports fail
+    (sys.modules[name] = None makes `import name` raise ImportError)."""
+    def setUp(self):
+        for mod in ('psycopg', 'psycopg2'):
+            self.addCleanup(sys.modules.pop, mod, None)
+            sys.modules[mod] = None
+
+    def test_missing_psql_exits_with_install_hint(self):
+        def no_psql(cmd, **kw):
+            raise FileNotFoundError('psql')
+        orig = erd.subprocess.run
+        erd.subprocess.run = no_psql
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                erd.postgres_query_rows('postgres://x@h:5432/db', 'SELECT 1')
+        finally:
+            erd.subprocess.run = orig
+        self.assertIn('psycopg', str(cm.exception))
+        self.assertIn('psql', str(cm.exception))
+
+    def test_copy_output_is_unescaped_and_wrapped_in_copy(self):
+        captured = {}
+        def fake_run(cmd, **kw):
+            captured['cmd'] = cmd
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout='users\tA comment with a\\ttab\n\\N\t\\N\n',
+                stderr='')
+        orig = erd.subprocess.run
+        erd.subprocess.run = fake_run
+        try:
+            rows = erd.postgres_query_rows('postgres://ro@h:5433/db', 'SELECT x')
+        finally:
+            erd.subprocess.run = orig
+        self.assertEqual(rows, [('users', 'A comment with a\ttab'), ('', '')])
+        joined = ' '.join(captured['cmd'])
+        self.assertIn('COPY (SELECT x) TO STDOUT', joined)
+        self.assertIn('-p 5433', joined)
+        self.assertIn('-U ro', joined)
+
+
+class TestUnescapeCopyField(unittest.TestCase):
+    """COPY TO STDOUT text format shares mysql --batch's escape contract
+    and adds \\f and \\v."""
+    def test_null_marker(self):
+        self.assertEqual(erd._unescape_copy_field('\\N'), '')
+
+    def test_formfeed_and_vertical_tab(self):
+        self.assertEqual(erd._unescape_copy_field('a\\fb\\vc'), 'a\fb\vc')
+
+    def test_shared_escapes_still_decode(self):
+        self.assertEqual(erd._unescape_copy_field('a\\tb\\nc'), 'a\tb\nc')
+
+    def test_escaped_backslash_then_escape_char(self):
+        self.assertEqual(erd._unescape_copy_field('a\\\\tb'), 'a\\tb')
+
+
+class TestPostgresUrlAndSchema(unittest.TestCase):
+    def test_missing_database_name_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.parse_postgres('postgres://ro@h:5432/')
+        self.assertIn('database name', str(cm.exception))
+
+    def test_invalid_schema_param_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.parse_postgres('postgres://ro@h:5432/db?schema=bad-name')
+        self.assertIn('schema', str(cm.exception))
+
+
+class TestPostgresConfigUrl(unittest.TestCase):
+    """`engine: postgres` in the config switches the assembled URL's scheme
+    and default port; mysql stays the default for existing configs."""
+    def test_engine_postgres_assembles_postgres_url_with_5432_default(self):
+        url = erd.assemble_config_url(
+            {'engine': 'postgres', 'user': 'ro', 'host': 'h', 'database': 'shop'})
+        self.assertEqual(url, 'postgres://ro@h:5432/shop')
+
+    def test_engine_postgresql_alias_accepted(self):
+        url = erd.assemble_config_url({'engine': 'postgresql', 'database': 'shop'})
+        self.assertEqual(url, 'postgres://127.0.0.1:5432/shop')
+
+    def test_engine_defaults_to_mysql(self):
+        url = erd.assemble_config_url({'database': 'shop'})
+        self.assertEqual(url, 'mysql://127.0.0.1:3306/shop')
+
+    def test_unknown_engine_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'engine': 'oracle', 'database': 'shop'})
+        self.assertIn('engine', str(cm.exception))
+
+    def test_explicit_port_wins_over_engine_default(self):
+        url = erd.assemble_config_url(
+            {'engine': 'postgres', 'database': 'shop', 'port': 6432})
+        self.assertEqual(url, 'postgres://127.0.0.1:6432/shop')
+
+
 if __name__ == '__main__':
     unittest.main()

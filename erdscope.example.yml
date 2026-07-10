@@ -10,11 +10,13 @@
 #
 # One file per database (erdscope.staging.yml, erdscope.prod.yml, ...) is the
 # intended way to point --config at different targets. There's deliberately
-# no password field — host/port/user/database are separate on purpose, so
-# there's nowhere to paste a password into. Leave it out here the same way
-# you would on the CLI: MYSQL_PWD, ~/.my.cnf, or the interactive prompt.
+# no password field — engine/host/port/user/database are separate on purpose,
+# so there's nowhere to paste a password into. Leave it out here the same way
+# you would on the CLI: MYSQL_PWD/PGPASSWORD, ~/.my.cnf/~/.pgpass, or the
+# interactive prompt.
+# engine: postgres   # mysql (default) or postgres
 host: 127.0.0.1
-port: 3306
+port: 3306           # with engine: postgres the default becomes 5432
 user: readonly
 database: demo_shop
 

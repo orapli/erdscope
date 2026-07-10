@@ -3,6 +3,7 @@
 erdscope — interactive ER diagrams (and Excel table definitions) from a live database
 Usage:
     python3 erd.py mysql://readonly@host:3306/dbname [-o erd.html]
+    python3 erd.py postgres://readonly@host:5432/dbname[?schema=name]
                    [--models /path/to/app] [--excel defs.xlsx]
 
 The database is the required source of truth; --models optionally overlays
@@ -105,11 +106,14 @@ def mysql_query_rows(url, sql):
             for line in r.stdout.splitlines()]
 
 _MYSQL_TSV_ESCAPES = {'0': '\0', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', '\\': '\\'}
+# COPY TO STDOUT (the psql CLI path) escapes the same characters plus \f \v
+_COPY_TSV_ESCAPES = {**_MYSQL_TSV_ESCAPES, 'f': '\f', 'v': '\v'}
 
-def _unescape_mysql_field(s):
-    """Undo mysql --batch (non-raw) tab-output escaping. \\N alone means
-    SQL NULL (mapped to '' — same convention the PyMySQL path already uses
-    for None); elsewhere \\0 \\b \\n \\r \\t \\\\ decode to their literal
+def _unescape_tsv_field(s, escapes):
+    """Undo tab-separated-output escaping (mysql --batch, or COPY TO STDOUT
+    text format — they share the same core contract). \\N alone means SQL
+    NULL (mapped to '' — same convention the driver paths already use for
+    None); elsewhere the entries of `escapes` decode to their literal
     characters. A single left-to-right pass (not chained .replace() calls)
     is required: independent replacements can misfire on adjacent escapes,
     e.g. an escaped backslash immediately followed by an escaped tab."""
@@ -120,13 +124,19 @@ def _unescape_mysql_field(s):
     out, i, n = [], 0, len(s)
     while i < n:
         c = s[i]
-        if c == '\\' and i + 1 < n and s[i + 1] in _MYSQL_TSV_ESCAPES:
-            out.append(_MYSQL_TSV_ESCAPES[s[i + 1]])
+        if c == '\\' and i + 1 < n and s[i + 1] in escapes:
+            out.append(escapes[s[i + 1]])
             i += 2
         else:
             out.append(c)
             i += 1
     return ''.join(out)
+
+def _unescape_mysql_field(s):
+    return _unescape_tsv_field(s, _MYSQL_TSV_ESCAPES)
+
+def _unescape_copy_field(s):
+    return _unescape_tsv_field(s, _COPY_TSV_ESCAPES)
 
 def mysql_ir(table_rows, col_rows, fk_rows, index_rows):
     """Build the IR from information_schema rows (pure; unit-testable).
@@ -219,6 +229,143 @@ def parse_mysql(url):
         f"SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME "
         f"FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='{db}' "
         f"ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX")
+    return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+
+# ---------------------------------------------------------------------------
+# PostgreSQL adapter (pg_catalog via psycopg/psycopg2 or the psql CLI)
+# ---------------------------------------------------------------------------
+def postgres_query_rows(url, sql):
+    """Run a query and return rows as tuples of strings ('' for NULL).
+    Prefers psycopg (v3), then psycopg2, when installed; otherwise shells
+    out to the psql CLI — same dependency-free spirit as mysql_query_rows.
+    The CLI path wraps the query in COPY (...) TO STDOUT, whose text format
+    escapes tabs/newlines/backslashes and spells NULL as \\N — the same
+    framing contract mysql --batch provides, so free-text comments can't
+    corrupt the field/record structure."""
+    u = urlparse(url)
+    host, port, db = u.hostname or '127.0.0.1', u.port or 5432, u.path.lstrip('/')
+    password = u.password or os.environ.get('PGPASSWORD', '')
+    driver = None
+    try:
+        import psycopg as driver  # psycopg 3
+    except ImportError:
+        try:
+            import psycopg2 as driver
+        except ImportError:
+            pass
+    if driver:
+        try:
+            conn = driver.connect(host=host, port=port, user=u.username,
+                                  password=password, dbname=db)
+        except driver.Error as e:
+            sys.exit(f'Error: could not connect to PostgreSQL at {host}:{port}: {e}')
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return [tuple('' if v is None else str(v) for v in r)
+                        for r in cur.fetchall()]
+        except driver.Error as e:
+            sys.exit(f'Error: postgres query failed: {e}')
+        finally:
+            conn.close()
+    cmd = ['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', host, '-p', str(port)]
+    if u.username:
+        cmd += ['-U', u.username]
+    cmd += ['-d', db, '-c', f'COPY ({sql}) TO STDOUT']
+    env = dict(os.environ)
+    if password:
+        env['PGPASSWORD'] = password  # keep the password off the argv
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        sys.exit('Error: neither psycopg/psycopg2 nor the psql CLI is available '
+                 '(pip install "psycopg[binary]", or install a PostgreSQL client)')
+    if r.returncode != 0:
+        sys.exit(f'Error: postgres query failed: {r.stderr.strip()}')
+    return [tuple(_unescape_copy_field(v) for v in line.split('\t'))
+            for line in r.stdout.splitlines()]
+
+def parse_postgres(url):
+    """Read the schema from a live PostgreSQL database and build the IR.
+
+    Shapes pg_catalog query results into the exact information_schema row
+    layout mysql_ir() consumes, so the (engine-agnostic) IR builder — PK
+    detection, unique-index 1:1 promotion, index assembly — is shared, not
+    duplicated. Notes vs. MySQL:
+    - schema defaults to 'public'; override with ?schema=name in the URL
+    - partitioned parents (relkind 'p') are included, their partitions and
+      views are not — matching MySQL's BASE TABLE filter in spirit
+    - identity/serial columns land in `extra` (like auto_increment), and a
+      serial's noisy nextval(...) default is blanked for display parity
+    """
+    u = urlparse(url)
+    db = u.path.lstrip('/')
+    if not re.fullmatch(r'\w+', db or ''):
+        sys.exit('Error: the postgres URL must include a database name, '
+                 'e.g. postgres://readonly@127.0.0.1:5432/myapp_production')
+    schema = 'public'
+    for part in u.query.split('&'):
+        if part.startswith('schema='):
+            schema = part[len('schema='):]
+    if not re.fullmatch(r'\w+', schema):
+        sys.exit(f'Error: invalid schema name {schema!r} in the postgres URL')
+    # No password in the URL and none set via PGPASSWORD: prompt (interactive
+    # only, same as the MySQL path). An empty answer leaves PGPASSWORD unset
+    # so libpq's own ~/.pgpass lookup still applies.
+    if u.password is None and not os.environ.get('PGPASSWORD') and sys.stdin.isatty():
+        pw = getpass.getpass(
+            f"PostgreSQL password for {u.username or 'postgres'}@{u.hostname or '127.0.0.1'}: ")
+        if pw:
+            os.environ['PGPASSWORD'] = pw
+    base = (f"FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            f"WHERE n.nspname = '{schema}' AND c.relkind IN ('r', 'p') "
+            f"AND NOT c.relispartition")
+    table_rows = postgres_query_rows(url,
+        f"SELECT c.relname, COALESCE(obj_description(c.oid, 'pg_class'), '') "
+        f"{base} ORDER BY c.relname")
+    col_rows = postgres_query_rows(url,
+        f"SELECT c.relname, a.attname, "
+        f"format_type(a.atttypid, NULL), "
+        f"format_type(a.atttypid, a.atttypmod), "
+        f"CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END, "
+        f"CASE WHEN EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid "
+        f"AND i.indisprimary AND a.attnum = ANY(i.indkey)) THEN 'PRI' ELSE '' END, "
+        f"CASE WHEN pg_get_expr(ad.adbin, ad.adrelid) LIKE 'nextval(%' THEN '' "
+        f"ELSE COALESCE(pg_get_expr(ad.adbin, ad.adrelid), '') END, "
+        f"CASE WHEN a.attidentity <> '' THEN 'identity' "
+        f"WHEN pg_get_expr(ad.adbin, ad.adrelid) LIKE 'nextval(%' THEN 'serial' "
+        f"ELSE '' END, "
+        f"COALESCE(col_description(c.oid, a.attnum), '') "
+        f"FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+        f"JOIN pg_namespace n ON n.oid = c.relnamespace "
+        f"LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum "
+        f"WHERE n.nspname = '{schema}' AND c.relkind IN ('r', 'p') "
+        f"AND NOT c.relispartition AND a.attnum > 0 AND NOT a.attisdropped "
+        f"ORDER BY c.relname, a.attnum")
+    fk_rows = postgres_query_rows(url,
+        f"SELECT conrel.relname, a.attname, confrel.relname "
+        f"FROM pg_constraint con "
+        f"JOIN pg_class conrel ON conrel.oid = con.conrelid "
+        f"JOIN pg_class confrel ON confrel.oid = con.confrelid "
+        f"JOIN pg_namespace n ON n.oid = conrel.relnamespace "
+        f"CROSS JOIN LATERAL unnest(con.conkey) AS k(attnum) "
+        f"JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum "
+        f"WHERE con.contype = 'f' AND n.nspname = '{schema}' "
+        f"ORDER BY conrel.relname, a.attname")
+    index_rows = postgres_query_rows(url,
+        f"SELECT c.relname, i.relname, "
+        f"CASE WHEN ix.indisunique THEN 0 ELSE 1 END, k.ord, "
+        f"COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.ord::int, true)) "
+        f"FROM pg_index ix "
+        f"JOIN pg_class c ON c.oid = ix.indrelid "
+        f"JOIN pg_class i ON i.oid = ix.indexrelid "
+        f"JOIN pg_namespace n ON n.oid = c.relnamespace "
+        f"CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) "
+        f"LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum "
+        f"AND k.attnum > 0 "
+        f"WHERE n.nspname = '{schema}' AND c.relkind IN ('r', 'p') "
+        f"AND NOT c.relispartition "
+        f"ORDER BY c.relname, i.relname, k.ord")
     return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
 
 def dedupe_db_fk(tables):
@@ -4777,7 +4924,7 @@ CONFIG_DEFAULTS = {
 # accidentally fill in when the pieces are separate. One config file per
 # database (e.g. erdscope.staging.json / erdscope.prod.json) is the
 # intended way to point --config at different targets.
-CONFIG_CONNECTION_KEYS = {'host', 'port', 'user', 'database'}
+CONFIG_CONNECTION_KEYS = {'engine', 'host', 'port', 'user', 'database'}
 CONFIG_PASSWORD_KEYS = {'password', 'passwd', 'pwd', 'url', 'database_url'}
 # Expected type per key, checked at load time — YAML/JSON scalars are
 # exactly where a config typo goes undetected otherwise: max_rows as the
@@ -4871,15 +5018,19 @@ def _check_config_types(config, path):
 _SAFE_HOST_OR_USER = re.compile(r'[\w.\-]+')
 
 def assemble_config_url(config):
-    """Build a mysql:// URL from the config's host/port/user/database fields,
-    or None if `database` wasn't given (no connection info in the config at
-    all). Each part is validated against a safe charset before being pasted
+    """Build a mysql:// or postgres:// URL (per the config's `engine`, default
+    mysql) from the config's host/port/user/database fields, or None if
+    `database` wasn't given (no connection info in the config at all).
+    Each part is validated against a safe charset before being pasted
     into the URL string — host/user containing `/`, `@`, or `:` would
     silently shift what urlparse reads as the host/port/path when the
     assembled string is re-parsed downstream (verified empirically: a host
     of "x@evil" produces a URL whose username becomes "x" and whose actual
     host becomes "evil"), and there is no decoding step anywhere downstream
     to undo percent-encoding, so quoting isn't a fix either."""
+    engine = config.get('engine', 'mysql')
+    if engine not in ('mysql', 'postgres', 'postgresql'):
+        sys.exit(f'Error: config `engine` must be "mysql" or "postgres", got {engine!r}')
     db = config.get('database')
     if db is None:  # absent, or explicitly blank (e.g. a bare `database:` in YAML)
         return None
@@ -4890,7 +5041,7 @@ def assemble_config_url(config):
         sys.exit(f'Error: config `host` {host!r} has unsupported characters (letters/'
                  f'digits/./- only here — IPv6 and other exotic hosts need the CLI '
                  f'argument instead, not the config file)')
-    port = config.get('port', 3306)
+    port = config.get('port', 3306 if engine == 'mysql' else 5432)
     if isinstance(port, bool) or (isinstance(port, float) and not port.is_integer()):
         sys.exit(f'Error: config `port` {port!r} is not a valid port number')
     try:
@@ -4909,7 +5060,8 @@ def assemble_config_url(config):
             sys.exit(f'Error: config `user` {user!r} has unsupported characters '
                      f'(letters/digits/./- only)')
         auth = f'{user}@'
-    return f'mysql://{auth}{host}:{port}/{db}'
+    scheme = 'mysql' if engine == 'mysql' else 'postgres'
+    return f'{scheme}://{auth}{host}:{port}/{db}'
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -4919,11 +5071,14 @@ def main():
         description='Generate an interactive ER diagram from a live database, '
                     'optionally enriched with association semantics parsed from '
                     'application code (Rails / Prisma / Django)')
-    p.add_argument('database', metavar='mysql://user@host:port/dbname', nargs='?',
-                   help='Database connection URL. Can also be assembled from '
-                        '`host`/`port`/`user`/`database` in the config file (no password '
-                        'field there — use MYSQL_PWD, ~/.my.cnf, or the interactive '
-                        'prompt). A read-only account is recommended')
+    p.add_argument('database', metavar='mysql://user@host/db | postgres://user@host/db',
+                   nargs='?',
+                   help='Database connection URL (postgres:// takes an optional '
+                        '?schema=name, default public). Can also be assembled from '
+                        '`engine`/`host`/`port`/`user`/`database` in the config file (no '
+                        'password field there — use MYSQL_PWD/PGPASSWORD, '
+                        '~/.my.cnf/~/.pgpass, or the interactive prompt). A read-only '
+                        'account is recommended')
     # SUPPRESS on every config-mirrorable flag so we can tell "explicitly
     # passed on the CLI" (attribute present) from "left to the config file /
     # built-in default" (attribute absent) — see the merge loop below.
@@ -4970,10 +5125,16 @@ def main():
 
     config = load_config(args)
     url = args.database or assemble_config_url(config)
-    if not url or not url.startswith('mysql://'):
-        sys.exit('Error: a database URL is required (currently mysql:// only) — pass it '
-                 'as the CLI argument, or set `database` (and optionally host/user/port) '
-                 'in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp_production')
+    scheme = (url or '').split('://', 1)[0]
+    if scheme == 'mysql':
+        parse_db, engine_name = parse_mysql, 'MySQL'
+    elif scheme in ('postgres', 'postgresql'):
+        parse_db, engine_name = parse_postgres, 'PostgreSQL'
+    else:
+        sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
+                 'as the CLI argument, or set `database` (and optionally engine/host/user/'
+                 'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
+                 'postgres://readonly@127.0.0.1:5432/myapp')
 
     if hasattr(args, 'table_map'):
         tm = {}
@@ -4991,8 +5152,8 @@ def main():
             setattr(args, key, config.get(key, default))
     relations = config.get('relations', [])  # shape already validated by load_config()
 
-    tables = parse_mysql(url)
-    print(f'Fetched {len(tables)} tables from MySQL', file=sys.stderr)
+    tables = parse_db(url)
+    print(f'Fetched {len(tables)} tables from {engine_name}', file=sys.stderr)
 
     if args.models:
         mroot = Path(args.models).expanduser().resolve()

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-10
+
+### Added
+
+- PostgreSQL support: `erdscope postgres://user@host:5432/db` (or `postgresql://`),
+  with an optional `?schema=name` (default `public`). Reads tables, columns, comments,
+  indexes, and FK constraints from `pg_catalog`; identity/serial columns are marked
+  like MySQL's auto_increment; views and individual partitions are excluded
+- Connects via psycopg (v3) or psycopg2 when installed, falling back to the `psql`
+  CLI (`COPY … TO STDOUT`) with zero dependencies — both paths produce byte-identical
+  output. New pip extra: `erdscope[postgres]`
+- Config files gain an `engine` key (`"mysql"`, the default, or `"postgres"`, which
+  also switches the default port to 5432)
+
 ## [0.1.0] - 2026-07-10
 
 ### Added

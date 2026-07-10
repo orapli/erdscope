@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "erdscope"
-version = "0.1.0"
-description = "Interactive, self-contained ER-diagram HTML and Excel table definitions from a live MySQL database — single file, zero required dependencies"
+version = "0.2.0"
+description = "Interactive, self-contained ER-diagram HTML and Excel table definitions from a live MySQL or PostgreSQL database — single file, zero required dependencies"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -24,8 +24,9 @@ classifiers = [
 
 [project.optional-dependencies]
 mysql = ["PyMySQL"]
+postgres = ["psycopg[binary]"]
 yaml = ["PyYAML"]
-all = ["PyMySQL", "PyYAML"]
+all = ["PyMySQL", "psycopg[binary]", "PyYAML"]
 
 [project.scripts]
 erdscope = "erd:main"
