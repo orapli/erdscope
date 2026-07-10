@@ -20,7 +20,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 #topbar .ae-on{color:#93c5fd}
 #depth-ctrl{display:none;align-items:center;gap:4px;font-size:11px;color:#64748b}
 #depth-ctrl.visible{display:flex}
-#depth-ctrl span{color:#64748b;font-size:11px}
+#depth-ctrl span,#dir-ctrl span{color:#64748b;font-size:11px}
+#dir-ctrl{display:flex;align-items:center;gap:4px;font-size:11px;color:#64748b}
 .dep-btn{padding:2px 7px;font-size:11px;border:1px solid #334155;background:transparent;
   color:#94a3b8;border-radius:4px;cursor:pointer}
 .dep-btn:hover{border-color:#94a3b8;color:#f8fafc}
@@ -447,7 +448,9 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
     <button class="dep-btn" data-d="2">2</button>
     <button class="dep-btn" data-d="3">3</button>
     <button class="dep-btn" data-d="0">∞</button>
-    <span style="margin-left:8px">Direction:</span>
+  </div>
+  <div id="dir-ctrl" title="Also used by each table's ⊕ button, regardless of Auto-expand">
+    <span>Direction:</span>
     <button class="dep-btn dir-btn active" data-dir="both" title="Follow relations in both directions">Both</button>
     <button class="dep-btn dir-btn" data-dir="out" title="Follow what this table depends on (parents it references via FK)">Deps</button>
     <button class="dep-btn dir-btn" data-dir="in" title="Follow what depends on this table (children referencing it via FK)">Dependents</button>

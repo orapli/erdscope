@@ -1860,5 +1860,67 @@ class TestNameDisplayMode(unittest.TestCase):
         self.assertEqual(self.page.evaluate('exportNameMode'), 2)
 
 
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestDirectionControlVisibleWithoutAutoExpand(unittest.TestCase):
+    """The Direction buttons (Both/Deps/Dependents) drive each table's ⊕
+    manual-expand button too, not just Auto-expand's BFS — so they must be
+    changeable even with Auto-expand off. Depth stays gated (it's BFS-only,
+    irrelevant to a single ⊕ step)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_direction_control_is_visible_by_default(self):
+        self.assertFalse(self.page.evaluate("document.getElementById('auto-expand').checked"))
+        self.assertEqual(self.page.evaluate(
+            "getComputedStyle(document.getElementById('dir-ctrl')).display"), 'flex')
+
+    def test_depth_control_stays_hidden_without_auto_expand_or_focus(self):
+        self.assertEqual(self.page.evaluate(
+            "getComputedStyle(document.getElementById('depth-ctrl')).display"), 'none')
+
+    def test_direction_button_changes_expand_dir_with_auto_expand_off(self):
+        self.page.click('[data-dir="out"]')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('expandDir'), 'out')
+        self.assertTrue(self.page.evaluate(
+            "document.querySelector('[data-dir=\"out\"]').classList.contains('active')"))
+
+    def test_plus_button_on_a_node_honors_the_direction_without_auto_expand(self):
+        # 'out' = only what this table depends on (belongs_to). 'users' is
+        # the FK target of posts/comments/likes/audit_logs (they depend on
+        # it), so in 'out' mode users' ⊕ must add nothing.
+        self.page.click('[data-dir="out"]')
+        self.page.wait_for_timeout(50)
+        self.page.evaluate('''() => {
+            const plus = [...document.querySelectorAll('.er-node[data-name="users"] .n-mode')]
+                .find(el => el.firstChild.textContent === '⊕');
+            plus.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+        }''')
+        self.page.wait_for_timeout(50)
+        toast = self.page.evaluate("document.getElementById('toast').textContent")
+        self.assertIn('No related tables to add', toast)
+
+
 if __name__ == '__main__':
     unittest.main()
