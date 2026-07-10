@@ -19,7 +19,7 @@ is one self-contained HTML file.
 Regenerate it anytime with `python3 docs/gen_demo.py`.
 
 **[Read the user manual →](https://orapli.github.io/erdscope/manual.html)** — installation,
-CLI/config reference, a full viewer guide, and troubleshooting.
+CLI/config reference, a full viewer guide, and troubleshooting. ([日本語版 →](https://orapli.github.io/erdscope/manual.ja.html))
 
 ## Usage
 

@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>erdscope — ユーザーマニュアル（日本語）</title>
+<meta name="description" content="erdscope ビューアのインストール・実行・操作方法 — CLIリファレンス、設定ファイル、ビューアガイド、エクスポート、トラブルシューティング。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="erdscope — ユーザーマニュアル（日本語）">
+<meta property="og:description" content="erdscope ビューアのインストール・実行・操作方法 — CLIリファレンス、設定ファイル、ビューアガイド、エクスポート、トラブルシューティング。">
+<meta property="og:url" content="https://orapli.github.io/erdscope/manual.ja.html">
+<meta property="og:image" content="https://orapli.github.io/erdscope/screenshot.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{
+  --bg:#f8fafc; --bg-elevated:#ffffff; --bg-inset:#f1f5f9;
+  --fg:#1e293b; --fg-muted:#64748b; --fg-faint:#94a3b8;
+  --border:#e2e8f0; --border-strong:#cbd5e1;
+  --accent:#2563eb; --accent-soft:#dbeafe; --accent-fg:#1e3a5f;
+  --amber-soft:#fef9c3; --amber-fg:#854d0e;
+  --purple-soft:#ede9fe; --purple-fg:#5b21b6;
+  --code-bg:#f1f5f9; --code-fg:#334155;
+  --shadow: 0 1px 3px rgba(15,23,42,.08);
+  --mono: 'SF Mono','Fira Code',ui-monospace,Menlo,Consolas,monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+:root[data-theme="dark"]{
+  --bg:#0b1220; --bg-elevated:#0f172a; --bg-inset:#141f36;
+  --fg:#e2e8f0; --fg-muted:#94a3b8; --fg-faint:#64748b;
+  --border:#1e293b; --border-strong:#334155;
+  --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
+  --amber-soft:#3f2d05; --amber-fg:#fcd34d;
+  --purple-soft:#2e1065; --purple-fg:#d8b4fe;
+  --code-bg:#141f36; --code-fg:#cbd5e1;
+  --shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b1220; --bg-elevated:#0f172a; --bg-inset:#141f36;
+    --fg:#e2e8f0; --fg-muted:#94a3b8; --fg-faint:#64748b;
+    --border:#1e293b; --border-strong:#334155;
+    --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
+    --amber-soft:#3f2d05; --amber-fg:#fcd34d;
+    --purple-soft:#2e1065; --purple-fg:#d8b4fe;
+    --code-bg:#141f36; --code-fg:#cbd5e1;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg); font-family:var(--sans);
+  font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+code,pre,kbd{font-family:var(--mono)}
+code{background:var(--code-bg); color:var(--code-fg); padding:.1em .4em; border-radius:4px; font-size:.88em}
+pre{background:var(--code-bg); color:var(--code-fg); padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:13px; line-height:1.55; border:1px solid var(--border)}
+pre code{background:none; padding:0; border-radius:0; font-size:1em}
+kbd{background:var(--bg-inset); border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:5px; padding:1px 6px; font-size:.85em; color:var(--fg)}
+h1,h2,h3,h4{font-weight:700; line-height:1.3; scroll-margin-top:76px}
+h1{font-size:28px}
+h2{font-size:22px; margin-top:2.6em}
+h3{font-size:17px; margin-top:2em; color:var(--fg)}
+h3 .chip{font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--fg-muted); background:var(--bg-inset); border:1px solid var(--border); border-radius:4px; padding:1px 6px; margin-left:8px; vertical-align:middle}
+p{margin:.9em 0}
+ul,ol{padding-left:1.4em}
+li{margin:.35em 0}
+table{border-collapse:collapse; width:100%; margin:1.2em 0; font-size:13.5px}
+th,td{text-align:left; padding:7px 10px; border-bottom:1px solid var(--border); vertical-align:top}
+th{color:var(--fg-muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.02em}
+tr:last-child td{border-bottom:none}
+td code, th code{white-space:nowrap}
+.anchor-link{opacity:0; margin-left:.4em; font-size:.8em; color:var(--fg-faint)}
+h2:hover .anchor-link, h3:hover .anchor-link{opacity:1}
+.note, .warn{border-radius:8px; padding:12px 14px; margin:1.2em 0; font-size:14px; border:1px solid}
+.note{background:var(--accent-soft); border-color:var(--accent); color:var(--fg)}
+.warn{background:var(--amber-soft); border-color:var(--amber-fg); color:var(--fg)}
+.note strong, .warn strong{display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; opacity:.85}
+.badge{display:inline-block; font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px; margin-right:4px}
+.badge-inf{background:var(--amber-soft); color:var(--amber-fg)}
+.badge-dbfk{background:var(--accent-soft); color:var(--accent-fg)}
+.badge-manual{background:var(--purple-soft); color:var(--purple-fg)}
+.btn-example{display:inline-block; background:var(--bg-inset); border:1px solid var(--border-strong); border-radius:6px; padding:2px 9px; font-size:12.5px; font-family:var(--mono); color:var(--fg)}
+.shot{max-width:100%; border-radius:10px; border:1px solid var(--border); box-shadow:var(--shadow); display:block; margin:1.4em 0 .4em}
+.cap{font-size:12.5px; color:var(--fg-muted); margin:0 0 1.4em}
+.grid-cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin:1.4em 0}
+.card{background:var(--bg-elevated); border:1px solid var(--border); border-radius:10px; padding:14px 16px}
+.card h4{margin:0 0 6px; font-size:14px}
+.card p{margin:0; font-size:13.5px; color:var(--fg-muted)}
+
+/* layout */
+#topnav{
+  position:fixed; top:0; left:0; right:0; height:52px; z-index:40;
+  background:var(--bg-elevated); border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:12px; padding:0 14px;
+}
+#topnav .brand{font-weight:700; font-size:14px; font-family:var(--mono); color:var(--fg)}
+#topnav .spacer{flex:1}
+#topnav a.top-link{font-size:12.5px; color:var(--fg-muted); padding:6px 10px; border-radius:6px}
+#topnav a.top-link:hover{background:var(--bg-inset); text-decoration:none; color:var(--fg)}
+#nav-toggle{display:none; background:none; border:1px solid var(--border-strong); color:var(--fg); border-radius:6px; width:32px; height:32px; font-size:16px; cursor:pointer}
+.lang-current{font-size:12.5px; font-weight:700; color:var(--fg); padding:6px 4px}
+.lang-sep{color:var(--fg-faint); font-size:12px}
+
+.shell{display:flex; max-width:1200px; margin:0 auto; padding-top:52px}
+#toc{
+  width:250px; flex-shrink:0; position:sticky; top:52px; align-self:flex-start;
+  height:calc(100vh - 52px); overflow-y:auto; padding:22px 14px 40px 20px;
+}
+#toc a{display:block; padding:5px 10px; border-radius:6px; font-size:13px; color:var(--fg-muted); border-left:2px solid transparent}
+#toc a:hover{color:var(--fg); text-decoration:none; background:var(--bg-inset)}
+#toc a.lvl2{font-weight:600; color:var(--fg); margin-top:10px}
+#toc a.lvl3{padding-left:20px; font-size:12.5px}
+#toc a.active{color:var(--accent); border-left-color:var(--accent); background:var(--bg-inset)}
+
+main{flex:1; min-width:0; padding:34px 34px 90px; max-width:840px}
+main > section:first-child h1{margin-top:0}
+
+footer{border-top:1px solid var(--border); padding:20px 34px 60px; font-size:12.5px; color:var(--fg-muted); max-width:840px}
+
+@media (max-width:860px){
+  #nav-toggle{display:block}
+  #toc{
+    position:fixed; top:52px; left:0; bottom:0; width:78vw; max-width:300px;
+    background:var(--bg-elevated); border-right:1px solid var(--border);
+    transform:translateX(-100%); transition:transform .18s ease; z-index:39;
+    box-shadow:var(--shadow);
+  }
+  #toc.open{transform:translateX(0)}
+  main{padding:26px 18px 90px}
+  .shell{display:block}
+}
+</style>
+</head>
+<body>
+
+<nav id="topnav">
+  <button id="nav-toggle" aria-label="目次の表示切り替え" aria-expanded="false">☰</button>
+  <span class="brand">erdscope</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="index.html">ライブデモ</a>
+  <a class="top-link" href="https://github.com/orapli/erdscope">GitHub</a>
+  <a class="top-link" href="manual.html">EN</a><span class="lang-sep">|</span><span class="lang-current">日本語</span>
+</nav>
+
+<div class="shell">
+<aside id="toc">
+  <a class="lvl2" href="#what-is-erdscope">erdscope とは</a>
+  <a class="lvl2" href="#installation">インストール・必要要件</a>
+  <a class="lvl2" href="#quickstart">クイックスタート</a>
+  <a class="lvl2" href="#cli-reference">CLIリファレンス</a>
+  <a class="lvl2" href="#config-file">設定ファイル</a>
+  <a class="lvl2" href="#viewer-guide">ビューアガイド</a>
+  <a class="lvl3" href="#viewer-panes">ペイン</a>
+  <a class="lvl3" href="#viewer-focus">フォーカスと探索</a>
+  <a class="lvl3" href="#viewer-hiding">テーブルの非表示</a>
+  <a class="lvl3" href="#viewer-search">検索とハイライト</a>
+  <a class="lvl3" href="#viewer-layout">レイアウトと選択</a>
+  <a class="lvl3" href="#viewer-columns">カラム表示</a>
+  <a class="lvl3" href="#viewer-names">論理名</a>
+  <a class="lvl3" href="#viewer-views">名前付きビューと共有</a>
+  <a class="lvl3" href="#viewer-edges">エッジの種類</a>
+  <a class="lvl3" href="#viewer-shortcuts">キーボードショートカット</a>
+  <a class="lvl3" href="#viewer-dark">ダークモード</a>
+  <a class="lvl3" href="#viewer-print">印刷</a>
+  <a class="lvl2" href="#exports">エクスポート</a>
+  <a class="lvl2" href="#troubleshooting">トラブルシューティング / FAQ</a>
+  <a class="lvl2" href="#extending">拡張</a>
+</aside>
+
+<main>
+
+<section id="what-is-erdscope">
+<h1>erdscope <a class="anchor-link" href="#what-is-erdscope">#</a></h1>
+<p>
+erdscope は、稼働中の MySQL データベースから<strong>自己完結型のインタラクティブな ER 図</strong>と、
+必要に応じて<strong>Excel テーブル定義書</strong>を生成します。単一の Python ファイル
+（<code>erd.py</code>、インストール不要）として配布され、<strong>必須の依存関係はゼロ</strong>です。
+</p>
+<p>
+データベースが唯一の真実源です — テーブル、カラム、コメント、インデックス、実際の外部キーはすべて
+<code>information_schema</code> から取得されます。アプリケーションコード（Rails、Prisma、Django）を
+<code>--models</code> で任意に重ね合わせることで、データベース単体では表現できない関連のセマンティクス
+（<code>has_many :through</code>、ポリモーフィック関連など）を追加できます。
+</p>
+<p>
+<a href="https://orapli.github.io/erdscope/"><strong>ライブデモを試す →</strong></a> —
+コメント・インデックス・実際の FK・推測された関連を含む小さな EC サイトのスキーマです。
+デモの内容はすべて単一の自己完結型 HTML ファイルであり、あなた自身の図も同じ方法で生成されます。
+</p>
+<a href="https://orapli.github.io/erdscope/"><img class="shot" src="screenshot.png" alt="users・orders・products などのテーブルとその関連を示す erdscope の ER 図"></a>
+
+<div class="grid-cards">
+  <div class="card"><h4>データベースの真実</h4><p>テーブル、カラム（完全な SQL 型、デフォルト値、extra 属性）、コメント、インデックス、実際の FK 制約 — すべてデータベースから直接読み取ります。</p></div>
+  <div class="card"><h4>コード側のセマンティクスを重ね合わせ</h4><p><code>--models</code> は Rails / Prisma / Django の関連をマージします。association ですでにカバーされている DB FK は重複排除され、残りには「DB FK」バッジが付きます。</p></div>
+  <div class="card"><h4>インタラクティブな探索</h4><p>深度と方向を指定したフォーカス、2段階の非表示、テーブル・カラム検索、名前付きビュー、共有リンク。</p></div>
+  <div class="card"><h4>読みやすいレイアウト</h4><p>ビューポートを考慮した自動配置、ドラッグ時のスナップ、複数選択での整列/分布、Auto-tidy、undo/redo。</p></div>
+  <div class="card"><h4>エクスポート</h4><p>PNG、SVG、Mermaid、PlantUML — それぞれコピーとダウンロードに対応 — に加えて Excel ワークブック。</p></div>
+  <div class="card"><h4>論理名</h4><p>テーブルの DB コメントは検索可能な「論理名」を兼ね、物理名と並べて表示されます。</p></div>
+</div>
+</section>
+
+<section id="installation">
+<h2>インストール・必要要件 <a class="anchor-link" href="#installation">#</a></h2>
+<p>
+インストール作業は不要です。<a href="https://github.com/orapli/erdscope/blob/main/erd.py"><code>erd.py</code></a>
+をダウンロードして、実行したい場所に置くだけです。
+</p>
+<pre><code>curl -O https://raw.githubusercontent.com/orapli/erdscope/main/erd.py
+python3 erd.py mysql://readonly@127.0.0.1:3306/myapp -o erd.html</code></pre>
+<p>必要要件は厳密には <strong>Python 3</strong> のみです。ツールをより使いやすくする2つのライブラリが
+ありますが、どちらも完全にオプションです — インストールされていなくても erdscope は正しくフォールバック
+して動作します。</p>
+<table>
+<tr><th>ライブラリ</th><th>用途</th><th>未インストールの場合</th></tr>
+<tr><td><a href="https://pypi.org/project/PyMySQL/">PyMySQL</a></td><td>DB 接続</td><td><code>mysql</code> CLI（<code>PATH</code> 上にある必要あり）へのシェルアウトにフォールバック — <a href="#faq-pymysql">トラブルシューティング</a>参照</td></tr>
+<tr><td><a href="https://pypi.org/project/PyYAML/">PyYAML</a></td><td><code>.yml</code>/<code>.yaml</code> 設定ファイルの読み込み</td><td><code>.json</code> 設定ファイルであれば依存関係なしで動作します。PyYAML がない状態で <code>.yml</code>/<code>.yaml</code> を指定した場合は、明確なエラーで終了します</td></tr>
+</table>
+<p>
+<code>--excel</code> 出力にはどちらのライブラリも不要です — スプレッドシート用パッケージではなく、
+Python 標準ライブラリの <code>zipfile</code>/XML 処理を使って直接書き出しています。
+</p>
+<p>もう2つのライブラリはテストスイート専用で、実行時には一切使われません:
+<code>openpyxl</code>（ユニットテストで <code>--excel</code> 出力をラウンドトリップ検証）と
+<a href="https://playwright.dev/python/">Playwright</a>（ブラウザ E2E スイートで生成 HTML を操作）です。
+どちらも図の生成・閲覧には不要です。</p>
+</section>
+
+<section id="quickstart">
+<h2>クイックスタート <a class="anchor-link" href="#quickstart">#</a></h2>
+<pre><code>python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+
+# アプリケーションコードから解析した関連セマンティクスで拡張（任意）
+python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+        --models /path/to/rails/app -o erd.html
+
+# テーブル定義書も同時に出力
+python3 erd.py mysql://readonly@127.0.0.1:3306/myapp_production \
+        --excel table_definitions.xlsx -o erd.html</code></pre>
+<p>生成された <code>erd.html</code> を任意のブラウザで開いてください — すべてが1ファイルに内包されている
+ので、メールで送ったり、Wiki にコミットしたり、共有ドライブに置いたりできます。</p>
+
+<h3>パスワードの扱い</h3>
+<p><strong>読み取り専用</strong>の DB アカウントを使い、接続 URL にパスワードを書かないでください
+— シェル履歴に残ってしまいます。erdscope は次の順序でパスワードを解決します。</p>
+<ol>
+<li>URL に埋め込まれたパスワード（<code>mysql://user:pass@host/db</code>）— 実運用では避けてください。</li>
+<li><code>MYSQL_PWD</code> 環境変数（設定されている場合）。</li>
+<li>それ以外で、標準入力が対話的な端末であれば、隠し入力のパスワードプロンプト
+（<code>argv</code> にもシェル履歴にも残りません）。</li>
+</ol>
+<div class="note"><strong>非対話実行の場合（CI・スクリプト・パイプ）</strong>
+erdscope は標準入力が TTY のときだけプロンプトを出します。スクリプトや CI ジョブの中ではプロンプトを
+完全にスキップし、ブロックすることなく、手元にあるパスワード（無い場合もあります）でそのまま接続を試みます。
+それが間違っていれば通常の接続エラーメッセージが出るだけで、ハングすることはありません。
+<code>user:@host/db</code>（明示的な空パスワード）と書いた場合も「パスワードが指定された」扱いになり、
+プロンプトはスキップされます。</div>
+
+<h3>踏み台サーバー / SSH トンネル経由</h3>
+<pre><code>ssh -N -L 3307:db-host:3306 bastion &amp;
+python3 erd.py mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pre>
+</section>
+
+<section id="cli-reference">
+<h2>CLIリファレンス <a class="anchor-link" href="#cli-reference">#</a></h2>
+<p>この表は <code>erd.py</code> の <code>argparse</code> 定義に基づいて検証済みです — 手元のバージョンと
+一致しているか、いつでも <code>python3 erd.py --help</code> を実行して確認できます。</p>
+<pre><code>python3 erd.py [mysql://user@host:port/dbname] [options]</code></pre>
+<table>
+<tr><th>引数</th><th>説明</th></tr>
+<tr><td><code>mysql://user@host:port/dbname</code></td><td>位置引数。データベース接続 URL。設定ファイルの <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> から組み立てることもできます（パスワード用のフィールドはありません — <a href="#config-file">設定ファイル</a>参照）。</td></tr>
+<tr><td><code>-o, --output OUTPUT</code></td><td>出力 HTML ファイル（デフォルト: <code>erd.html</code>）</td></tr>
+<tr><td><code>--models PATH</code></td><td>アプリケーションコードから解析した関連セマンティクスをマージ: Rails プロジェクト（または <code>app/models</code> ディレクトリ）、<code>schema.prisma</code>、または Django プロジェクト — ソースは自動判別されます</td></tr>
+<tr><td><code>--excel FILE.xlsx</code></td><td>テーブル定義書も出力: 概要シート＋テーブルごとのシート</td></tr>
+<tr><td><code>--excel-template FILE.xlsx</code></td><td>ワークブックの色/フォント/罫線をテンプレート <code>.xlsx</code> から上書き — 5セル契約については<a href="#excel-template">エクスポート</a>を参照。<code>--excel</code> なしでは効果がなく（警告が出ます）</td></tr>
+<tr><td><code>--max-rows N</code></td><td>テーブルごとにスクロールなしで表示するカラム数の上限（デフォルト: 15）</td></tr>
+<tr><td><code>--only 'user*,post*'</code></td><td>指定した glob パターンに一致するテーブルのみを含める。繰り返し指定可、カンマ区切りリストも可</td></tr>
+<tr><td><code>--exclude '*_logs'</code></td><td>指定した glob パターンに一致するテーブルを除外。<code>--only</code> と同じ構文</td></tr>
+<tr><td><code>--infer-fk</code></td><td>実際の association/FK による裏付けがない場合に、<code>*_id</code> というカラム名から関連を推測する。デフォルトはオフ — <a href="#faq-infer-fk">トラブルシューティング</a>参照</td></tr>
+<tr><td><code>--table-map 'Widget=crm_widgets'</code></td><td>Rails 専用: 静的解析でテーブルを特定できないモデルのテーブルを上書き。繰り返し指定可、カンマ区切りリストも可 — <a href="#faq-table-map">トラブルシューティング</a>参照</td></tr>
+<tr><td><code>--config PATH</code></td><td>設定ファイルからデフォルト値を読み込む。指定がない場合はカレントディレクトリの <code>.erdscope.json</code>/<code>.yml</code>/<code>.yaml</code> が自動検出されます</td></tr>
+<tr><td><code>--no-config</code></td><td>カレントディレクトリに <code>.erdscope.*</code> があっても自動検出をスキップする</td></tr>
+</table>
+</section>
+
+<section id="config-file">
+<h2>設定ファイル <a class="anchor-link" href="#config-file">#</a></h2>
+<p>
+フラグの一覧が長くなってきたら、代わりに設定ファイルにまとめましょう。ツールを実行する場所に
+<code>.erdscope.json</code>（PyYAML がインストールされていれば <code>.erdscope.yml</code>/<code>.yaml</code>も可）
+を置くと自動的に読み込まれます — <code>--config</code> は不要です。ほとんどのキーは上記の CLI オプション
+に対応します（snake_case）。<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
+（DB 接続情報）と <code>relations</code>（手動 FK 宣言）は設定ファイル専用で、対応する CLI オプションは
+ありません。
+</p>
+<pre><code>{
+  "host": "127.0.0.1",
+  "port": 3306,
+  "user": "readonly",
+  "database": "myapp_production",
+
+  "output": "erd.html",
+  "models": "../myapp",
+  "max_rows": 15,
+  "infer_fk": true,
+  "only": ["user*", "post*"],
+  "table_map": { "Widget": "crm_widgets" },
+
+  "relations": [
+    { "table": "orders", "column": "buyer_code", "references": "users" },
+    { "table": "profiles", "column": "person_ref", "references": "users",
+      "one_to_one": true, "name": "owner" }
+  ]
+}</code></pre>
+<p>明示的な CLI フラグは常に同名の設定キーより優先され、値を完全に置き換えます（<code>only</code> のような
+リスト値も設定ファイルの内容とマージされることはありません）。意図的に <code>password</code>/<code>url</code>
+キーは存在しません — <code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> が
+別々のフィールドになっているのは、パスワードを書き込める場所をそもそも作らないためです。CLI と同じように
+<code>MYSQL_PWD</code>、<code>~/.my.cnf</code>、または対話プロンプトで指定してください。</p>
+<p>
+すべてのキーを説明した完全な注釈付きサンプルは
+<a href="https://github.com/orapli/erdscope/blob/main/erdscope.example.yml"><code>erdscope.example.yml</code></a>
+（ライブデモのスキーマがベース）を参照してください。
+</p>
+
+<h3>手動での関連宣言</h3>
+<p>
+<code>relations</code> は、他のどのソース（実際の FK 制約、<code>*_id</code> による名前推測、
+<code>--models</code> によるコード解析）でも見つけられない関連を宣言します — 命名が特殊なカラムや、
+gem 提供の concern・動的な association によって静的解析から隠れているものなどです。
+<code>--models</code> をまったく使わなくても単独で機能し、設定ファイルだけで完全な関連グラフを
+組み立てることもできます。優先順位はコード解析による association と同じです — <code>--infer-fk</code>
+より先に適用される（そのため該当カラムに対する誤った名前ベースの推測も抑制します）ほか、同じカラムに
+対する実際の DB FK 制約よりも優先されます。<code>relations</code> 内の未知のテーブル/カラム/参照先は
+常にタイプミスとみなされ、サイレントに無視されるのではなく、必ずハードエラーになります。
+</p>
+
+<div class="warn"><strong>設定値の型に注意</strong>
+キーは名前だけでなく、erdscope 実行前に型もチェックされます。<code>only</code>/<code>exclude</code> は
+単なる文字列ではなく文字列のリストである必要があります（文字列のままだと1パターンとしてではなく
+文字単位でマッチしてしまいます）。<code>infer_fk</code> は文字列の <code>"true"</code>/<code>"false"</code>
+ではなく、真の JSON boolean である必要があります。型が一致しない場合、以前は図がサイレントに間違った
+ものになっていましたが、現在は明確なエラーとして事前に検出されます — エラーに遭遇したら、上の例と
+照らし合わせて値の型を確認してください。</div>
+</section>
+
+<section id="viewer-guide">
+<h2>ビューアガイド <a class="anchor-link" href="#viewer-guide">#</a></h2>
+<p>以下はすべて、生成された HTML ファイル自体 — つまりブラウザで開く図そのもの — について説明しています。
+CLI については触れません。読みながら<a href="https://orapli.github.io/erdscope/">ライブデモ</a>で
+実際に各コントロールを試してみてください。</p>
+
+<h3 id="viewer-panes">ペイン <a class="anchor-link" href="#viewer-panes">#</a></h3>
+<p>ページは3つのペインで構成されています: <strong>Tables</strong>（左 — チェックボックス付きの
+テーブル一覧と検索）、<strong>diagram</strong>（中央の図）、<strong>Details</strong>（右 —
+選択中の対象のカラム・インデックス・関連）です。</p>
+<ul>
+<li><strong>リサイズ</strong> — サイドペインと図の間にある細い区切り線をドラッグします（幅は140px〜560pxの範囲に制限されます）。</li>
+<li><strong>折りたたみ / 展開</strong> — ペインのタイトルバーにある ◀/▶ ボタンで折りたたみ、その端に現れる小さなタブから再表示できます。</li>
+<li>ペイン幅と折りたたみ状態は、次にこの図を開いたときのためにブラウザに記憶されます。</li>
+</ul>
+
+<h3 id="viewer-focus">フォーカスと探索 <a class="anchor-link" href="#viewer-focus">#</a></h3>
+<p>テーブル（一覧上でもキャンバス上でも可）を<strong>ダブルクリック</strong>するとそのテーブルに
+フォーカスします — 図はそのテーブルと関連テーブルだけに絞り込まれます。フォーカス中のテーブルを再度
+ダブルクリックするか、<kbd>Esc</kbd> を押すか、<span class="btn-example">✕ Back to overview</span> /
+<span class="btn-example">Exit focus</span> ボタンのいずれかで全体表示に戻ります。</p>
+<p>フォーカス中は上部のバーに <code>🔍 Focused: &lt;テーブル名&gt; (depth &lt;深度&gt;, &lt;方向&gt;)</code>
+と表示されます。左ペインのチェックボックスは全体表示にのみ影響し、フォーカス中のビューには影響しません
+（その旨のヒントも表示されます）。<span class="btn-example">Apply to checks</span> は、フォーカスビューに
+現在表示されているテーブルをそのまま全体表示側のチェック状態に反映してから、フォーカスを終了します。</p>
+<p>フォーカス（および後述の Auto-expand）が何を引き込むかは、次の3つのコントロールで決まります。</p>
+<table>
+<tr><th>コントロール</th><th>選択肢</th><th>効果</th></tr>
+<tr><td>Depth（深度）</td><td><code>1</code> / <code>2</code> / <code>3</code> / <code>∞</code></td><td>フォーカス中のテーブルから何ホップ先の関連まで含めるか</td></tr>
+<tr><td>Direction（方向）</td><td><code>Both</code> / <code>Deps</code> / <code>Dependents</code></td><td><code>Deps</code> はこのテーブルが依存しているもの（FK で参照している親）をたどります。<code>Dependents</code> はこのテーブルに依存しているもの（このテーブルを参照している子）をたどります。Auto-expand の設定に関わらず、各テーブルの <code>⊕</code> ボタンにもこの設定が適用されます。</td></tr>
+<tr><td>Auto-expand（自動展開）</td><td>ツールバーのチェックボックス</td><td>オンにすると、全体表示で<em>チェックされている</em>すべてのテーブルが起点となり、現在の深度/方向の範囲でその関連テーブルを引き込みます。フォーカスモードでは、この設定に関わらず常にフォーカス中のテーブルから展開します。</td></tr>
+</table>
+<p>各ノードには <code>⊕</code> ボタンもあり、そのテーブルの直接の関連テーブルだけを（現在の方向設定に
+従って）一時的に引き込みます — それ自体が新たな展開の起点になることはないため、1回のクリックでスキーマ
+全体が芋づる式に広がることはありません。</p>
+<img class="shot" src="img/focus.png" alt="orders テーブルに depth 2・Deps 方向でフォーカスした状態。orders とその上流の依存先（shipments、users、addresses）が表示されている">
+<p class="cap"><code>orders</code> にフォーカス — depth 2、<code>Deps</code> 方向。フォーカスバーに両方の設定が表示されています。ツールバーの depth/direction コントロールは、フォーカス中か Auto-expand がオンのときだけ表示されます。</p>
+
+<h3 id="viewer-hiding">テーブルの非表示 — 2段階 <a class="anchor-link" href="#viewer-hiding">#</a></h3>
+<p>erdscope にはテーブルを表示から外す独立した2つの方法があり、強さが異なります。</p>
+<table>
+<tr><th></th><th>Exclude（除外）</th><th>Ban（禁止/完全非表示）</th></tr>
+<tr><td>トリガー</td><td>一覧のチェックを外す、またはノードの <code>⊖</code> ボタン</td><td>一覧の行にある <code>🚫</code> ボタンのみ</td></tr>
+<tr><td>強さ</td><td>軽い — Auto-expand によって他のテーブルの関連先として再び現れたり、チェックを入れ直したり、他のテーブルの <code>⊕</code> から戻ってくることがあります</td><td>強い — 禁止解除するまで、Auto-expand であっても二度と表示されません</td></tr>
+<tr><td>元に戻す</td><td>チェックを入れ直す</td><td>その行で再度 <code>🚫</code>、または何か禁止されている間だけ表示される赤いバナー内の <span class="btn-example">Unban all</span></td></tr>
+</table>
+<p>フォーカス中のテーブルを禁止するとフォーカスは終了します。除外セットと禁止セットはどちらもブラウザに
+記憶され、名前付きビューや共有リンクにも含まれます。</p>
+<img class="shot" src="img/hiding.png" alt="左ペインに赤い「banned: 1 table(s)」バナーと Unban all リンクが表示され、その下に products の行が取り消し線付きでグレーアウトしている">
+<p class="cap">一覧の <code>🚫</code> ボタンで <code>products</code> を禁止した状態 — 取り消し線が引かれ、チェックボックスはロックされ、上の赤いバナーにカウントされます。</p>
+
+<h3 id="viewer-search">検索とハイライト <a class="anchor-link" href="#viewer-search">#</a></h3>
+<p>erdscope には性質の異なる2つの検索ボックスがあります。</p>
+<div class="grid-cards">
+<div class="card"><h4>フィルタ（左ペイン、"Search tables / columns…"）</h4><p>テーブル名・カラム名・カラムのコメント・テーブルのコメントに一致します。入力するたびにテーブル一覧をその場でフィルタします。<strong>Enter</strong> を押すと図の中の最有力候補にジャンプし（表示から外れていれば戻し）、一致したカラムをハイライトします。</p></div>
+<div class="card"><h4>ハイライト（ツールバー、"Highlight…"）</h4><p>一致対象はフィルタと同じですが、表示からは何も取り除きません — 一致したテーブル/カラムに印を付け、それ以外を薄暗くするだけの、あくまでオーバーレイです。<strong>Enter</strong>/<strong>Shift+Enter</strong> で次/前の一致に移動します。選択状態と違い、ハイライトの検索語は PNG/SVG エクスポートにも引き継がれます。</p></div>
+</div>
+<p>どちらのボックスも、独立した <code>Aa</code>（大文字小文字を区別）と <code>.*</code>（正規表現）の
+切り替えボタンを持っています — フィルタ側で正規表現モードを有効にしても、ハイライト側には影響しません。</p>
+<img class="shot" src="img/highlight.png" alt="ツールバーのハイライトボックスに 'user' と入力し、一致したテーブルとカラムがアンバー色の枠で示され、無関係なテーブルは薄暗く表示されている">
+<p class="cap"><code>user</code> をハイライト — 一致したテーブル/カラムにアンバー色の枠が付き、それ以外は薄暗くなりますが、図から取り除かれるものは何もありません。</p>
+
+<h3 id="viewer-layout">レイアウトと選択 <a class="anchor-link" href="#viewer-layout">#</a></h3>
+<ul>
+<li><strong>パン</strong> — 何もないキャンバス上をドラッグするか、2本指でスクロールします。</li>
+<li><strong>ズーム</strong> — ピンチ操作 / Ctrl+スクロール、またはツールバーの <code>+</code> / <code>−</code> / <code>1:1</code> / <code>⊡ Fit</code> ボタン。</li>
+<li><strong>複数選択</strong> — クリックで1つだけ選択、<kbd>Shift</kbd>-クリックまたは <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>-クリックで選択に追加/削除、何もないキャンバス上から <kbd>Shift</kbd>-ドラッグでラバーバンド選択。何もないキャンバスをクリックするとすべて選択解除されます。</li>
+<li><strong>ドラッグで移動</strong> — 選択中のテーブルをドラッグすると、選択中のもの全体が一緒に動きます。ドラッグ中の端は近くのテーブルの端/中心に数ピクセル以内でスナップし、赤いガイド線（Figma のような）が表示されます — ドラッグ中に <kbd>Alt</kbd> を押すとスナップを無効化できます。</li>
+<li><strong>整列 / 分布</strong> — 2つ以上選択すると、右ペインに <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span> が表示されます。3つ以上選択すると <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> の分布も使えるようになります（両端のテーブルは固定したまま、間の間隔を均等にします）。</li>
+<li><strong>Auto-tidy</strong> — 表示中のテーブル集合が変わるたびに、レイアウトを自動的に再配置・再フィットするツールバーのトグルです。<code>↺</code> ボタンは Auto-tidy の設定に関わらず、その場で即座に再配置します。</li>
+<li><strong>Undo/redo</strong> — ツールバーの <code>↶</code>/<code>↷</code> ボタン、または <kbd>Ctrl/Cmd+Z</kbd> / <kbd>Ctrl/Cmd+Shift+Z</kbd>（もしくは <kbd>Ctrl/Cmd+Y</kbd>）。対象はテーブルの位置変更のみです。フォーカスの開始/終了や保存済みビューの読み込みはレイアウト全体を置き換えるため、その際に履歴はクリアされます。</li>
+</ul>
+<img class="shot" src="img/multiselect.png" alt="payments・shipments・order_coupons の3テーブルが青くハイライトされて複数選択され、右ペインの Align と Distribute のボタングループが両方とも有効になっている">
+<p class="cap">3テーブルを選択した状態 — 3つ以上選択すると、<strong>Align</strong>（整列）と<strong>Distribute</strong>（分布）の両方が使えるようになります（2つの選択では Align のみ有効）。</p>
+
+<h3 id="viewer-columns">カラム表示モード <a class="anchor-link" href="#viewer-columns">#</a></h3>
+<p>ツールバーのコントロールで、すべてのテーブルの表示を <code>All</code>（全カラム）、
+<code>PK/FK</code>（主キー・外部キーのみ）、<code>Name</code>（テーブル名のみ、カラムなし）の
+いずれかに切り替えられます。各ノードにも独自の <code>▤</code> ボタンがあり、<em>そのテーブルだけ</em>の
+表示モードを個別に切り替えられます — 1つの大きなテーブルだけを詳しく見つつ、残りはコンパクトに保ちたい
+ときに便利です。全体のモードを切り替えると、テーブルごとの個別設定はリセットされます。</p>
+
+<h3 id="viewer-names">論理名 <a class="anchor-link" href="#viewer-names">#</a></h3>
+<p>テーブルの DB コメントは、検索可能な「論理名」を兼ねます — 例えば <code>users（Customer accounts）</code>
+のように表示されます。ツールバーのトグルで、ライブビューの表示を <code>Both</code> / <code>Physical</code> /
+<code>Logical</code> のいずれかに切り替えられます。エクスポートにはエクスポートパネル内に<em>独自の</em>、
+独立した Both/Phys./Log. の選択肢があります（<a href="#exports">エクスポート</a>参照）— 今見ている表示を
+変えても、エクスポートされる内容は変わりません（その逆も同様です）。</p>
+
+<h3 id="viewer-views">名前付きビューと共有 <a class="anchor-link" href="#viewer-views">#</a></h3>
+<p><span class="btn-example">💾 Save</span> は名前の入力を求め、現在のビューをその名前で保存します
+（既存の名前を指定すると上書きされます）。保存されるビューには、除外テーブル、禁止テーブル、
+Auto-expand、depth、direction、カラム表示モード、そして現在表示中の各テーブルの位置が含まれます。</p>
+<div class="note"><strong>保存済みビューに<em>含まれない</em>もの</strong>
+名前表示モード（Both/Physical/Logical）、ダークモード、max-rows、ラベルの表示/非表示は、保存済みビューや
+共有リンクには含まれません — これらはページ全体に対する別個の設定です。</div>
+<p><span class="btn-example">Views…</span> ドロップダウンから保存済みビューを読み込むか、<code>🗑</code>
+で削除できます。<span class="btn-example">🔗</span> は<strong>共有リンク</strong>をコピーします —
+現在のビューを JSON エンコードしてページ自身の URL に付加したものです。そのリンクを開くと自動的に
+同じビューが再現されるので、PR の説明文やチャットにそのまま貼り付けられます。</p>
+
+<h3 id="viewer-edges">エッジの種類 <a class="anchor-link" href="#viewer-edges">#</a></h3>
+<p>図には3種類の関連が反映されますが、キャンバス上の線のスタイルは<strong>2種類</strong>しかなく、
+残りは Details ペインのバッジで区別されます。</p>
+<ul>
+<li><strong>実線</strong> — デフォルト: <code>--models</code> による宣言済みの association、または実際の DB FK 制約。キャンバス上ではこの2つは同じ見た目です。Details ペインの関連一覧では、制約に基づくエッジには <span class="badge badge-dbfk">DB FK</span> バッジが付き、単なる宣言済み association にはバッジが付きません。</li>
+<li><strong>破線</strong> — 多対多の関連（join テーブル経由でしか到達できないもの / <code>has_and_belongs_to_many</code> / <code>through</code>。直接の <code>belongs_to</code>/<code>has_one</code> がない場合）。</li>
+<li><strong>薄い点線</strong> — <code>--infer-fk</code> による名前ベースの推測。そのエッジを支える association がすべて推測によるものである場合のみ表示されます。Details ペインには <span class="badge badge-inf">inferred</span> バッジが付きます。カラム一覧の「FK」バッジは、推測だけでは<em>決して</em>付与されません — 実際の association がある場合のみです。</li>
+</ul>
+<p><span class="badge badge-manual">manual</span> バッジは、設定ファイルの <code>relations</code>
+から来た association を示します。（破線のエッジとは別に）破線の<em>ノードの枠</em>は、そのテーブルが
+直接チェックされたのではなく Auto-expand によって引き込まれたことを示します。</p>
+
+<h3 id="viewer-shortcuts">キーボードショートカット <a class="anchor-link" href="#viewer-shortcuts">#</a></h3>
+<p>これが全リストです — ズーム、保存、エクスポートにショートカットはありません。ツールバーの
+<span class="btn-example">?</span> ボタンから、このショートカット一覧の簡易版と、マウス操作の説明、
+そしてこのマニュアルへのリンクをビューア内で直接確認できます。</p>
+<table>
+<tr><th>キー</th><th>動作</th></tr>
+<tr><td><kbd>Esc</kbd></td><td>状況に応じて、次の優先順で実行されます: 開いているツールバーのメニュー（Export または <span class="btn-example">?</span> help）を閉じる → フィルタボックスにフォーカスがあり空でなければクリア → ハイライトボックスも同様にクリア → フォーカスモードを終了 → それ以外の場合はすべての選択を解除</td></tr>
+<tr><td><kbd>Ctrl/Cmd+Z</kbd></td><td>直前のレイアウト変更を取り消す</td></tr>
+<tr><td><kbd>Ctrl/Cmd+Shift+Z</kbd> または <kbd>Ctrl/Cmd+Y</kbd></td><td>やり直す</td></tr>
+<tr><td><kbd>Enter</kbd>（フィルタボックス内）</td><td>最有力候補のテーブル/カラムにジャンプ</td></tr>
+<tr><td><kbd>Enter</kbd> / <kbd>Shift+Enter</kbd>（ハイライトボックス内）</td><td>次/前の一致に移動</td></tr>
+</table>
+
+<h3 id="viewer-dark">ダークモード <a class="anchor-link" href="#viewer-dark">#</a></h3>
+<p><code>🌙</code> ツールバーボタンで図のダークモードを切り替えます。これは手動での切り替えのみです —
+ビューアは OS/ブラウザのカラースキームを自動的には追従しません — 選択内容は次回開いたときのために
+ブラウザに記憶されます。エクスポート（PNG/SVG）は、現在どちらのモードで見ていても常にライトパレットで
+描画されます。</p>
+
+<h3 id="viewer-print">印刷 <a class="anchor-link" href="#viewer-print">#</a></h3>
+<p>専用の印刷ボタンはありません — ブラウザ自体の印刷コマンド（<kbd>Ctrl/Cmd+P</kbd>）を使ってください。
+印刷用のスタイルシートがすべてのクロム（ペイン、ツールバー、凡例、フォーカスバー）を自動的に隠し、
+プレーンな白背景に図だけを残します。</p>
+</section>
+
+<section id="exports">
+<h2>エクスポート <a class="anchor-link" href="#exports">#</a></h2>
+<p>ツールバーの <span class="btn-example">⬇ Export</span> ボタンを押すと、上部に画像オプション、下部に
+フォーマットごとの行が並んだパネルが開きます。各行には <strong>Copy</strong> と
+<strong>Download</strong> の別々のボタンがあります — 画像をクリップボードに書き込めるブラウザであっても、
+ファイル保存という選択肢を奪わないよう、コピーとダウンロードは意図的に別のアクションとして分離されています。</p>
+<img class="shot" src="img/export.png" alt="エクスポートパネルが開いた状態。Join-table labels がチェック済み、root badges が未チェック、Names: Both の画像オプションの下に、PNG・SVG・Mermaid・PlantUML の4つのフォーマット行が Copy と Download ボタンとともに並んでいる">
+<p class="cap">エクスポートパネル: 上部に画像オプション、下部にフォーマットごとの Copy/Download 行。</p>
+
+<h3>画像オプション <span class="chip">PNG / SVG のみ</span></h3>
+<p>これら2つのチェックボックスと1つのトグルは、PNG と SVG のエクスポートにのみ適用されます —
+Mermaid、PlantUML、Excel ワークブックには影響しません。</p>
+<ul>
+<li><strong>Join-table labels</strong>（⇢）— デフォルトでオン。オフにすると、エクスポートした画像から
+「join テーブル経由」を示す小さなエッジラベルを除外します。</li>
+<li><strong>✓ root badges</strong> — デフォルトでオフ。オンにすると、エクスポートした画像から
+Auto-expand の起点を示すチェックマークバッジを除外します。</li>
+<li><strong>Names: Both / Phys. / Log.</strong> — ツールバーにあるライブビュー自体の名前表示モードとは
+独立しています（<a href="#viewer-names">ビューアガイド</a>参照）。自分は物理名で見ながら、
+ステークホルダー向けの資料には論理名だけをエクスポートする、といった使い方ができます。</li>
+</ul>
+<p>ライブの<a href="#viewer-search">ハイライト</a>検索は、PNG と SVG のどちらのエクスポートにも引き継がれます
+（常に取り除かれるテーブル/エッジの<em>選択</em>状態とは異なります）— ハイライトされた図をそのまま
+ドキュメントに貼り付けられるようにするためです。</p>
+
+<h3>PNG</h3>
+<p>図をまず SVG として描画し、オフスクリーンの <code>&lt;canvas&gt;</code> に読み込んでから、
+最大<strong>2倍</strong>のスケールでラスタライズします — canvas のサイズが約8000pxを超えそうな場合は
+（それより下に）クランプされます。ブラウザは canvas サイズの上限をそれよりずっと低く設定していることが多く、
+超えると <code>toBlob()</code> がサイレントに失敗するためです。<strong>Copy</strong> は直接クリップボードに
+書き込み、ブラウザが画像をクリップボードに書き込めない場合は自動的にファイルダウンロードにフォールバック
+します。<strong>Download</strong> は常にファイルを保存します。</p>
+
+<h3>SVG</h3>
+<p><strong>Copy</strong> は生の SVG マークアップをテキストとしてコピーします（失敗した場合はダウンロードに
+フォールバック）。<strong>Download</strong> は <code>.svg</code> ファイルを保存します。エクスポートされる
+SVG は、ライブビューの現在のダーク/ライト設定に関わらず、常にライトカラーパレットを使用します。</p>
+
+<h3>Mermaid</h3>
+<p><em>現在表示されている</em>ものをすべてカバーする <code>erDiagram</code> ブロックを生成します —
+フォーカス、非表示、除外の各状態がすべて反映されるため、必ずしもスキーマ全体になるとは限りません。
+各テーブルはカラム名・型・PK/FK マーカーを列挙するエンティティブロックになり、各エッジは Mermaid の
+鳥の足記法（crow's-foot）を使った関連の行になり、最初の association の名前がラベルとして付きます。
+カラムのコメント、null 許可、デフォルト値、論理名は Mermaid の出力には含まれません — 含まれるのは
+名前・型・キーマーカーのみです。</p>
+
+<h3>PlantUML</h3>
+<p>Mermaid と同じ範囲・制限（現在表示中のテーブルのみ、カラムコメントなし）ですが、エンティティの
+マークアップは異なります: 主キーのカラムが区切り線の上に先頭でリストされ、null 非許可のカラムには
+<code>*</code> が付き、外部キーのカラムには <code>&lt;&lt;FK&gt;&gt;</code> が付き、テーブルに論理名が
+あれば物理名の横に全角括弧で表示されます。</p>
+
+<h3 id="excel-template">Excel ワークブック</h3>
+<p><code>--excel FILE.xlsx</code> は、外部のスプレッドシートライブラリを一切使わずにワークブックを
+書き出します。</p>
+<ul>
+<li><strong>概要シート</strong> — テーブルごとに1行: <code>#</code>、<code>Table</code>（そのテーブル
+自身のシートへのハイパーリンク付き）、<code>Comment</code>、<code>Columns</code>（カラム数）、
+<code>Indexes</code>（インデックス数）、<code>Missing schema</code>。</li>
+<li><strong>テーブルごとのシート</strong> — テーブル名とコメント、続いてカラムの表（<code>#</code>、
+<code>Column</code>、<code>Type</code>、<code>Nullable</code>、<code>Default</code>、<code>Key</code>
+— <code>PK</code>/<code>FK</code>/空欄、<code>Extra</code>、<code>Comment</code>）、インデックスがあれば
+<strong>Indexes</strong> セクション（名前、カラム、unique の有無）、association があれば
+<strong>Associations</strong> セクション（種類、名前、参照先、そしてその出所: <code>DB FK</code> /
+<code>inferred</code> / <code>manual</code> / <code>code</code>）。</li>
+</ul>
+<p>
+<code>--excel-template FILE.xlsx</code> を使うと、erdscope 自体のコードに触れることなく、ワークブックの
+色・フォント・罫線を<strong>5セル契約</strong>を通じて再スタイルできます: テンプレートの最初のワークシート
+の A 列、1〜5行目に、それぞれ Title / Header / Data / Data (alternate row) / Section のスタイルを
+設定しておく必要があります。読み取られるのは各セルの<em>スタイル</em>（フォント、塗りつぶし、罫線）だけで、
+セルのテキスト内容は関係ありません。契約セルが欠けている場合は、その1つのロールだけ erdscope 組み込みの
+スタイルにフォールバックし、stderr に警告が出力されます。<code>.xlsx</code> としてまったく開けない
+ファイルだけがハードエラーになります。
+</p>
+<p>このリポジトリには
+<a href="https://github.com/orapli/erdscope/blob/main/excel-template.xlsx"><code>excel-template.xlsx</code></a>
+（<code>gen_excel_template.py</code> によって生成）が、すぐに編集できる出発点として同梱されています —
+その<strong>Styles</strong>シートには、5つの契約セルが erdscope 標準のスタイルであらかじめ設定されており、
+B 列には各ロールの平易な説明があります。</p>
+<div class="warn"><strong>注意</strong>
+<code>--excel-template</code> は <code>--excel</code> なしでは効果がありません — スタイル対象となる
+<code>--excel</code> を指定せずにテンプレートを渡した場合、erdscope は stderr に警告を出力し、それ以外は
+無視します。</div>
+</section>
+
+<section id="troubleshooting">
+<h2>トラブルシューティング / FAQ <a class="anchor-link" href="#troubleshooting">#</a></h2>
+
+<h3>日本語（またはマルチバイト）のコメントが文字化けする</h3>
+<p>erdscope は PyMySQL 経路でも <code>mysql</code> CLI フォールバック経路でも、明示的に
+<code>utf8mb4</code> で接続します — サーバーやセッションのデフォルト文字セットには頼りません。それでも
+コメントが化けている場合、最も可能性が高いのは、データベースに書き込まれた時点ですでに壊れていた
+というケースです（例えば以前に <code>utf8mb4</code> でない接続経由でインポートされた場合など）—
+erdscope のバグだと判断する前に、<code>utf8mb4</code> であることが確実なクライアントで、データベース内の
+コメントを直接確認してみてください。</p>
+
+<h3 id="faq-pymysql">PyMySQL がインストールされていない場合はどうなりますか？</h3>
+<p>erdscope は代わりに <code>mysql</code> CLI（<code>PATH</code> 上にある必要があります）にシェルアウト
+します。バッチ / タブ区切り出力を使うため、接続の挙動自体はそれ以外変わりません。パスワードはこの場合も
+<code>MYSQL_PWD</code> 環境変数経由で渡され、CLI 引数として渡されることはありません。PyMySQL と
+<code>mysql</code> CLI の<em>どちらも</em>利用できない場合は、どちらかをインストールするよう促す明確な
+エラーが表示されます — erdscope がここでサイレントに失敗することはありません。</p>
+
+<h3>VIEW が図に表示されないのはなぜですか？</h3>
+<p>これは仕様です — erdscope は <code>information_schema.TABLES.TABLE_TYPE = 'BASE TABLE'</code> の
+テーブルのみを読み込むため、VIEW は除外されます。これにより、図は実際にストレージに裏付けられたスキーマに
+絞り込まれます。</p>
+
+<h3 id="faq-infer-fk"><code>--infer-fk</code> がデフォルトでオフなのはなぜですか？</h3>
+<p>単なる <code>*_id</code> というカラム名は推測にすぎず、それを裏付けるもの（実際の association や
+DB FK 制約）が何もない場合、間違っている可能性があるためです。このフラグをオンにしても、その推測が
+遡って昇格するわけではありません — カラム一覧の「FK」バッジと PK/FK カラム表示モードは、あくまで実際の
+association だけに基づいており、推測によるエッジは常に見た目でも区別されます（薄い点線になります。
+<a href="#viewer-edges">エッジの種類</a>参照）。検証済みの関連と同じ見た目になることはありません。</p>
+
+<h3 id="faq-table-map"><code>--table-map</code> はどんなときに必要ですか？</h3>
+<p>これは Rails 専用の抜け道で、erdscope の静的解析ではモデルの実際のテーブルを特定できない、まれな
+ケースのためのものです — 最も多いのは、アプリ自身にはソースがなく、gem から提供される
+<code>concern</code> モジュールの中に <code>self.table_name = ...</code> の代入がある場合です。
+<code>--table-map 'Widget=crm_widgets'</code>（繰り返し指定可、カンマ区切りリストも可）を渡すことで
+明示的に上書きできます。この上書きは、そのモデル<em>を指す</em>他のモデルの association も修正するため、
+右ペインのリンクは正しいテーブルに解決されます。</p>
+
+<h3>Auto-expand がオンなのに関連テーブルが表示されません</h3>
+<p>Auto-expand は、チェック済み/フォーカス中の起点から BFS（幅優先探索）でたどり着けるテーブルだけを
+引き込みます。この探索が途中で止まる正当な理由がいくつかあります — 順に確認してみてください。</p>
+<ul>
+<li><a href="#viewer-focus">Direction（方向）</a>フィルタ（<code>Deps</code>/<code>Dependents</code>）が、実際の関連の向きと一致していない可能性があります。</li>
+<li>対象のテーブルが<a href="#viewer-hiding">禁止（Ban）</a>（<code>🚫</code>）されている可能性があります — 禁止されたテーブルは、単なる通過点としてであっても Auto-expand が決して越えません。</li>
+<li><a href="#viewer-focus">Depth（深度）</a>の上限が、そのホップ数に対して浅すぎる可能性があります。</li>
+<li>ノードの <code>⊕</code> ボタンでそのテーブルを引き込んだ場合、それは意図的に新しい Auto-expand の起点にはならないため、そこからさらに自動的に広がることはありません。</li>
+<li>生成時に <code>--only</code>/<code>--exclude</code> でそもそも図の対象外になっている場合、そのテーブルは単純に図のどこにも存在しません。</li>
+</ul>
+</section>
+
+<section id="extending">
+<h2>拡張 <a class="anchor-link" href="#extending">#</a></h2>
+<p>
+パース以降のすべて — HTML/JS ビューア、レイアウト、すべてのエクスポート形式 — は、<code>erd.py</code>
+自身のモジュール docstring に記載されている、単一の中間表現（IR）を消費します。
+</p>
+<pre><code>tables = {
+  "table_name": {
+    "primary_key": "id" | None,
+    "comment"?: str,
+    "schema_missing"?: bool,        # model exists but no DB table
+    "columns": [{"name","type","nullable","primary",
+                 "sql_type"?, "default"?, "extra"?, "comment"?}],
+    "indexes": [{"name","columns":[...],"unique":bool}],
+    "associations": [{"type": has_many|belongs_to|has_one|has_and_belongs_to_many,
+                      "name", "target",
+                      "through"?, "foreign_key"?, "polymorphic"?,
+                      "db_fk"?, "inferred"?}],
+  }
+}</code></pre>
+<p>
+新しいソースデータベースへの対応は、この同じ形を生成するパーサーを1つ追加するだけです — 例えば
+PostgreSQL であれば、既存の <code>parse_mysql()</code> と並ぶ <code>parse_postgres()</code> を1つ
+追加することになります。リポジトリにはまだ PostgreSQL 用のコードはありませんが、下地はすでに一部
+整っています: erdscope 内部の SQL 型の短縮表には、MySQL のものと並んで PostgreSQL 由来の型名
+（<code>character varying</code>、<code>timestamp with/without time zone</code>、
+<code>bigserial</code>、<code>jsonb</code>、<code>bytea</code>、<code>inet</code> など）がすでに
+含まれており、現時点で IR にデータを流し込んでいるのは MySQL 用のパスだけであるにもかかわらず、
+IR の型の語彙は複数のエンジンを見据えて設計されていることがうかがえます。
+</p>
+</section>
+
+</main>
+</div>
+
+<footer>
+erdscope は MIT ライセンスです。ソースコード、Issue、ライブデモは
+<a href="https://github.com/orapli/erdscope">github.com/orapli/erdscope</a> にあります。
+</footer>
+
+<script>
+(function(){
+  var btn = document.getElementById('nav-toggle');
+  var toc = document.getElementById('toc');
+  btn.addEventListener('click', function(){
+    var open = toc.classList.toggle('open');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  toc.addEventListener('click', function(e){
+    if(e.target.tagName === 'A' && window.innerWidth <= 860){
+      toc.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
+  var sections = links
+    .map(function(a){ return document.getElementById(a.getAttribute('href').slice(1)); })
+    .filter(Boolean);
+  function onScroll(){
+    var pos = window.scrollY + 90;
+    var current = sections[0];
+    for(var i = 0; i < sections.length; i++){
+      if(sections[i].offsetTop <= pos) current = sections[i];
+    }
+    links.forEach(function(a){ a.classList.remove('active'); });
+    if(current){
+      var match = links.find(function(a){ return a.getAttribute('href') === '#' + current.id; });
+      if(match) match.classList.add('active');
+    }
+  }
+  document.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+</script>
+</body>
+</html>

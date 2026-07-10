@@ -4,7 +4,7 @@ mastodon/
 !docs/*.html
 __pycache__/
 HANDOFF.md
-COLLAB_SONNET.md
+COLLAB_*.md
 dist/
 build/
 *.egg-info/
