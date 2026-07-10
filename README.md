@@ -33,7 +33,7 @@ CLI/config reference, a full viewer guide, and troubleshooting. ([日本語版 �
 
 `pip install erdscope` (or `pipx install erdscope`) gives you the `erdscope` command.
 Prefer not to install anything? `erd.py` is a single, dependency-free file — grab it
-and run it with any Python 3:
+and run it with any Python 3.9+:
 
 ```bash
 curl -O https://raw.githubusercontent.com/orapli/erdscope/main/erd.py
@@ -95,7 +95,8 @@ annotated sample based on the live demo's schema.
 
 `erd.py` runs with **zero required dependencies** — everything below is optional, and
 the tool degrades gracefully (falls back, or fails with a clear message) when a piece
-is missing.
+is missing. If you installed via pip, extras pull them in for you:
+`pip install 'erdscope[mysql]'` (PyMySQL), `'erdscope[yaml]'` (PyYAML), or `'erdscope[all]'`.
 
 | Library | Used for | If not installed |
 |---|---|---|
@@ -132,7 +133,8 @@ Feature highlights — each link goes to the relevant [manual](https://orapli.gi
 - **[Logical names](https://orapli.github.io/erdscope/manual.html#viewer-names)** — a table's DB comment doubles as a searchable
   logical name (e.g. `users（Customer accounts）`), with independent display modes for
   the live view and exports
-- **Extras** — dark mode, print stylesheet, resizable/collapsible panes
+- **Extras** — a built-in `?` shortcuts/help popup, dark mode, print stylesheet,
+  resizable/collapsible panes
 
 ## Tests
 

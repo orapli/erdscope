@@ -210,13 +210,15 @@ diagram will be.
 erdscope mysql://readonly@127.0.0.1:3306/myapp -o erd.html</code></pre>
 <p>
 Prefer not to install anything? <a href="https://github.com/orapli/erdscope/blob/main/erd.py"><code>erd.py</code></a>
-is a single, dependency-free file — download it and run it with any Python 3, identically
+is a single, dependency-free file — download it and run it with any Python 3.9+, identically
 to the <code>erdscope</code> command used throughout this manual:
 </p>
 <pre><code>curl -O https://raw.githubusercontent.com/orapli/erdscope/main/erd.py
 python3 erd.py mysql://readonly@127.0.0.1:3306/myapp -o erd.html</code></pre>
-<p>Requirements: <strong>Python 3</strong>, nothing else, strictly speaking. Two libraries make the tool
-nicer to use but are entirely optional — erdscope degrades gracefully when they're missing:</p>
+<p>Requirements: <strong>Python 3.9+</strong>, nothing else, strictly speaking. Two libraries make the tool
+nicer to use but are entirely optional — erdscope degrades gracefully when they're missing.
+With the pip package, extras pull them in for you: <code>pip install 'erdscope[mysql]'</code> (PyMySQL),
+<code>'erdscope[yaml]'</code> (PyYAML), or <code>'erdscope[all]'</code>:</p>
 <table>
 <tr><th>Library</th><th>Used for</th><th>If not installed</th></tr>
 <tr><td><a href="https://pypi.org/project/PyMySQL/">PyMySQL</a></td><td>The DB connection</td><td>Falls back to shelling out to the <code>mysql</code> CLI (must be on <code>PATH</code>) — see <a href="#faq-pymysql">Troubleshooting</a></td></tr>
