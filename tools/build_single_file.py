@@ -28,11 +28,14 @@ SRC = ROOT / 'src' / 'erdscope'
 TARGET = ROOT / 'erd.py'
 
 # Concatenation order of the Python fragments. This is the source of truth for
-# assembly order; the files are contiguous slices of one flat module.
+# assembly order; the files are contiguous slices of one flat module. An entry
+# ending in '/' is a *folder* of fragments — every ``*.py`` inside is included
+# automatically (see expand_module), so a pluggable area like ``db/`` grows by
+# just dropping a new file in, with no edit here.
 MODULES = [
     'header.py',      # shebang, module docstring, imports
     'ir.py',          # IR/provider/provenance contract + SQL type shorthand
-    'adapters.py',    # MySQL and PostgreSQL adapters (DB -> IR)
+    'db/',            # DBAdapter base + registry, and the built-in DB adapters
     'merge.py',       # merge_ir + reconcile_db_fks + association identity
     'overlays.py',    # inflector, Rails/Prisma/Django parsers, FK inference
     'providers.py',   # source detection, provider dispatchers, config layer + validation
@@ -41,6 +44,23 @@ MODULES = [
     'cli.py',         # argparse main, serialize_for_viewer, _finish
 ]
 
+
+def expand_module(entry):
+    """Resolve a MODULES entry to the ordered list of fragment paths it emits.
+
+    A plain filename is itself. A folder entry (trailing '/') expands to every
+    ``*.py`` inside it, with ``base.py`` emitted FIRST (it defines the abstract
+    base and registry that the sibling implementation files subclass at import
+    time) and the rest in sorted order — a deterministic, "base before its
+    subclasses" ordering so the amalgamation stays load-safe and byte-stable."""
+    if not entry.endswith('/'):
+        return [SRC / entry]
+    folder = SRC / entry.rstrip('/')
+    files = sorted(folder.glob('*.py'), key=lambda p: (p.name != 'base.py', p.name))
+    if not files:
+        sys.exit(f'build error: folder module {entry!r} contains no *.py files')
+    return files
+
 # The sentinel line in exporters.py. It is valid Python (a placeholder string
 # assignment), so the fragment stays parseable; the build swaps it for the real
 # viewer. The marker must never occur in the viewer content.
@@ -48,7 +68,8 @@ SENTINEL = 'HTML_TEMPLATE = r"""__ERDSCOPE_VIEWER_TEMPLATE__"""'
 
 
 def build():
-    python = ''.join((SRC / m).read_text(encoding='utf-8') for m in MODULES)
+    fragments = [path for m in MODULES for path in expand_module(m)]
+    python = ''.join(p.read_text(encoding='utf-8') for p in fragments)
     viewer = (SRC / 'viewer.html').read_text(encoding='utf-8')
     if python.count(SENTINEL) != 1:
         sys.exit(f'build error: expected exactly one viewer sentinel across '

@@ -1,3 +1,15 @@
+# ---------------------------------------------------------------------------
+# Layered IR merge — Phase A (identity merge) + Phase B (reconcile_db_fks)
+# REFACTOR_PLAN.md §7 (field rules), §8 (association identity), §9 (provenance).
+#
+# The pipeline builds ProviderResult layers (db / framework / config) and folds
+# them with merge_ir, whose Phase B reconcile_db_fks subsumes the old
+# per-table dedupe pass.
+# ---------------------------------------------------------------------------
+# Field authority as a numeric rank: among the layers that PROVIDE a field
+# (key present — §4: an absent key never participates), pick the value
+# maximizing (rank, spec_order); spec_order is the index in `layers`, so a
+# later layer wins ties (e.g. multiple frameworks -> last one wins).
 _PHYSICAL_RANK = {'config': 3, 'db': 2, 'framework': 1}   # DB is the physical truth
 _LOGICAL_RANK = {'config': 3, 'framework': 2, 'db': 1}    # code owns logical names
 # Column attributes split by authority kind (§7.2). Everything not physical

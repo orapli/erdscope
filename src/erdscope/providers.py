@@ -54,18 +54,20 @@ def _password_free_url(url):
     return f'{out}?{u.query}' if u.query else out
 
 def db_provider(url):
-    """DB ProviderResult (§5). Dispatches on the URL scheme to the existing
-    parse_mysql/parse_postgres (unchanged) and packages the IR with a
-    password-free location. Referenced as module globals so the test harness's
-    parse_mysql monkeypatch still applies."""
+    """DB ProviderResult (§5). Dispatches on the URL scheme to the registered
+    DBAdapter (built-in MySQL/PostgreSQL, or a user adapter loaded via
+    --adapter) and packages the IR with a password-free location. The built-in
+    adapters delegate to the module-level parse_mysql/parse_postgres, so the
+    test harness's monkeypatch of those still applies."""
     scheme = urlparse(url).scheme
-    if scheme == 'mysql':
-        return make_provider_result('db', 'mysql', parse_mysql(url),
-                                    location=_password_free_url(url))
-    if scheme in ('postgres', 'postgresql'):
-        return make_provider_result('db', 'postgres', parse_postgres(url),
-                                    location=_password_free_url(url))
-    sys.exit('Error: a database URL is required (mysql:// or postgres://)')
+    adapter_cls = db_adapter_for(scheme)
+    if adapter_cls is None:
+        known = ', '.join(sorted(DB_ADAPTERS)) or '(none registered)'
+        sys.exit(f'Error: no database adapter for URL scheme {scheme!r} '
+                 f'(known schemes: {known})')
+    adapter = adapter_cls()
+    return make_provider_result('db', adapter.name, adapter.fetch(url),
+                                location=_password_free_url(url))
 
 def framework_provider(mroot, table_map=None):
     """Framework ProviderResult (§5). Detects the code kind and resolves the

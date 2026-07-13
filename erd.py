@@ -72,7 +72,7 @@ they are not yet used by the main path.
     #   config relations/associations -> manual ; --infer-fk post-pass -> inferred
     #   legacy flag mapping: db_fk/inferred/manual -> {<flag>: True}; declared -> {}
 """
-import ast, copy, getpass, os, subprocess, sys, json, re, argparse
+import abc, ast, copy, getpass, os, subprocess, sys, json, re, argparse
 from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse
@@ -152,63 +152,66 @@ SQL_TYPES = {
     'boolean': 'boolean', 'jsonb': 'jsonb', 'json': 'json', 'uuid': 'uuid',
     'bytea': 'binary', 'blob': 'binary', 'longblob': 'binary', 'inet': 'inet',
 }
-
 # ---------------------------------------------------------------------------
-# MySQL adapter (information_schema via PyMySQL or the mysql CLI)
+# Database adapters — the DB layer's pluggable "URL scheme -> IR" surface.
+#
+# A DBAdapter turns a connection URL into the IR (the `tables` dict every
+# downstream step consumes). The built-in engines live in the sibling db/*.py
+# fragments — one file per engine — and each @register_adapter's its class under
+# the URL scheme(s) it answers to. Adding an engine is "drop a db/<name>.py that
+# subclasses DBAdapter and registers itself"; the build picks the folder up
+# automatically (tools/build_single_file.py), and users can register the very
+# same way at run time from a --adapter plugin file, without editing erdscope.
+#
+# This base file also holds the machinery the built-in adapters share: the
+# information_schema-shaped IR builder (mysql_ir), the "is this FK 1:1" test,
+# and the tab-separated-output unescaping the CLI fallbacks need. Those stay
+# module-level free functions (not methods) on purpose — the test suite
+# monkeypatches them by name, and gen_demo calls erd.mysql_ir directly.
 # ---------------------------------------------------------------------------
-def mysql_query_rows(url, sql):
-    """Run a query and return rows as tuples of strings ('' for NULL).
-    Prefers PyMySQL when installed; otherwise shells out to the mysql CLI,
-    so the tool itself stays dependency-free."""
-    u = urlparse(url)
-    host, port, db = u.hostname or '127.0.0.1', u.port or 3306, u.path.lstrip('/')
-    try:
-        import pymysql
-    except ImportError:
-        pymysql = None
-    if pymysql:
-        try:
-            conn = pymysql.connect(host=host, port=port, user=u.username,
-                                   password=u.password or os.environ.get('MYSQL_PWD', ''),
-                                   database=db, charset='utf8mb4')
-        except pymysql.err.MySQLError as e:
-            # wrong host/password/db is the single most common daily failure
-            # here — a raw pymysql traceback is far less useful than the
-            # clean one-liner the mysql-CLI path below already gives
-            sys.exit(f'Error: could not connect to MySQL at {host}:{port}: {e}')
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql)
-                return [tuple('' if v is None else str(v) for v in r)
-                        for r in cur.fetchall()]
-        except pymysql.err.MySQLError as e:
-            sys.exit(f'Error: mysql query failed: {e}')
-        finally:
-            conn.close()
-    # No --raw: table/column comments are free-text and commonly contain
-    # tabs or newlines, which --raw's disabled escaping would otherwise
-    # leave as literal bytes in the tab-separated stream — corrupting the
-    # field count on split('\t') and splitting records early on splitlines().
-    # Without --raw, mysql escapes \0 \b \n \r \t \\ and represents NULL as
-    # the literal two-char marker \N, all unescaped below.
-    cmd = ['mysql', '--batch', '--skip-column-names',
-           '--default-character-set=utf8mb4', '-h', host, '-P', str(port)]
-    if u.username:
-        cmd += ['-u', u.username]
-    cmd += [db, '-e', sql]
-    env = dict(os.environ)
-    if u.password:
-        env['MYSQL_PWD'] = u.password  # keep the password off the argv
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
-    except FileNotFoundError:
-        sys.exit('Error: neither PyMySQL nor the mysql CLI is available '
-                 '(pip install pymysql, or install a MySQL client)')
-    if r.returncode != 0:
-        sys.exit(f'Error: mysql query failed: {r.stderr.strip()}')
-    return [tuple(_unescape_mysql_field(v) for v in line.split('\t'))
-            for line in r.stdout.splitlines()]
+DB_ADAPTERS = {}   # url scheme (lower-case) -> DBAdapter subclass
 
+
+def register_adapter(cls):
+    """Class decorator: register a DBAdapter subclass under each of its
+    `schemes` (case-insensitively). Returns the class unchanged, so it can also
+    be used directly. A later registration for a scheme replaces an earlier one,
+    which is exactly what lets a --adapter plugin override a built-in engine."""
+    for scheme in cls.schemes:
+        DB_ADAPTERS[scheme.lower()] = cls
+    return cls
+
+
+class DBAdapter(abc.ABC):
+    """Abstract base for a database adapter: read a live schema from a
+    connection URL and return the IR (the `tables` dict mysql_ir builds).
+
+    To add another engine, subclass this and:
+      * set `schemes` to the URL scheme(s) it answers to, e.g. ('sqlite',);
+      * set `name` to the short provider id recorded in the IR's Source (§5),
+        e.g. 'sqlite' — it appears in provenance and the output;
+      * optionally set `label` to a pretty display name for the progress line
+        (defaults to `name`);
+      * implement fetch(url) to return the IR;
+      * decorate the class with @register_adapter.
+    """
+    schemes = ()      # URL schemes handled, e.g. ('postgres', 'postgresql')
+    name = ''         # provider id for the ProviderResult Source (§5)
+    label = ''        # pretty display name for the "Fetched from …" line
+
+    @abc.abstractmethod
+    def fetch(self, url):
+        """Return the IR (`tables` dict) for `url`. Called once per run."""
+        raise NotImplementedError
+
+
+def db_adapter_for(scheme):
+    """The registered DBAdapter subclass for a URL scheme (case-insensitive),
+    or None if no adapter handles it."""
+    return DB_ADAPTERS.get((scheme or '').lower())
+
+
+# --- Tab-separated CLI output unescaping (shared by the CLI fallbacks) ------
 _MYSQL_TSV_ESCAPES = {'0': '\0', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', '\\': '\\'}
 # COPY TO STDOUT (the psql CLI path) escapes the same characters plus \f \v
 _COPY_TSV_ESCAPES = {**_MYSQL_TSV_ESCAPES, 'f': '\f', 'v': '\v'}
@@ -303,6 +306,61 @@ def _unique_single_col(table, col):
     """True if `col` is, by itself, the entire column list of some unique
     index on `table` — the DB-level signal for "this FK is really 1:1"."""
     return any(ix['unique'] and ix['columns'] == [col] for ix in table['indexes'])
+# ---------------------------------------------------------------------------
+# MySQL adapter (information_schema via PyMySQL or the mysql CLI)
+# ---------------------------------------------------------------------------
+def mysql_query_rows(url, sql):
+    """Run a query and return rows as tuples of strings ('' for NULL).
+    Prefers PyMySQL when installed; otherwise shells out to the mysql CLI,
+    so the tool itself stays dependency-free."""
+    u = urlparse(url)
+    host, port, db = u.hostname or '127.0.0.1', u.port or 3306, u.path.lstrip('/')
+    try:
+        import pymysql
+    except ImportError:
+        pymysql = None
+    if pymysql:
+        try:
+            conn = pymysql.connect(host=host, port=port, user=u.username,
+                                   password=u.password or os.environ.get('MYSQL_PWD', ''),
+                                   database=db, charset='utf8mb4')
+        except pymysql.err.MySQLError as e:
+            # wrong host/password/db is the single most common daily failure
+            # here — a raw pymysql traceback is far less useful than the
+            # clean one-liner the mysql-CLI path below already gives
+            sys.exit(f'Error: could not connect to MySQL at {host}:{port}: {e}')
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return [tuple('' if v is None else str(v) for v in r)
+                        for r in cur.fetchall()]
+        except pymysql.err.MySQLError as e:
+            sys.exit(f'Error: mysql query failed: {e}')
+        finally:
+            conn.close()
+    # No --raw: table/column comments are free-text and commonly contain
+    # tabs or newlines, which --raw's disabled escaping would otherwise
+    # leave as literal bytes in the tab-separated stream — corrupting the
+    # field count on split('\t') and splitting records early on splitlines().
+    # Without --raw, mysql escapes \0 \b \n \r \t \\ and represents NULL as
+    # the literal two-char marker \N, all unescaped below.
+    cmd = ['mysql', '--batch', '--skip-column-names',
+           '--default-character-set=utf8mb4', '-h', host, '-P', str(port)]
+    if u.username:
+        cmd += ['-u', u.username]
+    cmd += [db, '-e', sql]
+    env = dict(os.environ)
+    if u.password:
+        env['MYSQL_PWD'] = u.password  # keep the password off the argv
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        sys.exit('Error: neither PyMySQL nor the mysql CLI is available '
+                 '(pip install pymysql, or install a MySQL client)')
+    if r.returncode != 0:
+        sys.exit(f'Error: mysql query failed: {r.stderr.strip()}')
+    return [tuple(_unescape_mysql_field(v) for v in line.split('\t'))
+            for line in r.stdout.splitlines()]
 
 def parse_mysql(url):
     db = urlparse(url).path.lstrip('/')
@@ -335,6 +393,16 @@ def parse_mysql(url):
         f"ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX")
     return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
 
+@register_adapter
+class MySQLAdapter(DBAdapter):
+    """MySQL / MariaDB, read from information_schema (PyMySQL, or the mysql CLI
+    as a dependency-free fallback)."""
+    schemes = ('mysql',)
+    name = 'mysql'
+    label = 'MySQL'
+
+    def fetch(self, url):
+        return parse_mysql(url)
 # ---------------------------------------------------------------------------
 # PostgreSQL adapter (pg_catalog via psycopg/psycopg2 or the psql CLI)
 # ---------------------------------------------------------------------------
@@ -472,6 +540,16 @@ def parse_postgres(url):
         f"ORDER BY c.relname, i.relname, k.ord")
     return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
 
+@register_adapter
+class PostgresAdapter(DBAdapter):
+    """PostgreSQL, read from pg_catalog (psycopg/psycopg2, or the psql CLI as a
+    dependency-free fallback)."""
+    schemes = ('postgres', 'postgresql')
+    name = 'postgres'
+    label = 'PostgreSQL'
+
+    def fetch(self, url):
+        return parse_postgres(url)
 # ---------------------------------------------------------------------------
 # Layered IR merge — Phase A (identity merge) + Phase B (reconcile_db_fks)
 # REFACTOR_PLAN.md §7 (field rules), §8 (association identity), §9 (provenance).
@@ -1447,18 +1525,20 @@ def _password_free_url(url):
     return f'{out}?{u.query}' if u.query else out
 
 def db_provider(url):
-    """DB ProviderResult (§5). Dispatches on the URL scheme to the existing
-    parse_mysql/parse_postgres (unchanged) and packages the IR with a
-    password-free location. Referenced as module globals so the test harness's
-    parse_mysql monkeypatch still applies."""
+    """DB ProviderResult (§5). Dispatches on the URL scheme to the registered
+    DBAdapter (built-in MySQL/PostgreSQL, or a user adapter loaded via
+    --adapter) and packages the IR with a password-free location. The built-in
+    adapters delegate to the module-level parse_mysql/parse_postgres, so the
+    test harness's monkeypatch of those still applies."""
     scheme = urlparse(url).scheme
-    if scheme == 'mysql':
-        return make_provider_result('db', 'mysql', parse_mysql(url),
-                                    location=_password_free_url(url))
-    if scheme in ('postgres', 'postgresql'):
-        return make_provider_result('db', 'postgres', parse_postgres(url),
-                                    location=_password_free_url(url))
-    sys.exit('Error: a database URL is required (mysql:// or postgres://)')
+    adapter_cls = db_adapter_for(scheme)
+    if adapter_cls is None:
+        known = ', '.join(sorted(DB_ADAPTERS)) or '(none registered)'
+        sys.exit(f'Error: no database adapter for URL scheme {scheme!r} '
+                 f'(known schemes: {known})')
+    adapter = adapter_cls()
+    return make_provider_result('db', adapter.name, adapter.fetch(url),
+                                location=_password_free_url(url))
 
 def framework_provider(mroot, table_map=None):
     """Framework ProviderResult (§5). Detects the code kind and resolves the
@@ -5984,16 +6064,14 @@ def main():
     engine_name = None
     if url:
         scheme = url.split('://', 1)[0]
-        if scheme == 'mysql':
-            engine_name = 'MySQL'
-        elif scheme in ('postgres', 'postgresql'):
-            engine_name = 'PostgreSQL'
-        else:
+        adapter_cls = db_adapter_for(scheme)
+        if adapter_cls is None:
             sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
                      'as the CLI argument, or set `database` (and optionally engine/host/user/'
                      'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
                      'postgres://readonly@127.0.0.1:5432/myapp. Or run with no database at '
                      'all by supplying --models and/or a config file with a `tables:` section')
+        engine_name = adapter_cls.label or adapter_cls.name or scheme
 
     if hasattr(args, 'table_map'):
         tm = {}

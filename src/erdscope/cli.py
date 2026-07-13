@@ -64,16 +64,14 @@ def main():
     engine_name = None
     if url:
         scheme = url.split('://', 1)[0]
-        if scheme == 'mysql':
-            engine_name = 'MySQL'
-        elif scheme in ('postgres', 'postgresql'):
-            engine_name = 'PostgreSQL'
-        else:
+        adapter_cls = db_adapter_for(scheme)
+        if adapter_cls is None:
             sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
                      'as the CLI argument, or set `database` (and optionally engine/host/user/'
                      'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
                      'postgres://readonly@127.0.0.1:5432/myapp. Or run with no database at '
                      'all by supplying --models and/or a config file with a `tables:` section')
+        engine_name = adapter_cls.label or adapter_cls.name or scheme
 
     if hasattr(args, 'table_map'):
         tm = {}
