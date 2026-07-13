@@ -1,0 +1,146 @@
+# ---------------------------------------------------------------------------
+# Framework overlays — the Framework layer's pluggable "code -> IR" surface.
+#
+# A FrameworkOverlay reads association (and, for Prisma/Django, column)
+# semantics out of application code and returns a ProviderResult that merge_ir
+# folds over the DB layer. The built-in overlays (Rails, Prisma, Django) live in
+# the sibling frameworks/*.py fragments — one per framework — and each
+# @register_overlay's its class. Adding one is "drop a frameworks/<name>.py that
+# subclasses FrameworkOverlay and registers itself"; the build picks the folder
+# up automatically, and a --adapter plugin can register the very same way at run
+# time (register_overlay is exported alongside register_adapter).
+#
+# This base file also holds the machinery the overlays share: the inflector
+# (pluralize / to_snake / class_to_table, used by Rails and by FK inference) and
+# the post-merge *_id FK inference pass. Those stay module-level free functions
+# because the test suite calls them by name.
+# ---------------------------------------------------------------------------
+IRREGULAR = {
+    'person':'people','child':'children','mouse':'mice','datum':'data',
+    'medium':'media','analysis':'analyses','criterion':'criteria',
+    'tooth':'teeth','foot':'feet','goose':'geese','ox':'oxen',
+    'leaf':'leaves','life':'lives','knife':'knives','wife':'wives',
+}
+
+def pluralize(word):
+    if not word: return word
+    if word in IRREGULAR: return IRREGULAR[word]
+    if re.search(r'[^aeiou]y$', word): return word[:-1] + 'ies'
+    if re.search(r'(s|x|z|ch|sh)$', word): return word + 'es'
+    return word + 's'
+
+def to_snake(name):
+    s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', name)
+    return re.sub(r'([a-z\d])([A-Z])', r'\1_\2', s).lower()
+
+def class_to_table(name):
+    return pluralize(to_snake(name.split('::')[-1]))
+
+# ---------------------------------------------------------------------------
+# Overlay base class + registry
+# ---------------------------------------------------------------------------
+FRAMEWORK_OVERLAYS = []   # registered FrameworkOverlay subclasses (see priority)
+
+
+def register_overlay(cls):
+    """Class decorator: register a FrameworkOverlay subclass. Returns the class
+    unchanged. Detection consults overlays in `priority` order (see
+    framework_overlay_for), so registration/concat order does not matter."""
+    FRAMEWORK_OVERLAYS.append(cls)
+    return cls
+
+
+class FrameworkOverlay(abc.ABC):
+    """Abstract base for a framework overlay: recognise an application-code
+    project and parse its schema/associations into a ProviderResult.
+
+    To add another framework, subclass this and:
+      * set `name` to the short provider id recorded in the IR's Source (§5),
+        e.g. 'sequelize';
+      * set `priority` if detection ordering matters (lower runs first; the
+        first overlay whose detect() is true wins);
+      * implement detect(root) -> bool over a --models path (a directory, or a
+        single schema file);
+      * implement build(root, table_map) -> ProviderResult (table_map is the
+        Rails table override map; ignore it if not applicable);
+      * decorate the class with @register_overlay.
+    """
+    name = ''
+    priority = 100
+
+    @abc.abstractmethod
+    def detect(self, root):
+        """True if `root` (a --models path) is a project this overlay handles."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def build(self, root, table_map):
+        """Return a framework ProviderResult for `root`."""
+        raise NotImplementedError
+
+
+def framework_overlay_for(root):
+    """The first registered overlay (in priority order) that recognises `root`,
+    or None. Instantiating each is cheap — they hold no state."""
+    for cls in sorted(FRAMEWORK_OVERLAYS, key=lambda c: (c.priority, c.name)):
+        overlay = cls()
+        if overlay.detect(root):
+            return overlay
+    return None
+
+def detect_code_source(root):
+    """Classify a --models path: the `name` of the overlay that recognises it
+    (a Rails app/models dir, a Prisma schema, or a Django project), or None."""
+    overlay = framework_overlay_for(root)
+    return overlay.name if overlay else None
+
+def framework_provider(mroot, table_map=None):
+    """Framework ProviderResult (§5). Finds the overlay that recognises the
+    --models path and delegates to its build(), which resolves the concrete
+    input (the Rails app/models dir, the schema.prisma file, or the Django
+    root) and parses it."""
+    overlay = framework_overlay_for(mroot)
+    if overlay is None:
+        sys.exit(f'Error: could not detect the code kind at {mroot} '
+                 '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
+    return overlay.build(mroot, table_map)
+
+# ---------------------------------------------------------------------------
+# FK column inference — guess relations from `xxx_id` columns (IR post-pass)
+# ---------------------------------------------------------------------------
+def infer_fk_associations(tables):
+    """Infer edges from FK-looking column names even when no association is
+    declared. Pairs already related in either direction are skipped. Marked with
+    provenance 'inferred' and an empty `sources` (no provider layer contributed
+    it — it is a post-merge heuristic derived from *_id column names, not a
+    merge of source layers). Tries the pluralized table name first (Rails
+    convention) and falls back to the singular stem as-is (common with
+    Prisma/other schemas that don't pluralize table names) — whichever
+    actually exists. A column alone under a single-column unique index is
+    inferred as has_one (1:1) instead of belongs_to (default many:1), same
+    signal the real-DB-FK path uses."""
+    added = 0
+    incoming = {}  # table -> set(tables that reference it)
+    for name, t in tables.items():
+        for a in t['associations']:
+            incoming.setdefault(a['target'], set()).add(name)
+    for name, t in tables.items():
+        outgoing = {a['target'] for a in t['associations']}
+        for c in t['columns']:
+            cn = c['name']
+            if not cn.endswith('_id') or c.get('primary'):
+                continue
+            stem = cn[:-3]
+            plural = pluralize(stem)
+            target = plural if plural in tables else stem if stem in tables else None
+            if (target is None or target == name
+                    or target in outgoing              # we already reference it
+                    or target in incoming.get(name, ())):  # it already references us
+                continue
+            assoc_type = 'has_one' if _unique_single_col(t, cn) else 'belongs_to'
+            t['associations'].append({'type': assoc_type, 'name': stem,
+                                      'target': target, 'foreign_key': cn,
+                                      'provenance': 'inferred', 'sources': []})
+            outgoing.add(target)
+            added += 1
+    return added

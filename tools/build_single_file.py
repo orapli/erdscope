@@ -37,8 +37,8 @@ MODULES = [
     'ir.py',          # IR/provider/provenance contract + SQL type shorthand
     'db/',            # DBAdapter base + registry, and the built-in DB adapters
     'merge.py',       # merge_ir + reconcile_db_fks + association identity
-    'overlays.py',    # inflector, Rails/Prisma/Django parsers, FK inference
-    'providers.py',   # source detection, provider dispatchers, config layer + validation
+    'frameworks/',    # FrameworkOverlay base + registry, Rails/Prisma/Django, FK inference
+    'providers.py',   # DB provider seam, config layer + validation
     'exporters.py',   # Excel writer + the HTML_TEMPLATE sentinel (viewer inlined below)
     'config.py',      # config-file loading/validation, URL assembly, title
     'cli.py',         # argparse main, serialize_for_viewer, _finish

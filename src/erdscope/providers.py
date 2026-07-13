@@ -1,45 +1,11 @@
-def detect_code_source(root):
-    """Classify a --models path: a Rails app/models dir, a Prisma schema,
-    or a Django project."""
-    if root.is_file():
-        return 'prisma' if root.suffix == '.prisma' else None
-    if (root / 'app' / 'models').is_dir() or any(root.glob('*.rb')):
-        return 'rails'
-    if (root / 'manage.py').exists():
-        return 'django'
-    for cand in (root / 'prisma' / 'schema.prisma', root / 'schema.prisma'):
-        if cand.exists():
-            return 'prisma'
-    return None
-
 # ---------------------------------------------------------------------------
-# Framework leaf providers (REFACTOR_PLAN.md §5) — ProviderResult wrappers.
+# Provider dispatchers (DB) + config layer construction/validation.
 #
-# Each wraps its existing parser (unchanged) and packages the FULL IR —
-# crucially the columns — as a ProviderResult, which merge_ir folds against the
-# DB layer. The `framework_provider` dispatcher (detect + resolve path) routes
-# the merge through these. These leaf providers take an already-resolved input
-# (a .prisma file path / a Django project root); detection and path resolution
-# live in detect_code_source / framework_provider.
+# The framework overlays and their dispatcher (framework_provider /
+# detect_code_source) live in the frameworks/ package; db_provider dispatches
+# through the db/ adapter registry. What remains here is the DB provider seam
+# and everything that builds/validates the config layer.
 # ---------------------------------------------------------------------------
-def prisma_provider(schema_path):
-    """ProviderResult for a resolved Prisma schema file. Retains columns
-    (with Prisma types, including enum field types as the enum name) so a
-    Prisma-only run (Step 8) or the Step-6 merge can use them instead of
-    discarding them the way the current association-only overlay does."""
-    tables = parse_prisma(schema_path)
-    return make_provider_result('framework', 'prisma', tables,
-                                location=str(schema_path))
-
-def django_provider(root):
-    """ProviderResult for a resolved Django project root. Retains columns —
-    including the synthetic `id` PK Django backfills and the `<name>_id` FK
-    columns emitted for ForeignKey/OneToOneField — that the current overlay
-    path drops."""
-    tables = parse_django(root)
-    return make_provider_result('framework', 'django', tables,
-                                location=str(root))
-
 def _password_free_url(url):
     """Rebuild a connection URL without its password, for a ProviderResult's
     Source.location (§5: location is password-free). Keeps user@host:port/db
@@ -68,23 +34,6 @@ def db_provider(url):
     adapter = adapter_cls()
     return make_provider_result('db', adapter.name, adapter.fetch(url),
                                 location=_password_free_url(url))
-
-def framework_provider(mroot, table_map=None):
-    """Framework ProviderResult (§5). Detects the code kind and resolves the
-    concrete input path (the Rails app/models dir, the schema.prisma file, or
-    the Django root), then dispatches to the matching leaf provider."""
-    kind = detect_code_source(mroot)
-    if kind == 'rails':
-        mdir = mroot / 'app' / 'models' if (mroot / 'app' / 'models').is_dir() else mroot
-        return rails_provider(mdir, table_map)
-    if kind == 'prisma':
-        schema = mroot if mroot.is_file() else next(
-            c for c in (mroot / 'prisma' / 'schema.prisma', mroot / 'schema.prisma') if c.exists())
-        return prisma_provider(schema)
-    if kind == 'django':
-        return django_provider(mroot)
-    sys.exit(f'Error: could not detect the code kind at {mroot} '
-             '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
 
 def relations_to_config_layer(relations, base_tables):
     """Convert the config `relations` list into a config-kind ProviderResult of

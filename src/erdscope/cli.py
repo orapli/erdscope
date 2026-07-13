@@ -21,10 +21,11 @@ def main():
                         '(Rails project/app/models dir, schema.prisma, or Django project). '
                         'Repeatable to merge several frameworks; later ones win on ties')
     p.add_argument('--adapter', metavar='PATH', action='append', default=argparse.SUPPRESS,
-                   help='Load a custom database adapter from a Python plugin file '
-                        '(subclass DBAdapter, register it with @register_adapter). '
-                        'Its URL scheme(s) then work like the built-in mysql:///'
-                        'postgres://. Repeatable; also settable as config `adapters`')
+                   help='Load a Python plugin file that registers a custom database '
+                        'adapter (subclass DBAdapter + @register_adapter) and/or a '
+                        'framework overlay (subclass FrameworkOverlay + @register_overlay). '
+                        'The new URL scheme / --models project kind then works like the '
+                        'built-ins. Repeatable; also settable as config `adapters`')
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
