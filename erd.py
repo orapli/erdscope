@@ -23,14 +23,109 @@ consumes this shape:
         "associations": [{"type": has_many|belongs_to|has_one|has_and_belongs_to_many,
                           "name", "target",
                           "through"?, "foreign_key"?, "polymorphic"?,
-                          "db_fk"?, "inferred"?}],
+                          "db_fk"?, "inferred"?, "manual"?}],
       }
     }
+
+Refactor contracts (REFACTOR_PLAN.md §4/§5/§9) — being introduced incrementally.
+The types below are the TARGET shape the providers and merge step are moving
+toward. NOTE: as of this step the parsers still return the plain `tables` IR
+above (not ProviderResult), the pipeline still carries the legacy boolean
+provenance flags on each association, and the serialized DATA_JSON is unchanged.
+`make_provider_result`, `provenance_of`, and `legacy_flags_for` (below the
+imports) are the pure scaffolding/seam for the later steps that wire this in;
+they are not yet used by the main path.
+
+    # A per-table "fragment": every field optional. An absent key means "this
+    # provider didn't supply it — keep the lower layer's value"; an explicit
+    # null/[]/"" means "overwrite with empty" (Config only). Table name is the
+    # map key, so it isn't repeated inside the fragment.
+    ColumnIR = {"name": str,                        # required — identity key
+                "type"?: str, "sql_type"?: str, "nullable"?: bool,
+                "primary"?: bool,                   # composite PKs: several cols true
+                "default"?: str, "extra"?: str, "comment"?: str|None}
+    IndexIR  = {"name"?: str, "columns": list[str], "unique"?: bool}
+    AssociationFragment = {"type": ..., "name": str, "target": str,
+                           "foreign_key"?: str,     # single-column FK only (§4.2)
+                           "through"?: str, "polymorphic"?: bool}
+    TableFragment = {"comment"?: str|None,
+                     "primary_key"?: str|list[str]|None,   # list = composite PK
+                     "columns"?: [ColumnIR], "indexes"?: [IndexIR],
+                     "associations"?: [AssociationFragment]}
+    IR = dict[table_name, TableFragment]
+
+    # Each parser is (moving toward) "parse only, no merging" and returns:
+    Source         = {"kind": "db"|"framework"|"config",
+                      "provider": "mysql"|"postgres"|"rails"|"prisma"|"django"|"config",
+                      "location"?: str}            # url (no password) / dir / config path
+    Warning        = {"code": str, "message": str, "table"?: str}
+    ProviderResult = {"source": Source, "tables": IR, "warnings": list[Warning]}
+
+    # Association provenance (§9). Internally the target is a representative
+    # `provenance` string plus a `sources` set; on the way to HTML/Excel it is
+    # converted back to the legacy booleans the viewer/Excel already read, so
+    # the serialized output is byte-identical. The representative precedence at
+    # merge time is manual > declared > db_fk > inferred (hand-declared beats
+    # code, code beats a raw DB constraint, all beat a guess).
+    provenance = "declared" | "db_fk" | "manual" | "inferred"
+    #   DB FK constraint -> db_fk ; framework declaration -> declared ;
+    #   config relations/associations -> manual ; --infer-fk post-pass -> inferred
+    #   legacy flag mapping: db_fk/inferred/manual -> {<flag>: True}; declared -> {}
 """
-import ast, getpass, os, subprocess, sys, json, re, argparse
+import ast, copy, getpass, os, subprocess, sys, json, re, argparse
 from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse
+
+# ---------------------------------------------------------------------------
+# Provider / provenance contracts (REFACTOR_PLAN.md §5/§9)
+# ---------------------------------------------------------------------------
+# Pure scaffolding + conversion seam for the staged refactor. These are the
+# contract in code form; they have no side effects and are NOT yet used by the
+# main pipeline (which still returns plain IR and carries the legacy boolean
+# provenance flags). Later steps (§15 Step 4-6, 9-10) route parsers and merge
+# through them. Kept small and dependency-free — no dataclasses, just dicts —
+# so the single-file, zero-dependency shape is preserved.
+
+# Representative provenance -> the legacy boolean flag(s) the HTML/Excel
+# serializers already read. 'declared' carries no flag (bare = code-declared).
+_PROVENANCE_TO_FLAG = {'db_fk': 'db_fk', 'manual': 'manual', 'inferred': 'inferred'}
+
+
+def make_provider_result(kind, provider, tables, location=None, warnings=None):
+    """Build a ProviderResult dict (§5): a Source describing where this IR came
+    from, the parsed `tables` IR itself, and any non-fatal warnings. Pure — it
+    only assembles the dict, never mutates `tables`. `location` (a
+    password-free URL / directory / config path) is omitted from Source when
+    None; `warnings` defaults to an empty list."""
+    source = {'kind': kind, 'provider': provider}
+    if location is not None:
+        source['location'] = location
+    return {'source': source, 'tables': tables,
+            'warnings': list(warnings) if warnings else []}
+
+
+def provenance_of(assoc):
+    """Representative provenance (§9.1) for an association dict, derived from
+    the legacy boolean flags it currently carries. Precedence when several
+    coexist: manual > db_fk > inferred; a bare association (no flag) is
+    'declared'. This is the read half of the legacy<->provenance seam."""
+    if assoc.get('manual'):
+        return 'manual'
+    if assoc.get('db_fk'):
+        return 'db_fk'
+    if assoc.get('inferred'):
+        return 'inferred'
+    return 'declared'
+
+
+def legacy_flags_for(provenance):
+    """The legacy boolean flag dict to serialize for a given representative
+    provenance (§9.3): db_fk/manual/inferred -> {<flag>: True}, and 'declared'
+    -> {} (no badge). The write half of the seam; round-trips with
+    provenance_of for each of the four provenances."""
+    flag = _PROVENANCE_TO_FLAG.get(provenance)
+    return {flag: True} if flag else {}
 
 # ---------------------------------------------------------------------------
 # SQL type shorthand (information_schema DATA_TYPE -> display type)
@@ -368,36 +463,357 @@ def parse_postgres(url):
         f"ORDER BY c.relname, i.relname, k.ord")
     return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
 
-def dedupe_db_fk(tables):
-    """After merging code-declared associations, drop DB-FK associations for
-    pairs that an explicit association already covers (either direction).
+# ---------------------------------------------------------------------------
+# Layered IR merge — Phase A (identity merge) + Phase B (reconcile_db_fks)
+# REFACTOR_PLAN.md §7 (field rules), §8 (association identity), §9 (provenance).
+#
+# The pipeline builds ProviderResult layers (db / framework / config) and folds
+# them with merge_ir, whose Phase B reconcile_db_fks subsumes the old
+# per-table dedupe pass.
+# ---------------------------------------------------------------------------
+# Field authority as a numeric rank: among the layers that PROVIDE a field
+# (key present — §4: an absent key never participates), pick the value
+# maximizing (rank, spec_order); spec_order is the index in `layers`, so a
+# later layer wins ties (e.g. multiple frameworks -> last one wins).
+_PHYSICAL_RANK = {'config': 3, 'db': 2, 'framework': 1}   # DB is the physical truth
+_LOGICAL_RANK = {'config': 3, 'framework': 2, 'db': 1}    # code owns logical names
+# Column attributes split by authority kind (§7.2). Everything not physical
+# (i.e. `comment`) is logical.
+_PHYSICAL_COL_ATTRS = ('type', 'sql_type', 'nullable', 'primary', 'default', 'extra')
+# Deterministic column-attribute emit order (str-set iteration is hash-seed
+# dependent, so never iterate a set for output order).
+_COL_ATTR_ORDER = ('type', 'sql_type', 'nullable', 'primary', 'default', 'extra', 'comment')
+# Representative-provenance precedence (§9.1): manual > declared > db_fk > inferred.
+_PROV_PRECEDENCE = {'manual': 3, 'declared': 2, 'db_fk': 1, 'inferred': 0}
 
-    A DB FK that resolved to has_one (mysql_ir's unique-index check — a real
-    1:1) upgrades a lone covering belongs_to in place instead of just being
-    dropped. belongs_to alone doesn't assert cardinality in Rails (has_one
-    vs has_many on the *other* side does) — if that other side was never
-    declared, dropping the DB FK outright would silently discard the DB's
-    1:1 signal and the pair would render as the many:1 default."""
-    explicit_by_pair = {}  # frozenset({a,b}) -> [(table_name, assoc_dict), ...]
+def _pick_by_authority(contribs):
+    """contribs: list of (rank, spec_order, value). Return the value with the
+    greatest (rank, spec_order)."""
+    return max(contribs, key=lambda c: (c[0], c[1]))[2]
+
+def _assoc_role(a):
+    """Identity role for an association (§8.1). owner_fk holds the FK column;
+    collection is has_many/habtm without an FK; inverse_one is has_one without
+    an FK. A rare belongs_to/other lacking an FK gets its own name-keyed role
+    so it's never wrongly merged with a real owner_fk."""
+    if a.get('foreign_key'):
+        return 'owner_fk'
+    if a['type'] in ('has_many', 'has_and_belongs_to_many'):
+        return 'collection'
+    if a['type'] == 'has_one':
+        return 'inverse_one'
+    return 'named'
+
+def association_key(source_table, a):
+    """Stable identity tuple (§8.1). `name` is part of the identity for EVERY
+    role, owner_fk included: the Rails alias pattern (`belongs_to :user` AND
+    `belongs_to :author`, both on `user_id`) is two distinct associations that
+    must stay separate. A name-blind owner_fk identity would over-merge them.
+    The DB-FK-vs-code-name case is handled without it: a DB FK's name is the
+    machine-derived column stem (`user_id`->`user`), so a conventional
+    `belongs_to :user` matches and merges in Phase A, while a renamed
+    `belongs_to :author` stays separate and Phase B reconcile_db_fks drops the
+    now-covered DB FK — no double edge either way. A single-column FK is
+    normalized to a frozenset, leaving room for future composite FKs (§4.2)."""
+    fk = frozenset([a['foreign_key']]) if a.get('foreign_key') else frozenset()
+    key = [source_table, a['target'], fk, _assoc_role(a), a['name']]
+    if a.get('through'):
+        key.append(('through', a['through']))
+    if a.get('polymorphic'):
+        key.append(('polymorphic', True))
+    return tuple(key)
+
+def _merge_column(name, contribs):
+    """contribs: list of (kind, spec_order, column_dict) for one column name,
+    in layer order. Physical attrs resolve Config>DB>Framework, `comment`
+    resolves Config>Framework>DB, present-only (§7.2)."""
+    out = {'name': name}
+    present = set()
+    for _, _, c in contribs:
+        present |= set(c)
+    present.discard('name')
+    present.discard('drop')  # config op marker, never a data attribute
+    ordered = [k for k in _COL_ATTR_ORDER if k in present]
+    ordered += sorted(present - set(_COL_ATTR_ORDER))
+    for attr in ordered:
+        rank_map = _PHYSICAL_RANK if attr in _PHYSICAL_COL_ATTRS else _LOGICAL_RANK
+        cc = [(rank_map[kind], order, c[attr]) for kind, order, c in contribs if attr in c]
+        if cc:
+            out[attr] = _pick_by_authority(cc)
+    return out
+
+def _merge_association_group(members):
+    """members: list of (spec_order, kind, assoc_dict), same identity, in layer
+    order. Merge into one association per §8.4 + §9."""
+    ms = sorted(members, key=lambda m: m[0])
+    role = _assoc_role(ms[0][2])
+    out = {}
+    # cardinality: never lose a 1:1 — an owner_fk group with any has_one is
+    # has_one (§8.4); otherwise later layer's type wins.
+    types = [a['type'] for _, _, a in ms]
+    out['type'] = 'has_one' if (role == 'owner_fk' and 'has_one' in types) else ms[-1][2]['type']
+    # name: logical authority (declared/config name beats a DB-derived one)
+    out['name'] = _pick_by_authority(
+        [(_LOGICAL_RANK[kind], order, a['name']) for order, kind, a in ms])
+    out['target'] = ms[-1][2]['target']  # constant within an identity group
+    for _, _, a in ms:
+        if a.get('foreign_key'):
+            out['foreign_key'] = a['foreign_key']
+            break
+    thr = [(order, a['through']) for order, _, a in ms if a.get('through')]
+    if thr:
+        out['through'] = max(thr, key=lambda x: x[0])[1]
+    if any(a.get('polymorphic') for _, _, a in ms):
+        out['polymorphic'] = True
+    # §8.6 (P0-3): a config association overrides a same-identity db/framework
+    # one. Warn when it overrides *differing* content — a different cardinality,
+    # target, through, or polymorphic flag — so a silent semantic change is
+    # visible. A name difference is expected (declared vs machine-derived) and
+    # never warned. Identical content merges quietly.
+    cfg = [a for _, kind, a in ms if kind == 'config']
+    if cfg:
+        c = cfg[-1]
+        for _, kind, a in ms:
+            if kind == 'config':
+                continue
+            if (a['type'] != c['type'] or a['target'] != c['target']
+                    or a.get('through') != c.get('through')
+                    or bool(a.get('polymorphic')) != bool(c.get('polymorphic'))):
+                print(f"Warning: config association {c.get('name')!r} (on {c['target']!r}) "
+                      f"overrides a differing {kind} association", file=sys.stderr)
+                break
+    # representative provenance -> legacy flag(s) (§9.3 seam). A config-layer
+    # association is manual by definition (§9.1), even if its fragment carries
+    # no flag; otherwise read the association's existing legacy flags.
+    def member_prov(kind, a):
+        return 'manual' if kind == 'config' else provenance_of(a)
+    rep = max((member_prov(kind, a) for _, kind, a in ms),
+              key=lambda p: _PROV_PRECEDENCE[p])
+    out.update(legacy_flags_for(rep))
+    return out
+
+def _config_assoc_drop_matches(drop, ident):
+    """Does a config association DropOperation match a merged association's
+    identity tuple (§4.3/§6.2)? Role + target must match. An owner_fk drop
+    matches by (target, foreign_key) and — since the identity now includes
+    `name` (6b) — drops EVERY owner_fk association on that column/target when
+    no `name` is given (so a wrong FK edge can be removed without naming it),
+    or additionally filters by `name` when one is given. A collection/inverse
+    drop matches by (type-role, target, name). If the drop pins through/
+    polymorphic, those must match too."""
+    target, fk, role, name = ident[1], ident[2], ident[3], ident[4]
+    if role != _assoc_role(drop) or target != drop.get('target'):
+        return False
+    extras = dict(ident[5:])
+    if drop.get('through') and drop['through'] != extras.get('through'):
+        return False
+    if drop.get('polymorphic') and not extras.get('polymorphic'):
+        return False
+    if role == 'owner_fk':
+        d_fk = frozenset([drop['foreign_key']]) if drop.get('foreign_key') else frozenset()
+        if fk != d_fk:
+            return False
+        return drop.get('name') is None or drop['name'] == name
+    return drop.get('name') == name
+
+def _merge_table(tname, contribs):
+    """contribs: list of (kind, spec_order, fragment) for one table, in layer
+    order. Build the merged table (columns/indexes/primary_key/comment/
+    associations). Derived fields (fk_columns, schema_missing, primary_key
+    normalization) are applied later, after Phase B.
+
+    Config-only operation markers (§6.2), present ONLY on config-kind fragments:
+      - `columns_mode|indexes_mode|associations_mode: "replace"` (table-scope):
+        discard lower-layer (db/framework) contributions for that field before
+        applying the config list. Default "merge" = additive/override (today's
+        behavior). replace precedes per-item drop (nothing lower to drop).
+      - per-item `drop: true`: remove the matching column (by name) / index (by
+        name) / association (by identity, see _config_assoc_drop_matches).
+    Within a config fragment, a field's list is processed in document order;
+    drop entries remove matching lower-layer items, non-drop entries add/override
+    (Step-3 load validation forbids a duplicate name/identity within one config
+    fragment, so a drop and a re-add of the SAME item can't coexist there). All
+    op markers are stripped from the output — the final IR carries data only.
+    A drop that matches nothing is a silent no-op here; the hard error for an
+    absent drop target is semantic validation, added in Step 7b (§6.4②)."""
+    def replace(mode_key):
+        return any(f.get(mode_key) == 'replace' for k, _, f in contribs if k == 'config')
+
+    merged = {}
+    # ── columns: keyed by name, first-seen order across layers (§7.2) ──
+    col_replace = replace('columns_mode')
+    col_order, col_seen, col_contribs, col_drops = [], set(), {}, set()
+    for kind, order, frag in contribs:
+        for c in frag.get('columns', []):
+            if kind == 'config' and c.get('drop') is True:
+                col_drops.add(c['name'])
+                continue
+            if col_replace and kind != 'config':
+                continue  # replace discards lower-layer columns
+            nm = c['name']
+            if nm not in col_seen:
+                col_seen.add(nm)
+                col_order.append(nm)
+            col_contribs.setdefault(nm, []).append((kind, order, c))
+    merged['columns'] = [_merge_column(nm, col_contribs[nm])
+                         for nm in col_order if nm not in col_drops]
+    # ── primary_key: physical authority, present-only (§7.3) ──
+    pk = [(_PHYSICAL_RANK[kind], order, frag['primary_key'])
+          for kind, order, frag in contribs if 'primary_key' in frag]
+    merged['primary_key'] = _pick_by_authority(pk) if pk else None
+    # ── indexes: keyed by name (unnamed -> tuple(columns), NOT unique — §7.4);
+    #    whole-index physical authority; union across keys ──
+    ix_replace = replace('indexes_mode')
+    ix_order, ix_seen, ix_contribs, ix_drops = [], set(), {}, set()
+    for kind, order, frag in contribs:
+        for ix in frag.get('indexes', []):
+            if kind == 'config' and ix.get('drop') is True:
+                ix_drops.add(ix['name'])  # index drop is always by name (§7.4)
+                continue
+            if ix_replace and kind != 'config':
+                continue
+            k = ix['name'] if ix.get('name') else tuple(ix.get('columns', []))
+            if k not in ix_seen:
+                ix_seen.add(k)
+                ix_order.append(k)
+            ix_contribs.setdefault(k, []).append((_PHYSICAL_RANK[kind], order, ix))
+    merged['indexes'] = []
+    for k in ix_order:
+        if k in ix_drops:
+            continue
+        ix = copy.deepcopy(_pick_by_authority(ix_contribs[k]))
+        ix.pop('drop', None)  # strip any op marker
+        merged['indexes'].append(ix)
+    # ── comment: logical authority, present-only; null/"" = delete (§7.5) ──
+    cm = [(_LOGICAL_RANK[kind], order, frag['comment'])
+          for kind, order, frag in contribs if 'comment' in frag]
+    if cm:
+        val = _pick_by_authority(cm)
+        if val:  # a non-empty string; null/"" resolves to "no comment"
+            merged['comment'] = val
+    # ── associations: Phase A identity merge (§7.6/§8) ──
+    a_replace = replace('associations_mode')
+    a_order, a_groups, a_drops = [], {}, []
+    for kind, order, frag in contribs:
+        for a in frag.get('associations', []):
+            if kind == 'config' and a.get('drop') is True:
+                a_drops.append(a)   # collected separately (may omit `name`)
+                continue
+            if a_replace and kind != 'config':
+                continue
+            ident = association_key(tname, a)
+            if ident not in a_groups:
+                a_groups[ident] = []
+                a_order.append(ident)
+            a_groups[ident].append((order, kind, a))
+    merged['associations'] = [
+        _merge_association_group(a_groups[i]) for i in a_order
+        if not any(_config_assoc_drop_matches(d, i) for d in a_drops)]
+    return merged
+
+def _normalize_primary_key(tname, t, warn=True):
+    """§7.3: primary_key is authoritative — ensure every column it names carries
+    primary=True (a PK column whose primary flag a lower layer didn't set is
+    corrected up). Columns are NOT flipped to False, so a composite PK whose
+    columns were all flagged by the DB (primary_key stores only the first) keeps
+    every member primary. A PK naming an absent column is a warning, not fatal.
+
+    `warn=False` suppresses that warning for a config-declared primary_key:
+    validate_config_references issues an authoritative hard error for it, so the
+    non-fatal warning would be a redundant second message for the same problem."""
+    pk = t.get('primary_key')
+    if pk is None:
+        return
+    pk_names = [pk] if isinstance(pk, str) else list(pk)
+    names = {c['name'] for c in t['columns']}
+    for c in t['columns']:
+        if c['name'] in pk_names:
+            c['primary'] = True
+    missing = [n for n in pk_names if n not in names]
+    if missing and warn:
+        print(f"Warning: table {tname!r} primary_key names column(s) not present: "
+              f"{', '.join(missing)}", file=sys.stderr)
+
+def merge_ir(layers):
+    """Merge an ordered list of ProviderResults (low→high spec priority — the
+    usual order is [db?, framework_1?, ..., config?]) into one IR dict per §7-§9.
+    Pure: inputs are deep-copied, never mutated.
+
+    Steps: union tables (first-seen order) → apply config table `drop` → per-
+    field authority merge with config `drop`/`*_mode: replace` ops (Phase A,
+    incl. association identity merge) → Phase B reconcile_db_fks → derive
+    primary_key normalization, fk_columns (§7.7), and schema_missing (§7.8).
+
+    Config operation markers (table `drop`, per-item `drop`, `*_mode: replace`)
+    are honored here and stripped from the output IR (they're operations, not
+    data). They are only produced on config-kind layers; the current pipeline's
+    config layer (relations → associations) carries none, so this is inert for
+    it. `config.tables` is wired into main in Step 7b; semantic validation of
+    drop targets etc. (§6.4②) also lands there."""
+    prepared = [(pr['source']['kind'], copy.deepcopy(pr['tables'])) for pr in layers]
+    order, seen = [], set()
+    for _, tbls in prepared:
+        for tname in tbls:
+            if tname not in seen:
+                seen.add(tname)
+                order.append(tname)
+    # Tables whose primary_key is contributed by a config layer: config has the
+    # highest physical-field rank, so a config primary_key always wins. For these
+    # validate_config_references raises an authoritative hard error on a missing
+    # PK column, so _normalize_primary_key's non-fatal warning is suppressed to
+    # avoid a redundant second message. Non-config PK mismatches still warn.
+    config_pk_tables = {tname for kind, tbls in prepared if kind == 'config'
+                        for tname, frag in tbls.items()
+                        if isinstance(frag, dict) and frag.get('primary_key') is not None}
+    result = {}
+    for tname in order:
+        contribs = [(kind, spec, tbls[tname])
+                    for spec, (kind, tbls) in enumerate(prepared) if tname in tbls]
+        # config table drop (§6.2): `tables: { t: { drop: true } }` removes the
+        # table from the result (a no-op if nothing lower provided it).
+        if any(kind == 'config' and frag.get('drop') is True for kind, _, frag in contribs):
+            continue
+        result[tname] = _merge_table(tname, contribs)
+    # Phase B: edge-level DB-FK reconciliation (§8.5), same as the legacy path.
+    reconcile_db_fks(result)
+    # Derived values (§7.3/§7.7/§7.8) — computed, never read from input.
+    for tname, t in result.items():
+        # Normalize columns to the shape the HTML/Excel consumers expect always
+        # present (mysql_ir and the Prisma/Django parsers already set these on
+        # every column; a config-only column may omit them). Inert for db/
+        # framework columns — pure setdefault, so no existing output changes.
+        for c in t['columns']:
+            c.setdefault('type', '')
+            c.setdefault('nullable', False)
+            c.setdefault('primary', False)
+        _normalize_primary_key(tname, t, warn=tname not in config_pk_tables)
+        t['fk_columns'] = sorted({a['foreign_key'] for a in t['associations']
+                                  if a.get('foreign_key')})
+        if len(t['columns']) == 0:
+            t['schema_missing'] = True
+    return result
+
+def reconcile_db_fks(tables):
+    """Phase B (§8.5) — edge-level DB-FK reconciliation: an explicit (non-db_fk,
+    non-inferred) association covering an undirected {source, target} pair drops
+    the DB FK for that pair when the explicit side names no column or the same
+    column; a dropped has_one DB FK upgrades a lone covering belongs_to to
+    has_one in place. belongs_to alone doesn't assert cardinality in Rails, so
+    dropping a 1:1 DB FK outright would silently discard the DB's 1:1 signal.
+    Mutates `tables` in place and returns the number of DB FKs removed."""
+    explicit_by_pair = {}
     for name, t in tables.items():
         for a in t['associations']:
             if not a.get('db_fk') and not a.get('inferred'):
                 explicit_by_pair.setdefault(frozenset((name, a['target'])), []).append((name, a))
-
     removed = 0
     for name, t in tables.items():
         kept = []
         for a in t['associations']:
             if a.get('db_fk'):
                 candidates = explicit_by_pair.get(frozenset((name, a['target'])), [])
-                # an explicit association only covers *this* DB FK if it
-                # doesn't name a column (has_many/habtm from the other side,
-                # inherently ambiguous about which FK it means) or names the
-                # SAME column — otherwise two distinct FK columns to the same
-                # target (created_by_id / updated_by_id) would wrongly
-                # collapse into whichever one happened to be declared
                 covering = [(n, ea) for n, ea in candidates
-                           if not ea.get('foreign_key') or ea['foreign_key'] == a.get('foreign_key')]
+                            if not ea.get('foreign_key') or ea['foreign_key'] == a.get('foreign_key')]
                 if covering:
                     has_cardinality = any(ea['type'] in ('has_one', 'has_many') for _, ea in covering)
                     if a['type'] == 'has_one' and not has_cardinality:
@@ -409,58 +825,6 @@ def dedupe_db_fk(tables):
             kept.append(a)
         t['associations'] = kept
     return removed
-
-def apply_manual_relations(tables, relations):
-    """Apply hand-declared relations from the config file's `relations` key —
-    the escape hatch for FKs no source (real constraint, *_id inference, or
-    --models code parsing) can determine, e.g. an oddly-named column or a
-    relation the app's code expresses in a way the parser doesn't handle.
-    Each entry: {table, column, references, one_to_one?, name?}.
-
-    Applied before dedupe_db_fk, so a manual relation naturally takes
-    precedence over a real DB FK or code-declared association for the same
-    column (dedupe_db_fk treats it as just another explicit association) and
-    is excluded from --infer-fk's guessing for that pair. Validates hard:
-    an unknown table/column/target is always the user's typo, and silently
-    producing no edge would defeat the entire point of a manual override."""
-    added = 0
-    for i, r in enumerate(relations):
-        where = f'relations[{i}]'
-        for key in ('table', 'column', 'references'):
-            if not r.get(key):
-                sys.exit(f'Error: {where} is missing required key {key!r}')
-        table, col, target = r['table'], r['column'], r['references']
-        if table not in tables:
-            sys.exit(f'Error: {where}: unknown table {table!r}')
-        if not any(c['name'] == col for c in tables[table]['columns']):
-            sys.exit(f'Error: {where}: {table!r} has no column {col!r}')
-        if target not in tables:
-            sys.exit(f'Error: {where}: unknown target table {target!r}')
-
-        # a plain DB FK doesn't count as "already covered" — the manual
-        # relation is meant to take precedence over it (dedupe_db_fk, run
-        # afterward, resolves that). Only a genuinely explicit association
-        # (code-declared, or a manual one from an earlier config load) makes
-        # this entry redundant.
-        existing = next((a for a in tables[table]['associations']
-                         if a.get('foreign_key') == col and a['target'] == target
-                         and not a.get('db_fk') and not a.get('inferred')), None)
-        if existing is not None:
-            print(f'Warning: {where} ({table}.{col} -> {target}) is already covered by '
-                  f'a {"manual" if existing.get("manual") else "code"}-declared association '
-                  f'— skipping', file=sys.stderr)
-            continue
-
-        if r.get('one_to_one'):
-            assoc_type = 'has_one'
-        else:
-            assoc_type = 'has_one' if _unique_single_col(tables[table], col) else 'belongs_to'
-        name = r.get('name') or (col[:-3] if col.endswith('_id') else col)
-        tables[table]['associations'].append(
-            {'type': assoc_type, 'name': name, 'target': target,
-             'foreign_key': col, 'manual': True})
-        added += 1
-    return added
 
 # ---------------------------------------------------------------------------
 # Pluralizer / inflector
@@ -489,10 +853,36 @@ def class_to_table(name):
 # ---------------------------------------------------------------------------
 # Model parser (app/models/**/*.rb)
 # ---------------------------------------------------------------------------
-def parse_models(models_dir, tables, table_map=None):
-    if not models_dir.is_dir():
-        return
-    table_map = table_map or {}
+def rails_provider(models_dir, table_map=None):
+    """ProviderResult for a Rails app/models directory (REFACTOR_PLAN.md §5).
+
+    Runs the full Rails static analysis — STI table sharing, concern-
+    resolved self.table_name, transitively-resolved custom base classes,
+    per-class-scoped abstract detection, the target_override redirect for
+    associations pointing at a renamed table, belongs_to FK backfill, through,
+    polymorphic, and commented-out table_name handling — but builds a FRESH
+    fragment IR instead of mutating a caller's dict.
+
+    Rails contributes associations ONLY: it has no column information, so each
+    table Fragment carries just `associations` and OMITS the `columns` key
+    entirely (§4: an absent key means "not supplied — keep the lower layer's
+    value", so a later merge over a DB IR never erases the DB's columns).
+    schema_missing is NOT set here — it's a derived/merge concern (§7.8); a
+    framework-only merge_ir run derives it for tables with no columns.
+
+    Association append order is preserved exactly: models are iterated in the
+    same sorted order and appended into their table's fragment, so STI (several
+    models -> one table) accumulates in the same order as before."""
+    fragment = {}
+    if models_dir.is_dir():
+        _parse_rails_models(models_dir, fragment, table_map or {})
+    return make_provider_result('framework', 'rails', fragment,
+                                location=str(models_dir))
+
+def _parse_rails_models(models_dir, fragment, table_map):
+    """Rails static analysis, writing association fragments into `fragment`
+    (keyed by table_name, each entry `{'associations': [...]}`, no columns).
+    See rails_provider for the contract."""
     # module_name -> file content, for resolving self.table_name when it's
     # set inside an `include`d concern rather than the model body itself
     # (a common way to share a "points at a legacy/renamed table" mixin
@@ -613,11 +1003,11 @@ def parse_models(models_dir, tables, table_map=None):
         # should stay the one thing that always takes precedence
         table_name = resolve_table_name(
             class_name if class_name in table_map else sti_root(class_name))
-        if table_name not in tables:
-            # model exists but the table is not in any schema file
-            # (library-managed table, another database, ...)
-            tables[table_name] = {'columns': [], 'associations': [],
-                                  'primary_key': None, 'schema_missing': True}
+        # fresh fragment entry per table (STI: several models share one table,
+        # so setdefault keeps the first and accumulates associations). No
+        # columns key — Rails supplies none (§4/§7.8) — and no schema_missing
+        # (a derived value merge_ir computes for tables with no columns).
+        frag = fragment.setdefault(table_name, {'associations': []})
         for m2 in re.finditer(
             r'(has_many|has_one|belongs_to|has_and_belongs_to_many)\s+:(\w+)((?:[^#\n]|,[ \t]*\n)*)',
             body
@@ -644,7 +1034,7 @@ def parse_models(models_dir, tables, table_map=None):
             elif assoc_type == 'belongs_to':
                 assoc['foreign_key'] = f'{to_snake(sym)}_id'
             if poly:      assoc['polymorphic'] = True
-            tables[table_name]['associations'].append(assoc)
+            frag['associations'].append(assoc)
 
 # ---------------------------------------------------------------------------
 # Prisma schema parser (schema.prisma)
@@ -946,35 +1336,176 @@ def detect_code_source(root):
             return 'prisma'
     return None
 
-def merge_code_semantics(tables, mroot, table_map=None):
-    """Overlay associations parsed from application code (Rails / Prisma /
-    Django) on top of the database truth. Columns always come from the DB;
-    models without a matching DB table are added with schema_missing.
-    table_map (Rails only): {class_name: table_name} overrides for models
-    whose real table can't be determined by static analysis (e.g. a
-    table_name set inside a concern that lives in a gem, not the app)."""
+# ---------------------------------------------------------------------------
+# Framework leaf providers (REFACTOR_PLAN.md §5) — ProviderResult wrappers.
+#
+# Each wraps its existing parser (unchanged) and packages the FULL IR —
+# crucially the columns — as a ProviderResult, which merge_ir folds against the
+# DB layer. The `framework_provider` dispatcher (detect + resolve path) routes
+# the merge through these. These leaf providers take an already-resolved input
+# (a .prisma file path / a Django project root); detection and path resolution
+# live in detect_code_source / framework_provider.
+# ---------------------------------------------------------------------------
+def prisma_provider(schema_path):
+    """ProviderResult for a resolved Prisma schema file. Retains columns
+    (with Prisma types, including enum field types as the enum name) so a
+    Prisma-only run (Step 8) or the Step-6 merge can use them instead of
+    discarding them the way the current association-only overlay does."""
+    tables = parse_prisma(schema_path)
+    return make_provider_result('framework', 'prisma', tables,
+                                location=str(schema_path))
+
+def django_provider(root):
+    """ProviderResult for a resolved Django project root. Retains columns —
+    including the synthetic `id` PK Django backfills and the `<name>_id` FK
+    columns emitted for ForeignKey/OneToOneField — that the current overlay
+    path drops."""
+    tables = parse_django(root)
+    return make_provider_result('framework', 'django', tables,
+                                location=str(root))
+
+def _password_free_url(url):
+    """Rebuild a connection URL without its password, for a ProviderResult's
+    Source.location (§5: location is password-free). Keeps user@host:port/db
+    and any ?query (e.g. postgres ?schema=name)."""
+    u = urlparse(url)
+    netloc = u.hostname or ''
+    if u.username:
+        netloc = f'{u.username}@{netloc}'
+    if u.port:
+        netloc = f'{netloc}:{u.port}'
+    out = f'{u.scheme}://{netloc}{u.path}'
+    return f'{out}?{u.query}' if u.query else out
+
+def db_provider(url):
+    """DB ProviderResult (§5). Dispatches on the URL scheme to the existing
+    parse_mysql/parse_postgres (unchanged) and packages the IR with a
+    password-free location. Referenced as module globals so the test harness's
+    parse_mysql monkeypatch still applies."""
+    scheme = urlparse(url).scheme
+    if scheme == 'mysql':
+        return make_provider_result('db', 'mysql', parse_mysql(url),
+                                    location=_password_free_url(url))
+    if scheme in ('postgres', 'postgresql'):
+        return make_provider_result('db', 'postgres', parse_postgres(url),
+                                    location=_password_free_url(url))
+    sys.exit('Error: a database URL is required (mysql:// or postgres://)')
+
+def framework_provider(mroot, table_map=None):
+    """Framework ProviderResult (§5). Detects the code kind and resolves the
+    concrete input path (the Rails app/models dir, the schema.prisma file, or
+    the Django root), then dispatches to the matching leaf provider."""
     kind = detect_code_source(mroot)
     if kind == 'rails':
         mdir = mroot / 'app' / 'models' if (mroot / 'app' / 'models').is_dir() else mroot
-        parse_models(mdir, tables, table_map)
-        return kind
-    if kind in ('prisma', 'django'):
-        if kind == 'prisma':
-            schema = mroot if mroot.is_file() else next(
-                c for c in (mroot / 'prisma' / 'schema.prisma',
-                            mroot / 'schema.prisma') if c.exists())
-            ir = parse_prisma(schema)
-        else:
-            ir = parse_django(mroot)
-        for name, t in ir.items():
-            if name in tables:
-                tables[name]['associations'].extend(t['associations'])
-            else:
-                tables[name] = {'columns': [], 'associations': t['associations'],
-                                'primary_key': None, 'schema_missing': True}
-        return kind
+        return rails_provider(mdir, table_map)
+    if kind == 'prisma':
+        schema = mroot if mroot.is_file() else next(
+            c for c in (mroot / 'prisma' / 'schema.prisma', mroot / 'schema.prisma') if c.exists())
+        return prisma_provider(schema)
+    if kind == 'django':
+        return django_provider(mroot)
     sys.exit(f'Error: could not detect the code kind at {mroot} '
              '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
+
+def relations_to_config_layer(relations, base_tables):
+    """Convert the config `relations` list into a config-kind ProviderResult of
+    association fragments (§8.6/P0-3). Validates hard (unknown table/column/
+    target are the user's typo), and cardinality is has_one when one_to_one is
+    set OR the FK column is single-column-unique in the merged base, else
+    belongs_to.
+
+    No `manual` flag is written into the fragment — merge_ir forces config-kind
+    associations to manual provenance (§9.1). And no "skip if already covered":
+    a config relation OVERRIDES a db/framework association of the same identity
+    (the intentional §12/P0-3 behavior), which merge_ir's Phase A handles."""
+    tables = {}
+    for i, r in enumerate(relations):
+        where = f'relations[{i}]'
+        for key in ('table', 'column', 'references'):
+            if not r.get(key):
+                sys.exit(f'Error: {where} is missing required key {key!r}')
+        table, col, target = r['table'], r['column'], r['references']
+        if table not in base_tables:
+            sys.exit(f'Error: {where}: unknown table {table!r}')
+        if not any(c['name'] == col for c in base_tables[table]['columns']):
+            sys.exit(f'Error: {where}: {table!r} has no column {col!r}')
+        if target not in base_tables:
+            sys.exit(f'Error: {where}: unknown target table {target!r}')
+        if r.get('one_to_one'):
+            assoc_type = 'has_one'
+        else:
+            assoc_type = 'has_one' if _unique_single_col(base_tables[table], col) else 'belongs_to'
+        name = r.get('name') or (col[:-3] if col.endswith('_id') else col)
+        tables.setdefault(table, {'associations': []})['associations'].append(
+            {'type': assoc_type, 'name': name, 'target': target, 'foreign_key': col})
+    return make_provider_result('config', 'config', tables)
+
+def config_provider(config, location=None):
+    """Config ProviderResult (§5) from config['tables'] — the table fragments
+    WITH their `drop`/`*_mode` operation markers intact (merge_ir consumes and
+    strips them). Associations carry no `manual` flag; merge_ir forces
+    config-kind associations to manual provenance (§9.1). Semantic validation
+    of the ops/refs (§6.4②) is done by the caller against the merged base."""
+    return make_provider_result('config', 'config', config.get('tables', {}) or {},
+                                location=location)
+
+def validate_config_drops(config_tables, base, label):
+    """Semantic validation (§6.4②) of config.tables DropOperations against the
+    merged db+framework `base`: a drop must target something that actually
+    exists in a lower layer (dropping a nonexistent table/column/index/
+    association — or one only config itself adds — is the user's mistake). Runs
+    BEFORE the config layer is merged. Hard error via sys.exit; `label` is the
+    config path (or 'config') for the message."""
+    for tname, frag in config_tables.items():
+        if not isinstance(frag, dict):
+            continue  # shape already checked at load time
+        if frag.get('drop') is True:
+            if tname not in base:
+                sys.exit(f"Error: {label} drops table {tname!r} but no such table exists")
+            continue
+        for c in frag.get('columns', []):
+            if c.get('drop') is True and not (
+                    tname in base and any(x['name'] == c['name'] for x in base[tname]['columns'])):
+                sys.exit(f"Error: {label} drops column {tname}.{c['name']} but no such column exists")
+        for ix in frag.get('indexes', []):
+            if ix.get('drop') is True and not (
+                    tname in base and any(i.get('name') == ix['name']
+                                          for i in base[tname].get('indexes', []))):
+                sys.exit(f"Error: {label} drops index {ix['name']!r} on {tname!r} "
+                         "but no such index exists")
+        for a in frag.get('associations', []):
+            if a.get('drop') is True:
+                idents = [association_key(tname, x)
+                          for x in base.get(tname, {}).get('associations', [])]
+                if not any(_config_assoc_drop_matches(a, i) for i in idents):
+                    sys.exit(f"Error: {label} drops an association on {tname!r} "
+                             "but no matching association exists")
+
+def validate_config_references(config_tables, tables, label):
+    """Semantic validation (§6.4②) of config.tables references against the FINAL
+    merged IR: every config-declared association `target` must be an existing
+    table, and every config-declared `primary_key` column must exist in that
+    table's final columns. A config-ADDED table/column is already merged in, so
+    referencing it is valid (self- and cross-references included). Runs AFTER
+    the final merge. Hard error via sys.exit."""
+    for tname, frag in config_tables.items():
+        if not isinstance(frag, dict) or frag.get('drop') is True or tname not in tables:
+            continue
+        pk = frag.get('primary_key')
+        if pk is not None:
+            names = {c['name'] for c in tables[tname]['columns']}
+            for n in ([pk] if isinstance(pk, str) else pk):
+                if n not in names:
+                    sys.exit(f"Error: {label} table {tname!r} primary_key names column {n!r} "
+                             "which does not exist in the merged schema")
+        for a in frag.get('associations', []):
+            if a.get('drop') is True:
+                continue
+            target = a.get('target')
+            if target and target not in tables:
+                sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
+                         f"references unknown target table {target!r}")
 
 # ---------------------------------------------------------------------------
 # Excel export (.xlsx via zipfile — no third-party dependency)
@@ -4926,6 +5457,35 @@ CONFIG_DEFAULTS = {
 # intended way to point --config at different targets.
 CONFIG_CONNECTION_KEYS = {'engine', 'host', 'port', 'user', 'database'}
 CONFIG_PASSWORD_KEYS = {'password', 'passwd', 'pwd', 'url', 'database_url'}
+# Schema-input keys (REFACTOR_PLAN.md §6.2): `tables` (a map table_name ->
+# TableFragment) and `title`. `name` is deliberately NOT accepted at the top
+# level (§6.2/§18) — it's overloaded for tables/columns/associations, so a
+# stray top-level `name` is far more likely a mistake than a title. These are
+# validated syntactically at load time but NOT yet wired into the pipeline
+# (REFACTOR_PLAN.md §15 Step 3 is validation-only; construction/merge is Step 7).
+CONFIG_SCHEMA_KEYS = {'tables', 'title'}
+# The four association kinds and the two list-merge modes, reused by the
+# recursive Fragment/DropOperation validators below.
+_CONFIG_ASSOC_TYPES = {'has_many', 'belongs_to', 'has_one', 'has_and_belongs_to_many'}
+_CONFIG_MODE_KEYS = ('columns_mode', 'indexes_mode', 'associations_mode')
+# Fixed per-structure allow-lists for nested keys (typo protection, §6.4 "typo
+# を黙って無視しない"). A misspelled nested key (`primary_ky`, `nulable`) is
+# silently ignored otherwise. Deliberately spelled out here — NOT derived from
+# the Step-2 contract types — so the accepted surface is explicit and stable
+# regardless of how the internal IR shape evolves.
+_CONFIG_TABLE_KEYS = {'comment', 'primary_key', 'columns', 'indexes', 'associations',
+                      'drop', 'columns_mode', 'indexes_mode', 'associations_mode'}
+_CONFIG_COLUMN_KEYS = {'name', 'type', 'sql_type', 'nullable', 'primary',
+                       'default', 'extra', 'comment', 'drop'}
+_CONFIG_INDEX_KEYS = {'name', 'columns', 'unique', 'drop'}
+_CONFIG_ASSOC_KEYS = {'type', 'name', 'target', 'foreign_key', 'through',
+                      'polymorphic', 'drop'}
+
+def _reject_unknown_keys(obj, allowed, path, where):
+    unknown = set(obj) - allowed
+    if unknown:
+        sys.exit(f"Error: {path} `{where}`: unknown key(s): "
+                 f"{', '.join(repr(k) for k in sorted(unknown))}")
 # Expected type per key, checked at load time — YAML/JSON scalars are
 # exactly where a config typo goes undetected otherwise: max_rows as the
 # string "fifteen" would reach the JS as a bare identifier (ReferenceError,
@@ -4936,7 +5496,7 @@ CONFIG_PASSWORD_KEYS = {'password', 'passwd', 'pwd', 'url', 'database_url'}
 CONFIG_TYPES = {
     'output': str, 'models': str, 'excel': str, 'excel_template': str, 'max_rows': int,
     'only': list, 'exclude': list, 'infer_fk': bool, 'table_map': dict,
-    'relations': list,
+    'relations': list, 'title': str,
 }
 
 def load_config(args):
@@ -4987,7 +5547,8 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = set(config) - set(CONFIG_DEFAULTS) - {'relations'} - CONFIG_CONNECTION_KEYS
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations'}
+               - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
     _check_config_types(config, path)
@@ -5014,6 +5575,173 @@ def _check_config_types(config, path):
     if 'relations' in config and any(not isinstance(r, dict) for r in config['relations']):
         sys.exit(f'Error: {path} `relations` must be a list of objects '
                  '({table, column, references, ...})')
+    if 'tables' in config:
+        _check_config_tables(config['tables'], path)
+
+# ---------------------------------------------------------------------------
+# `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)
+#
+# STRICTLY SYNTACTIC (P0-1): these checks need no DB/Framework IR — they verify
+# shape, required fields, types, *_mode values, DropOperation identity, and
+# Config-internal duplicates only. They must NOT check whether a referenced
+# table/column/target actually exists anywhere — that is *semantic* validation
+# (§6.4 ②) and runs at apply time (Step 7), once every provider's IR is
+# collected. A config that drops or references a not-yet-known table/column is
+# valid here on purpose.
+# ---------------------------------------------------------------------------
+def _check_config_tables(tables, path):
+    if not isinstance(tables, dict):
+        sys.exit(f'Error: {path} `tables` must be a map of table_name -> table '
+                 'definition (an object), not a list or scalar')
+    for tname, tdef in tables.items():
+        where = f'tables.{tname}'
+        if not isinstance(tdef, dict):
+            sys.exit(f'Error: {path} `{where}` must be an object')
+        _reject_unknown_keys(tdef, _CONFIG_TABLE_KEYS, path, where)
+        _check_bool(tdef.get('drop'), 'drop' in tdef, path, f'{where}.drop')
+        # comment: str | null (null/"" = explicit delete, a valid Config op)
+        if 'comment' in tdef and tdef['comment'] is not None and not isinstance(tdef['comment'], str):
+            sys.exit(f'Error: {path} `{where}.comment` must be a string or null')
+        # primary_key: str | list[str] | null (list = composite PK, §4.2/§6.9)
+        if 'primary_key' in tdef:
+            pk = tdef['primary_key']
+            if not (pk is None or isinstance(pk, str)
+                    or (isinstance(pk, list) and all(isinstance(x, str) for x in pk))):
+                sys.exit(f'Error: {path} `{where}.primary_key` must be a string, a list of '
+                         'strings (composite PK), or null')
+        for mk in _CONFIG_MODE_KEYS:
+            if mk in tdef and tdef[mk] not in ('merge', 'replace'):
+                sys.exit(f'Error: {path} `{where}.{mk}` must be "merge" or "replace", '
+                         f'got {tdef[mk]!r}')
+        if 'columns' in tdef:
+            _check_config_columns(tdef['columns'], path, where)
+        if 'indexes' in tdef:
+            _check_config_indexes(tdef['indexes'], path, where)
+        if 'associations' in tdef:
+            _check_config_associations(tdef['associations'], path, where)
+
+def _check_bool(val, present, path, where):
+    if present and not isinstance(val, bool):
+        sys.exit(f'Error: {path} `{where}` must be true or false, got {val!r}')
+
+def _check_config_columns(columns, path, where):
+    if not isinstance(columns, list):
+        sys.exit(f'Error: {path} `{where}.columns` must be a list')
+    seen = set()
+    for i, col in enumerate(columns):
+        cw = f'{where}.columns[{i}]'
+        if not isinstance(col, dict):
+            sys.exit(f'Error: {path} `{cw}` must be an object')
+        _reject_unknown_keys(col, _CONFIG_COLUMN_KEYS, path, cw)
+        _check_bool(col.get('drop'), 'drop' in col, path, f'{cw}.drop')
+        # `name` identifies the column for BOTH a fragment (add/override) and a
+        # drop, so it's required either way (§4.3: ColumnFragment / ColumnDrop)
+        name = col.get('name')
+        if not isinstance(name, str) or not name:
+            sys.exit(f'Error: {path} `{cw}` needs a non-empty string `name` '
+                     f'({"to identify the column to drop" if col.get("drop") is True else "for the column"})')
+        if name in seen:
+            sys.exit(f'Error: {path} `{where}.columns` has a duplicate column name {name!r}')
+        seen.add(name)
+        if col.get('drop') is True:
+            continue  # ColumnDrop = { name, drop: true }; no other fields required
+        for k in ('type', 'sql_type', 'default', 'extra'):
+            if k in col and not isinstance(col[k], str):
+                sys.exit(f'Error: {path} `{cw}.{k}` must be a string')
+        for k in ('nullable', 'primary'):
+            _check_bool(col.get(k), k in col, path, f'{cw}.{k}')
+        if 'comment' in col and col['comment'] is not None and not isinstance(col['comment'], str):
+            sys.exit(f'Error: {path} `{cw}.comment` must be a string or null')
+
+def _check_config_indexes(indexes, path, where):
+    if not isinstance(indexes, list):
+        sys.exit(f'Error: {path} `{where}.indexes` must be a list')
+    seen = set()
+    for i, ix in enumerate(indexes):
+        iw = f'{where}.indexes[{i}]'
+        if not isinstance(ix, dict):
+            sys.exit(f'Error: {path} `{iw}` must be an object')
+        _reject_unknown_keys(ix, _CONFIG_INDEX_KEYS, path, iw)
+        _check_bool(ix.get('drop'), 'drop' in ix, path, f'{iw}.drop')
+        # Config indexes are name-mandatory (§7.4) — the name is the identity
+        # key for both fragment and drop (§4.3: IndexFragment / IndexDrop)
+        name = ix.get('name')
+        if not isinstance(name, str) or not name:
+            sys.exit(f'Error: {path} `{iw}` needs a non-empty string `name` '
+                     '(config indexes must be named)')
+        if name in seen:
+            sys.exit(f'Error: {path} `{where}.indexes` has a duplicate index name {name!r}')
+        seen.add(name)
+        if ix.get('drop') is True:
+            continue  # IndexDrop = { name, drop: true }
+        cols = ix.get('columns')
+        if (not isinstance(cols, list) or not cols
+                or any(not isinstance(c, str) for c in cols)):
+            sys.exit(f'Error: {path} `{iw}.columns` must be a non-empty list of strings')
+        _check_bool(ix.get('unique'), 'unique' in ix, path, f'{iw}.unique')
+
+def _config_assoc_identity(a):
+    """Stable identity for an association fragment/drop (§8.1), used only for
+    Config-internal duplicate detection. FK-holding side is keyed by its FK
+    column + target; a collection/inverse (no FK) by type + target + name."""
+    if a.get('foreign_key'):
+        return ('fk', a.get('target'), a.get('foreign_key'))
+    return ('rel', a.get('type'), a.get('target'), a.get('name'))
+
+def _check_config_associations(assocs, path, where):
+    if not isinstance(assocs, list):
+        sys.exit(f'Error: {path} `{where}.associations` must be a list')
+    seen = set()
+    for i, a in enumerate(assocs):
+        aw = f'{where}.associations[{i}]'
+        if not isinstance(a, dict):
+            sys.exit(f'Error: {path} `{aw}` must be an object')
+        _reject_unknown_keys(a, _CONFIG_ASSOC_KEYS, path, aw)
+        _check_bool(a.get('drop'), 'drop' in a, path, f'{aw}.drop')
+        # foreign_key is single-column only this release (§4.2/§18): a list is
+        # a composite FK — reject it explicitly rather than silently mishandle
+        if 'foreign_key' in a and a['foreign_key'] is not None:
+            fk = a['foreign_key']
+            if isinstance(fk, list):
+                sys.exit(f'Error: {path} `{aw}.foreign_key` is a list — composite foreign '
+                         'keys are not supported in this release; use a single column name')
+            if not isinstance(fk, str) or not fk:
+                sys.exit(f'Error: {path} `{aw}.foreign_key` must be a single column name (string)')
+        if a.get('type') is not None and a.get('type') not in _CONFIG_ASSOC_TYPES:
+            sys.exit(f'Error: {path} `{aw}.type` must be one of '
+                     f'{", ".join(sorted(_CONFIG_ASSOC_TYPES))}, got {a.get("type")!r}')
+        for k in ('name', 'target', 'through'):
+            if k in a and a[k] is not None and not isinstance(a[k], str):
+                sys.exit(f'Error: {path} `{aw}.{k}` must be a string')
+        _check_bool(a.get('polymorphic'), 'polymorphic' in a, path, f'{aw}.polymorphic')
+
+        if a.get('drop') is True:
+            # AssociationDrop identity is role-dependent (§4.3): the FK-holding
+            # side needs target+foreign_key; a collection/inverse needs
+            # type+target+name. `name` is NOT unconditionally required here (it
+            # is for a fragment) — that's the Fragment-vs-Drop required-field split.
+            if a.get('foreign_key'):
+                if not a.get('target'):
+                    sys.exit(f'Error: {path} `{aw}` is an FK-holding association drop but is '
+                             'missing `target` — need `target`+`foreign_key` to identify it')
+            else:
+                missing = [k for k in ('type', 'target', 'name') if not a.get(k)]
+                if missing:
+                    sys.exit(f'Error: {path} `{aw}` cannot identify the association to drop: '
+                             'give `target`+`foreign_key` (FK-holding side) or '
+                             '`type`+`target`+`name` (collection/inverse); '
+                             f'missing {", ".join(missing)}')
+        else:
+            # AssociationFragment (add/override): type, name, target all required
+            missing = [k for k in ('type', 'name', 'target') if not a.get(k)]
+            if missing:
+                sys.exit(f'Error: {path} `{aw}` is missing required field(s): '
+                         f'{", ".join(missing)} (an association needs type, name, target)')
+        identity = _config_assoc_identity(a)
+        if identity in seen:
+            sys.exit(f'Error: {path} `{where}.associations` has a duplicate association '
+                     f'(same identity {identity!r})')
+        seen.add(identity)
 
 _SAFE_HOST_OR_USER = re.compile(r'[\w.\-]+')
 
@@ -5066,6 +5794,37 @@ def assemble_config_url(config):
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+def _framework_project_name(mroot):
+    """A meaningful project name for a --models path (§10 title fallback).
+    Walk from a Rails app/models dir up to the project root, from a
+    prisma/schema.prisma up to the project, and from a schema file up to its
+    directory, then use the basename."""
+    p = mroot
+    if p.is_file():                                    # e.g. .../schema.prisma
+        p = p.parent
+    if p.name == 'models' and p.parent.name == 'app':  # Rails app/models
+        p = p.parent.parent
+    elif p.name == 'prisma':                           # .../<proj>/prisma
+        p = p.parent
+    return p.name or 'schema'
+
+def _resolve_title(config, url, fw_root, output):
+    """Workbook/HTML title precedence (§10): config.title > DB name >
+    framework project name > output filename stem > "schema"."""
+    if config.get('title'):
+        return config['title']
+    if url:
+        db = urlparse(url).path.lstrip('/')
+        if db:
+            return db
+    if fw_root is not None:
+        return _framework_project_name(fw_root)
+    if output:
+        stem = Path(output).stem
+        if stem:
+            return stem
+    return 'schema'
+
 def main():
     p = argparse.ArgumentParser(
         description='Generate an interactive ER diagram from a live database, '
@@ -5125,16 +5884,22 @@ def main():
 
     config = load_config(args)
     url = args.database or assemble_config_url(config)
-    scheme = (url or '').split('://', 1)[0]
-    if scheme == 'mysql':
-        parse_db, engine_name = parse_mysql, 'MySQL'
-    elif scheme in ('postgres', 'postgresql'):
-        parse_db, engine_name = parse_postgres, 'PostgreSQL'
-    else:
-        sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
-                 'as the CLI argument, or set `database` (and optionally engine/host/user/'
-                 'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
-                 'postgres://readonly@127.0.0.1:5432/myapp')
+    # DB is optional now (§10): a schema can also come from --models and/or
+    # config.tables. Only a NON-EMPTY url with an unrecognized scheme is an
+    # error (a mistyped/wrong argument); a missing url just skips the DB layer.
+    engine_name = None
+    if url:
+        scheme = url.split('://', 1)[0]
+        if scheme == 'mysql':
+            engine_name = 'MySQL'
+        elif scheme in ('postgres', 'postgresql'):
+            engine_name = 'PostgreSQL'
+        else:
+            sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
+                     'as the CLI argument, or set `database` (and optionally engine/host/user/'
+                     'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
+                     'postgres://readonly@127.0.0.1:5432/myapp. Or run with no database at '
+                     'all by supplying --models and/or a config file with a `tables:` section')
 
     if hasattr(args, 'table_map'):
         tm = {}
@@ -5151,27 +5916,75 @@ def main():
         if not hasattr(args, key):  # not explicitly passed on the CLI
             setattr(args, key, config.get(key, default))
     relations = config.get('relations', [])  # shape already validated by load_config()
+    config_tables = config.get('tables')     # shape already validated by load_config()
+    cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
+    cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
-    tables = parse_db(url)
-    print(f'Fetched {len(tables)} tables from {engine_name}', file=sys.stderr)
+    # ── valid-input check (§10): at least one SCHEMA source (DB / Framework /
+    #    config.tables). relations alone is not a source — it needs a base. ──
+    if not (url or args.models or config_tables):
+        sys.exit('Error: no schema input. Provide at least one of: a database URL '
+                 '(mysql:// or postgres://) as the argument or config `database`; '
+                 '--models pointing at a Rails/Prisma/Django project; or a config file '
+                 'with a `tables:` section.')
 
+    # ── collect provider layers, low→high spec priority, then merge (§3) ──
+    layers = []
+    db_result = None
+    if url:  # only build/connect the DB layer when a url is present (no
+             # connection and no password prompt otherwise — §10)
+        db_result = db_provider(url)
+        print(f'Fetched {len(db_result["tables"])} tables from {engine_name}', file=sys.stderr)
+        layers.append(db_result)
+
+    fw_root = None
     if args.models:
         mroot = Path(args.models).expanduser().resolve()
         if not mroot.exists():
             sys.exit(f'Error: {mroot} does not exist')
-        kind = merge_code_semantics(tables, mroot, args.table_map)
-        print(f'Merged {kind} associations from {mroot}', file=sys.stderr)
+        fw = framework_provider(mroot, args.table_map)
+        layers.append(fw)
+        fw_root = mroot
+        print(f'Merged {fw["source"]["provider"]} associations from {mroot}', file=sys.stderr)
 
+    # config.tables join as a top-priority config layer (add/override/drop/
+    # replace — §6.2/§7). Its DROP ops are semantic-validated against the merged
+    # db+framework base first (§6.4②: a drop must target a real lower-layer
+    # item), then the layer is merged so its additions are visible to relations.
+    if config_tables:
+        base = merge_ir(layers)
+        validate_config_drops(config_tables, base, cfg_label)
+        layers = layers + [config_provider(config, location=cfg_location)]
+        print(f'Applied config schema ({len(config_tables)} table entr'
+              f'{"y" if len(config_tables) == 1 else "ies"})', file=sys.stderr)
+
+    # config `relations` join as a further config layer (§8.6/P0-3: override,
+    # not skip). They validate against — and detect single-column-unique FKs
+    # (1:1) in — the merged base INCLUDING config.tables, so a relation may
+    # reference a config-added table/column.
     if relations:
-        added = apply_manual_relations(tables, relations)
-        if added:
-            print(f'Applied {added} manual relation(s) from config', file=sys.stderr)
+        base2 = merge_ir(layers)
+        layers = layers + [relations_to_config_layer(relations, base2)]
+        print(f'Applied {len(relations)} manual relation(s) from config', file=sys.stderr)
 
-    removed = dedupe_db_fk(tables)
-    if removed:
-        print(f'{removed} DB FKs covered by explicit associations', file=sys.stderr)
+    # merge_ir runs Phase A (identity merge) + Phase B reconcile_db_fks and
+    # derives fk_columns / schema_missing; the DB-FK "covered" count is the
+    # drop in db_fk-flagged associations from the raw DB layer to the result.
+    tables = merge_ir(layers)
+    if db_result:  # only DB layers carry db_fk flags, so no db -> nothing covered
+        covered = (sum(1 for t in db_result['tables'].values()
+                       for a in t['associations'] if a.get('db_fk'))
+                   - sum(1 for t in tables.values()
+                         for a in t['associations'] if a.get('db_fk')))
+        if covered:
+            print(f'{covered} DB FKs covered by explicit associations', file=sys.stderr)
 
-    _finish(tables, args, urlparse(url).path.lstrip('/'))
+    # §6.4②: config.tables references (association targets, primary_key columns)
+    # must resolve in the FINAL merged IR (config-added tables/columns count).
+    if config_tables:
+        validate_config_references(config_tables, tables, cfg_label)
+
+    _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)))
 
 def _finish(tables, args, title_name):
     """Shared tail: FK inference, --only/--exclude filtering, HTML generation."""

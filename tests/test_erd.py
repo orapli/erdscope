@@ -85,6 +85,28 @@ def db_tables():
     return erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
 
 
+# --- new-path helpers -------------------------------------------------------
+# The old direct overlay/dedupe/manual-relation functions were retired; the
+# live pipeline builds ProviderResult layers and folds them with merge_ir
+# (whose Phase B reconcile_db_fks subsumes the old per-table dedupe pass).
+# These thin wrappers drive that same path from a DB IR dict so the behavioral
+# assertions below carry over unchanged.
+def overlay_code(db_ir, mroot, table_map=None):
+    """DB IR + framework (Rails/Prisma/Django) layer -> merged IR via merge_ir.
+    Reconciliation (the old dedupe pass) is included, since merge_ir runs Phase B."""
+    db_layer = erd.make_provider_result('db', 'mysql', db_ir)
+    fw = erd.framework_provider(mroot, table_map)
+    return erd.merge_ir([db_layer, fw])
+
+def apply_relations(db_ir, relations):
+    """DB IR + config relations layer -> merged IR via merge_ir. Validation
+    (unknown table/column/target, missing key) happens in
+    relations_to_config_layer and raises SystemExit with the same messages."""
+    db_layer = erd.make_provider_result('db', 'mysql', db_ir)
+    cfg = erd.relations_to_config_layer(relations, db_ir)
+    return erd.merge_ir([db_layer, cfg])
+
+
 class TestInflector(unittest.TestCase):
     def test_pluralize(self):
         cases = {'user': 'users', 'category': 'categories', 'status': 'statuses',
@@ -332,8 +354,8 @@ class TestOverlayAndInference(unittest.TestCase):
         self.tables = db_tables()
 
     def test_rails_overlay_merges_associations(self):
-        kind = erd.merge_code_semantics(self.tables, FIXTURE)
-        self.assertEqual(kind, 'rails')
+        self.assertEqual(erd.detect_code_source(FIXTURE), 'rails')
+        self.tables = overlay_code(self.tables, FIXTURE)
         names = {a['name'] for a in self.tables['users']['associations']}
         self.assertIn('posts', names)
         self.assertIn('commented_posts', names)  # has_many :through
@@ -342,7 +364,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # comment.rb: `belongs_to :post` / `belongs_to :user` — neither gives
         # an explicit foreign_key: option, so it must default to Rails
         # convention (<name>_id) rather than being left unset
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         assocs = {a['name']: a for a in self.tables['comments']['associations']}
         self.assertEqual(assocs['post']['foreign_key'], 'post_id')
         self.assertEqual(assocs['user']['foreign_key'], 'user_id')
@@ -351,18 +373,18 @@ class TestOverlayAndInference(unittest.TestCase):
         self.assertEqual(post_assocs['author']['foreign_key'], 'user_id')
 
     def test_dedupe_after_overlay(self):
-        erd.merge_code_semantics(self.tables, FIXTURE)
-        removed = erd.dedupe_db_fk(self.tables)
-        # posts.user_id DB FK is covered by the explicit belongs_to
-        self.assertGreaterEqual(removed, 1)
+        # merge_ir's Phase B reconcile_db_fks does what the old dedupe pass did:
+        # posts.user_id DB FK is covered by the explicit belongs_to and dropped,
+        # while posts_tags FKs stay (no model declares that pair). The behavioral
+        # signal (the pair got reconciled) is the resulting db_fk state below.
+        merged = overlay_code(self.tables, FIXTURE)
         self.assertFalse(any(a.get('db_fk')
-                             for a in self.tables['posts']['associations']))
-        # posts_tags FKs stay: no model declares that pair
+                             for a in merged['posts']['associations']))
         self.assertTrue(any(a.get('db_fk')
-                            for a in self.tables['posts_tags']['associations']))
+                            for a in merged['posts_tags']['associations']))
 
     def test_model_without_db_table_flagged(self):
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertIn('webhooks', self.tables)
         self.assertTrue(self.tables['webhooks']['schema_missing'])
 
@@ -371,7 +393,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # `included do` in the HasCrmTable concern it includes. Without
         # following the include, this would fall back to class_to_table
         # ('Widget' -> 'widgets'), which is wrong.
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertIn('crm_widgets', self.tables)
         self.assertNotIn('widgets', self.tables)
 
@@ -379,16 +401,15 @@ class TestOverlayAndInference(unittest.TestCase):
         # gizmo.rb includes a concern that lives in a gem, not this app —
         # genuinely unresolvable by static analysis, so it falls back to
         # class_to_table('Gizmo') = 'gizmos', which is wrong for this model.
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertIn('gizmos', self.tables)  # the (wrong) naive guess, unmapped
 
     def test_table_map_corrects_it(self):
-        erd.merge_code_semantics(self.tables, FIXTURE, table_map={'Gizmo': 'crm_gizmos'})
+        self.tables = overlay_code(self.tables, FIXTURE, table_map={'Gizmo': 'crm_gizmos'})
         self.assertIn('crm_gizmos', self.tables)
         self.assertNotIn('gizmos', self.tables)
         # the override wins even over a *correctly* resolved table_name
-        erd2 = db_tables()
-        erd.merge_code_semantics(erd2, FIXTURE, table_map={'Widget': 'totally_different'})
+        erd2 = overlay_code(db_tables(), FIXTURE, table_map={'Widget': 'totally_different'})
         self.assertIn('totally_different', erd2)
         self.assertNotIn('crm_widgets', erd2)
 
@@ -399,7 +420,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # recognized, so a model built on a shared custom base class (common
         # in mature Rails apps) was dropped with no warning at all — its
         # associations (belongs_to :user here) vanished silently.
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertIn('custom_base_widgets', self.tables)
         names = {a['name'] for a in self.tables['custom_base_widgets']['associations']}
         self.assertIn('user', names)
@@ -413,7 +434,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # from the whole file instead, Gadget would incorrectly inherit
         # "abstract" too and get silently dropped, the exact failure this
         # base-class resolution was built to fix in the first place.
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertIn('gadgets', self.tables)
         names = {a['name'] for a in self.tables['gadgets']['associations']}
         self.assertIn('user', names)
@@ -426,7 +447,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # rather than getting its own. Admin's own association
         # (belongs_to :department) must land on `users`, not a phantom
         # `admins` table that doesn't exist in the real schema.
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertNotIn('admins', self.tables)
         names = {a['name'] for a in self.tables['users']['associations']}
         self.assertIn('department', names)
@@ -436,7 +457,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # reach this" escape hatch — an explicit override on the STI
         # subclass itself must still take precedence over sti_root's
         # automatic table-sharing, not be silently ignored by it
-        erd.merge_code_semantics(self.tables, FIXTURE, table_map={'Admin': 'admin_accounts'})
+        self.tables = overlay_code(self.tables, FIXTURE, table_map={'Admin': 'admin_accounts'})
         self.assertIn('admin_accounts', self.tables)
         names = {a['name'] for a in self.tables['admin_accounts']['associations']}
         self.assertIn('department', names)
@@ -452,7 +473,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # via the naive class_to_table('Project') = 'projects' — a table
         # that doesn't exist, since the real one is aaa_projects — so the
         # right-pane link pointed nowhere and was unclickable.
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertIn('aaa_projects', self.tables)
         self.assertNotIn('projects', self.tables)
         targets = {a['name']: a['target'] for a in self.tables['tasks']['associations']}
@@ -464,7 +485,7 @@ class TestOverlayAndInference(unittest.TestCase):
         # — the self.table_name regex must run on comment-stripped source,
         # or a commented-out assignment silently overrides the real
         # (class_to_table-derived) table name
-        erd.merge_code_semantics(self.tables, FIXTURE)
+        self.tables = overlay_code(self.tables, FIXTURE)
         self.assertIn('commented_table_names', self.tables)
         self.assertNotIn('should_not_be_used', self.tables)
 
@@ -490,7 +511,7 @@ class TestOverlayAndInference(unittest.TestCase):
             {'type': 'belongs_to', 'name': 'account', 'target': 'accounts',
              'foreign_key': 'account_id'})
 
-        removed = erd.dedupe_db_fk(tables)
+        removed = erd.reconcile_db_fks(tables)
         self.assertEqual(removed, 1)
         assocs = tables['profiles']['associations']
         self.assertEqual(len(assocs), 1, 'the DB FK should be dropped, not duplicated')
@@ -515,7 +536,7 @@ class TestOverlayAndInference(unittest.TestCase):
         tables['accounts']['associations'].append(
             {'type': 'has_many', 'name': 'profiles', 'target': 'profiles'})
 
-        erd.dedupe_db_fk(tables)
+        erd.reconcile_db_fks(tables)
         types = {a['type'] for a in tables['profiles']['associations']}
         self.assertEqual(types, {'belongs_to'})  # left as-is, not upgraded
 
@@ -536,7 +557,7 @@ class TestOverlayAndInference(unittest.TestCase):
             {'type': 'belongs_to', 'name': 'author', 'target': 'users',
              'foreign_key': 'author_id'})
 
-        removed = erd.dedupe_db_fk(tables)
+        removed = erd.reconcile_db_fks(tables)
         self.assertEqual(removed, 1)  # only the author_id DB FK
         fks = {a['foreign_key'] for a in tables['posts']['associations']}
         self.assertEqual(fks, {'author_id', 'editor_id'})  # editor_id DB FK survives
@@ -594,96 +615,98 @@ class TestManualRelations(unittest.TestCase):
         self.tables = db_tables()
 
     def test_declares_belongs_to_by_default(self):
-        added = erd.apply_manual_relations(self.tables, [
+        merged = apply_relations(self.tables, [
             {'table': 'comments', 'column': 'post_id', 'references': 'posts'},
         ])
-        self.assertEqual(added, 1)
-        a = self.tables['comments']['associations'][0]
+        a = merged['comments']['associations'][0]
         self.assertEqual((a['type'], a['name'], a['target'], a['foreign_key']),
                          ('belongs_to', 'post', 'posts', 'post_id'))
-        self.assertTrue(a['manual'])
+        self.assertTrue(a['manual'])  # merge_ir forces config-kind to manual
 
     def test_one_to_one_flag_forces_has_one(self):
-        added = erd.apply_manual_relations(self.tables, [
+        merged = apply_relations(self.tables, [
             {'table': 'comments', 'column': 'post_id', 'references': 'posts',
              'one_to_one': True, 'name': 'thread'},
         ])
-        self.assertEqual(added, 1)
-        a = self.tables['comments']['associations'][0]
+        a = merged['comments']['associations'][0]
         self.assertEqual((a['type'], a['name']), ('has_one', 'thread'))
 
     def test_auto_detects_1to1_via_unique_index_like_other_sources(self):
         idx = {'name': 'uk_comments_post_id', 'columns': ['post_id'], 'unique': True}
         self.tables['comments']['indexes'].append(idx)
-        erd.apply_manual_relations(self.tables, [
+        merged = apply_relations(self.tables, [
             {'table': 'comments', 'column': 'post_id', 'references': 'posts'},
         ])
-        self.assertEqual(self.tables['comments']['associations'][0]['type'], 'has_one')
+        self.assertEqual(merged['comments']['associations'][0]['type'], 'has_one')
 
     def test_works_without_any_models_overlay(self):
         # the whole point: a complete relation graph from config alone,
         # usable before any application code exists
-        added = erd.apply_manual_relations(self.tables, [
+        merged = apply_relations(self.tables, [
             {'table': 'likes', 'column': 'unknown_thing_id', 'references': 'users'},
         ])
-        self.assertEqual(added, 1)
-        self.assertIn('users', {a['target'] for a in self.tables['likes']['associations']})
+        self.assertIn('users', {a['target'] for a in merged['likes']['associations']})
 
     def test_unknown_table_exits(self):
         with self.assertRaises(SystemExit) as cm:
-            erd.apply_manual_relations(self.tables, [
+            apply_relations(self.tables, [
                 {'table': 'nope', 'column': 'x_id', 'references': 'users'},
             ])
         self.assertIn('nope', str(cm.exception))
 
     def test_unknown_column_exits(self):
         with self.assertRaises(SystemExit) as cm:
-            erd.apply_manual_relations(self.tables, [
+            apply_relations(self.tables, [
                 {'table': 'comments', 'column': 'nope_id', 'references': 'posts'},
             ])
         self.assertIn('nope_id', str(cm.exception))
 
     def test_unknown_target_exits(self):
         with self.assertRaises(SystemExit) as cm:
-            erd.apply_manual_relations(self.tables, [
+            apply_relations(self.tables, [
                 {'table': 'comments', 'column': 'post_id', 'references': 'nope'},
             ])
         self.assertIn('nope', str(cm.exception))
 
     def test_missing_key_exits(self):
         with self.assertRaises(SystemExit) as cm:
-            erd.apply_manual_relations(self.tables, [{'table': 'comments', 'column': 'post_id'}])
+            apply_relations(self.tables, [{'table': 'comments', 'column': 'post_id'}])
         self.assertIn('references', str(cm.exception))
 
     def test_plain_db_fk_does_not_block_a_manual_relation(self):
         # posts.user_id already has a real DB FK to users, but a plain DB FK
-        # isn't "explicit" — the manual relation is meant to take precedence
-        # over it (dedupe_db_fk resolves the pair afterward), not be blocked
-        added = erd.apply_manual_relations(self.tables, [
+        # isn't "explicit" — the config relation takes precedence over it
+        # (merge_ir Phase B reconciles the pair), producing the manual edge.
+        merged = apply_relations(self.tables, [
             {'table': 'posts', 'column': 'user_id', 'references': 'users', 'name': 'owner'},
         ])
-        self.assertEqual(added, 1)
+        owner = [a for a in merged['posts']['associations'] if a['name'] == 'owner']
+        self.assertEqual(len(owner), 1)
+        self.assertTrue(owner[0]['manual'])
 
-    def test_redundant_with_existing_explicit_association_is_skipped(self):
-        # an explicit (code-declared or previously-manual) association for
-        # the exact same column/target already exists — redeclaring it
-        # manually shouldn't create a duplicate edge
+    def test_config_relation_overrides_existing_explicit_association(self):
+        # P0-3 / §12 change: the OLD path SKIPPED a relation already covered by
+        # an explicit association (added == 0). The NEW path OVERRIDES it — a
+        # config relation of the same identity wins via merge_ir's Phase A and
+        # is re-authored as config/manual. Here a code-declared belongs_to
+        # :author (user_id) is overridden by a config relation naming the same
+        # edge, yielding a single, config-authored association (not a skip).
         self.tables['posts']['associations'].append(
             {'type': 'belongs_to', 'name': 'author', 'target': 'users',
-             'foreign_key': 'user_id', 'manual': True})
-        added = erd.apply_manual_relations(self.tables, [
-            {'table': 'posts', 'column': 'user_id', 'references': 'users'},
+             'foreign_key': 'user_id'})
+        merged = apply_relations(self.tables, [
+            {'table': 'posts', 'column': 'user_id', 'references': 'users', 'name': 'author'},
         ])
-        self.assertEqual(added, 0)
-        matching = [a for a in self.tables['posts']['associations']
-                   if a.get('foreign_key') == 'user_id' and a['target'] == 'users'
-                   and not a.get('db_fk')]
-        self.assertEqual(len(matching), 1)
+        matching = [a for a in merged['posts']['associations']
+                    if a.get('foreign_key') == 'user_id' and a['target'] == 'users'
+                    and a['name'] == 'author']
+        self.assertEqual(len(matching), 1)      # merged, not duplicated
+        self.assertTrue(matching[0]['manual'])  # config authorship wins (override)
 
-    def test_takes_precedence_over_db_fk_via_dedupe(self):
-        # manual relation applied before dedupe_db_fk, so it wins over a real
-        # (but here, differently-named) DB FK the same way a code-declared
-        # association would
+    def test_takes_precedence_over_db_fk_via_reconcile(self):
+        # config relation wins over a real (but differently-named) DB FK the
+        # same way a code-declared association would: merge_ir Phase B drops the
+        # covered DB FK, leaving only the manual edge.
         table_rows = [('a', ''), ('b', '')]
         col_rows = [
             _col('a', 'id', 'bigint', 'bigint', 'NO', 'PRI'),
@@ -692,12 +715,10 @@ class TestManualRelations(unittest.TestCase):
         ]
         fk_rows = [('b', 'weird_ref', 'a')]
         tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
-        erd.apply_manual_relations(tables, [
+        merged = apply_relations(tables, [
             {'table': 'b', 'column': 'weird_ref', 'references': 'a', 'name': 'owner'},
         ])
-        removed = erd.dedupe_db_fk(tables)
-        self.assertEqual(removed, 1)
-        assocs = tables['b']['associations']
+        assocs = merged['b']['associations']
         self.assertEqual(len(assocs), 1)
         self.assertTrue(assocs[0]['manual'])
         self.assertNotIn('db_fk', assocs[0])
@@ -762,14 +783,22 @@ class TestParsePrisma(unittest.TestCase):
         self.assertEqual(post_assocs['author']['type'], 'belongs_to')
 
     def test_prisma_as_overlay(self):
-        tables = {'users': {'columns': [], 'associations': [],
-                            'indexes': [], 'primary_key': 'id'}}
-        kind = erd.merge_code_semantics(
-            tables, Path(__file__).resolve().parent / 'fixture_prisma')
-        self.assertEqual(kind, 'prisma')
+        # prisma overlaid on a DB IR via merge_ir: a matching table gains the
+        # prisma associations, and a prisma-only model surfaces as its own
+        # table. (Unlike the retired association-only overlay, the prisma
+        # provider retains columns, so a prisma-only model is a real table
+        # rather than a schema_missing shell.)
+        base = {'users': {'columns': [], 'associations': [],
+                          'indexes': [], 'primary_key': 'id'}}
+        prisma_dir = Path(__file__).resolve().parent / 'fixture_prisma'
+        self.assertEqual(erd.detect_code_source(prisma_dir), 'prisma')
+        merged = erd.merge_ir([
+            erd.make_provider_result('db', 'mysql', base),
+            erd.framework_provider(prisma_dir),
+        ])
         self.assertTrue(any(a['name'] == 'posts'
-                            for a in tables['users']['associations']))
-        self.assertTrue(tables['Post']['schema_missing'])
+                            for a in merged['users']['associations']))
+        self.assertIn('Post', merged)
 
 
 class TestParseDjango(unittest.TestCase):
@@ -871,9 +900,7 @@ class TestGeneration(unittest.TestCase):
 
 class TestExcel(unittest.TestCase):
     def test_workbook_structure(self):
-        tables = db_tables()
-        erd.merge_code_semantics(tables, FIXTURE)
-        erd.dedupe_db_fk(tables)
+        tables = overlay_code(db_tables(), FIXTURE)
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'defs.xlsx'
             erd.write_excel(tables, out, 'testdb')
@@ -1314,7 +1341,7 @@ class TestMainConfigIntegration(unittest.TestCase):
         self.assertGreater(len(data['tables']), 1)  # unfiltered
 
     def test_table_map_dict_form_in_config(self):
-        # merge_code_semantics only runs with --models; here we just check
+        # the framework overlay only runs with --models; here we just check
         # the config's table_map dict shape survives the merge loop without
         # needing the CLI "Class=table" string-splitting path
         Path('.erdscope.json').write_text(json.dumps({'table_map': {'Widget': 'crm_widgets'}}))
@@ -1344,10 +1371,13 @@ class TestMainConfigIntegration(unittest.TestCase):
         self.assertEqual(seen, ['mysql://cli-wins@example/db'])
 
     def test_missing_connection_info_exits_with_clear_message(self):
+        # Step 8/9: DB is no longer required — with no url AND no --models AND
+        # no config.tables there's simply no schema source, which is the error
+        # now (previously this said "database URL is required").
         sys.argv = ['erd.py']
         with self.assertRaises(SystemExit) as cm:
             erd.main()
-        self.assertIn('database URL is required', str(cm.exception))
+        self.assertIn('no schema input', str(cm.exception))
 
     def test_yaml_config_carries_connection_fields(self):
         try:
