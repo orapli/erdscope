@@ -407,8 +407,12 @@ class TestRailsOverlayIRFragmentSnapshot(unittest.TestCase):
         def frag(assocs=()):
             # merge_ir derives the full table shape: Rails supplies only
             # associations, so columns/indexes are empty, primary_key is None,
-            # schema_missing is derived True, and fk_columns is computed.
-            assocs = list(assocs)
+            # schema_missing is derived True, and fk_columns is computed. Every
+            # framework-only association is 'declared' with a single Rails source
+            # (Step 10 provenance/sources), so enrich the bare inputs with those.
+            assocs = [{**a, 'provenance': 'declared',
+                       'sources': [{'kind': 'framework', 'provider': 'rails'}]}
+                      for a in assocs]
             return {'columns': [], 'primary_key': None, 'indexes': [],
                     'associations': assocs, 'schema_missing': True,
                     'fk_columns': sorted({a['foreign_key'] for a in assocs
@@ -555,31 +559,40 @@ class TestMergeOverlaySnapshot(unittest.TestCase):
         # all three DB FKs (companies<-users, users<-posts, users<-profiles) are
         # covered by an explicit code/manual association, so merge_ir absorbs
         # them (Phase A identity merge + Phase B reconcile) — no association in
-        # the merged IR still carries the db_fk flag.
+        # the merged IR still carries db_fk provenance (nor the legacy boolean).
         for name, t in self.tables.items():
-            self.assertFalse(any(a.get('db_fk') for a in t['associations']), name)
+            self.assertFalse(any(a.get('provenance') == 'db_fk' for a in t['associations']), name)
+            self.assertFalse(any('db_fk' in a for a in t['associations']), name)
 
     def test_final_associations(self):
+        # merged IR carries structured provenance + sources (Step 10), not legacy
+        # booleans. A DB FK also declared in Rails -> provenance 'declared', with
+        # both {db,mysql} and {framework,rails} in sources.
+        DB_RAILS = [{'kind': 'db', 'provider': 'mysql'},
+                    {'kind': 'framework', 'provider': 'rails'}]
+        RAILS = [{'kind': 'framework', 'provider': 'rails'}]
+        CONFIG = [{'kind': 'config', 'provider': 'config'}]
         self.assertEqual(self.tables['users']['associations'], [
             {'type': 'belongs_to', 'name': 'company', 'target': 'companies',
-             'foreign_key': 'company_id'},  # backfilled, no db_fk (deduped)
+             'foreign_key': 'company_id', 'provenance': 'declared', 'sources': DB_RAILS},
         ])
         self.assertEqual(self.tables['posts']['associations'], [
             {'type': 'belongs_to', 'name': 'user', 'target': 'users',
-             'foreign_key': 'user_id'},
+             'foreign_key': 'user_id', 'provenance': 'declared', 'sources': DB_RAILS},
             {'type': 'belongs_to', 'name': 'created_by', 'target': 'users',
-             'foreign_key': 'created_by_id', 'manual': True},
+             'foreign_key': 'created_by_id', 'provenance': 'manual', 'sources': CONFIG},
             {'type': 'belongs_to', 'name': 'updated_by', 'target': 'users',
-             'foreign_key': 'updated_by_id', 'manual': True},
+             'foreign_key': 'updated_by_id', 'provenance': 'manual', 'sources': CONFIG},
         ])
         self.assertEqual(self.tables['profiles']['associations'], [
             # promoted from belongs_to to has_one by the DB unique index,
             # even though no model declares the reverse has_one
             {'type': 'has_one', 'name': 'user', 'target': 'users',
-             'foreign_key': 'user_id'},
+             'foreign_key': 'user_id', 'provenance': 'declared', 'sources': DB_RAILS},
         ])
         self.assertEqual(self.tables['companies']['associations'], [
-            {'type': 'has_many', 'name': 'users', 'target': 'users'},
+            {'type': 'has_many', 'name': 'users', 'target': 'users',
+             'provenance': 'declared', 'sources': RAILS},
         ])
 
     def test_columns_and_pk_untouched_by_overlay(self):
@@ -678,8 +691,10 @@ class TestExcelOutputSnapshot(unittest.TestCase):
                                 models=None, excel=None, max_rows=15,
                                 only=None, exclude=None, infer_fk=False)
         erd._finish(cls.tables, args, 'testdb')  # populates fk_columns
+        # write_excel consumes the legacy-flag shape, so pass it through the same
+        # §9.3 serialize boundary _finish uses (provenance/sources -> legacy flags).
         cls.xlsx_path = Path(cls.tmp.name) / 'defs.xlsx'
-        erd.write_excel(cls.tables, cls.xlsx_path, 'testdb')
+        erd.write_excel(erd.serialize_for_viewer(cls.tables), cls.xlsx_path, 'testdb')
         with zipfile.ZipFile(cls.xlsx_path) as z:
             cls.overview_xml = z.read('xl/worksheets/sheet1.xml').decode()
             names = z.namelist()
@@ -938,14 +953,16 @@ class TestRailsProvider(unittest.TestCase):
             self.assertEqual(set(frag), {'associations'}, tname)
 
     def test_fragment_associations_survive_the_merge(self):
-        # the fragment's associations equal what a framework-only merge_ir
-        # deposits (merge_ir over the rails provider alone, no DB layer)
+        # the fragment's associations survive a framework-only merge_ir; the
+        # merge adds Step-10 provenance/sources, so compare with those stripped.
         with tempfile.TemporaryDirectory() as tmp:
             models = self._models_dir(tmp)
             frag_tables = erd.rails_provider(models)['tables']
             merged = erd.merge_ir([erd.rails_provider(models)])
         for tname, frag in frag_tables.items():
-            self.assertEqual(frag['associations'], merged[tname]['associations'], tname)
+            stripped = [{k: v for k, v in a.items() if k not in ('provenance', 'sources')}
+                        for a in merged[tname]['associations']]
+            self.assertEqual(frag['associations'], stripped, tname)
 
     def test_provider_does_not_mutate_any_external_dict(self):
         # rails_provider takes no tables arg and must not touch anything but
@@ -994,7 +1011,10 @@ class TestRailsProvider(unittest.TestCase):
             frag_tables = erd.rails_provider(models)['tables']
             self.assertNotIn('columns', frag_tables['companies'])
             merged = erd.merge_ir([erd.rails_provider(models)])
-        assocs = frag_tables['companies']['associations']
+        # each fragment association gains Step-10 provenance/sources in the merge
+        assocs = [{**a, 'provenance': 'declared',
+                   'sources': [{'kind': 'framework', 'provider': 'rails'}]}
+                  for a in frag_tables['companies']['associations']]
         self.assertEqual(merged['companies'], {
             'columns': [], 'primary_key': None, 'indexes': [], 'schema_missing': True,
             'associations': assocs,

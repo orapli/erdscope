@@ -127,6 +127,15 @@ def legacy_flags_for(provenance):
     flag = _PROVENANCE_TO_FLAG.get(provenance)
     return {flag: True} if flag else {}
 
+
+def _assoc_provenance(assoc):
+    """Provenance of an association regardless of which shape it carries: the
+    merged IR stores a structured `provenance` string (Step 10); a legacy-shape
+    association (parser output, or a synthetic test fixture) stores boolean
+    flags. Prefer the explicit provenance, else derive it from the flags. Lets
+    the internals (reconcile_db_fks) treat both shapes uniformly."""
+    return assoc.get('provenance') or provenance_of(assoc)
+
 # ---------------------------------------------------------------------------
 # SQL type shorthand (information_schema DATA_TYPE -> display type)
 # ---------------------------------------------------------------------------
@@ -551,9 +560,13 @@ def _assoc_content_differs(a, b):
             or a.get('through') != b.get('through')
             or bool(a.get('polymorphic')) != bool(b.get('polymorphic')))
 
-def _merge_association_group(members):
+def _merge_association_group(members, layer_sources):
     """members: list of (spec_order, kind, assoc_dict), same identity, in layer
-    order. Merge into one association per §8.4 + §9."""
+    order. `layer_sources[spec_order]` is the contributing layer's {kind,
+    provider}. Merge into one association per §8.4 + §9. The merged association
+    carries a structured `provenance` (representative string) + `sources` (the
+    deduplicated union of contributing layers) and NOT the legacy db_fk/manual/
+    inferred booleans — those are re-derived only at the serialize boundary."""
     ms = sorted(members, key=lambda m: m[0])
     role = _assoc_role(ms[0][2])
     out = {}
@@ -600,14 +613,27 @@ def _merge_association_group(members):
             print(f"Warning: framework association {winner.get('name')!r} (on "
                   f"{winner['target']!r}) overrides a differing earlier framework "
                   f"association", file=sys.stderr)
-    # representative provenance -> legacy flag(s) (§9.3 seam). A config-layer
-    # association is manual by definition (§9.1), even if its fragment carries
-    # no flag; otherwise read the association's existing legacy flags.
+    # provenance (§9.1): representative string by precedence (manual > declared
+    # > db_fk > inferred). A config-layer association is manual by definition
+    # (§9.1) even if its fragment carries no flag; otherwise read the member's
+    # own legacy flags. Stored structured on the merged IR — converted back to a
+    # legacy boolean only by serialize_for_viewer (§9.3).
     def member_prov(kind, a):
         return 'manual' if kind == 'config' else provenance_of(a)
-    rep = max((member_prov(kind, a) for _, kind, a in ms),
-              key=lambda p: _PROV_PRECEDENCE[p])
-    out.update(legacy_flags_for(rep))
+    out['provenance'] = max((member_prov(kind, a) for _, kind, a in ms),
+                            key=lambda p: _PROV_PRECEDENCE[p])
+    # sources (§9.1): the deduplicated union of the {kind, provider} of every
+    # layer that contributed to this identity, deterministically ordered. A DB
+    # FK also declared in Rails ends up with both {db,mysql} and {framework,
+    # rails}.
+    seen_src, src = set(), []
+    for order, _, _ in ms:
+        s = layer_sources[order]
+        key = (s['kind'], s['provider'])
+        if key not in seen_src:
+            seen_src.add(key)
+            src.append({'kind': s['kind'], 'provider': s['provider']})
+    out['sources'] = sorted(src, key=lambda s: (s['kind'], s['provider']))
     return out
 
 def _config_assoc_drop_matches(drop, ident):
@@ -634,11 +660,13 @@ def _config_assoc_drop_matches(drop, ident):
         return drop.get('name') is None or drop['name'] == name
     return drop.get('name') == name
 
-def _merge_table(tname, contribs):
+def _merge_table(tname, contribs, layer_sources):
     """contribs: list of (kind, spec_order, fragment) for one table, in layer
-    order. Build the merged table (columns/indexes/primary_key/comment/
-    associations). Derived fields (fk_columns, schema_missing, primary_key
-    normalization) are applied later, after Phase B.
+    order. `layer_sources[spec_order]` is that layer's {kind, provider} source,
+    threaded through to the association merge for `sources` (§9.1). Build the
+    merged table (columns/indexes/primary_key/comment/associations). Derived
+    fields (fk_columns, schema_missing, primary_key normalization) are applied
+    later, after Phase B.
 
     Config-only operation markers (§6.2), present ONLY on config-kind fragments:
       - `columns_mode|indexes_mode|associations_mode: "replace"` (table-scope):
@@ -725,7 +753,7 @@ def _merge_table(tname, contribs):
                 a_order.append(ident)
             a_groups[ident].append((order, kind, a))
     merged['associations'] = [
-        _merge_association_group(a_groups[i]) for i in a_order
+        _merge_association_group(a_groups[i], layer_sources) for i in a_order
         if not any(_config_assoc_drop_matches(d, i) for d in a_drops)]
     return merged
 
@@ -776,6 +804,10 @@ def merge_ir(layers):
     it. `config.tables` is wired into main in Step 7b; semantic validation of
     drop targets etc. (§6.4②) also lands there."""
     prepared = [(pr['source']['kind'], copy.deepcopy(pr['tables'])) for pr in layers]
+    # per-layer source ({kind, provider}), indexed by spec order — threaded into
+    # the association merge so each merged association can record the union of
+    # the layers that contributed to it (§9.1 `sources`).
+    layer_sources = [pr['source'] for pr in layers]
     order, seen = [], set()
     for _, tbls in prepared:
         for tname in tbls:
@@ -800,7 +832,7 @@ def merge_ir(layers):
         # table from the result (a no-op if nothing lower provided it).
         if any(kind == 'config' and frag.get('drop') is True for kind, _, frag in contribs):
             continue
-        result[tname] = _merge_table(tname, contribs)
+        result[tname] = _merge_table(tname, contribs, layer_sources)
     # Phase B: edge-level DB-FK reconciliation (§8.5), same as the legacy path.
     reconcile_db_fks(result)
     # Derived values (§7.3/§7.7/§7.8) — computed, never read from input.
@@ -839,13 +871,13 @@ def reconcile_db_fks(tables):
     explicit_by_pair = {}
     for name, t in tables.items():
         for a in t['associations']:
-            if not a.get('db_fk') and not a.get('inferred'):
+            if _assoc_provenance(a) in ('declared', 'manual'):
                 explicit_by_pair.setdefault(frozenset((name, a['target'])), []).append((name, a))
     removed = 0
     for name, t in tables.items():
         kept = []
         for a in t['associations']:
-            if a.get('db_fk'):
+            if _assoc_provenance(a) == 'db_fk':
                 candidates = explicit_by_pair.get(frozenset((name, a['target'])), [])
                 covering = [(n, ea) for n, ea in candidates
                             if not ea.get('foreign_key') or ea['foreign_key'] == a.get('foreign_key')]
@@ -1321,8 +1353,10 @@ def parse_django(root):
 # ---------------------------------------------------------------------------
 def infer_fk_associations(tables):
     """Infer edges from FK-looking column names even when no association is
-    declared. Pairs already related in either direction are skipped. Marked
-    with an `inferred` flag. Tries the pluralized table name first (Rails
+    declared. Pairs already related in either direction are skipped. Marked with
+    provenance 'inferred' and an empty `sources` (no provider layer contributed
+    it — it is a post-merge heuristic derived from *_id column names, not a
+    merge of source layers). Tries the pluralized table name first (Rails
     convention) and falls back to the singular stem as-is (common with
     Prisma/other schemas that don't pluralize table names) — whichever
     actually exists. A column alone under a single-column unique index is
@@ -1349,7 +1383,7 @@ def infer_fk_associations(tables):
             assoc_type = 'has_one' if _unique_single_col(t, cn) else 'belongs_to'
             t['associations'].append({'type': assoc_type, 'name': stem,
                                       'target': target, 'foreign_key': cn,
-                                      'inferred': True})
+                                      'provenance': 'inferred', 'sources': []})
             outgoing.add(target)
             added += 1
     return added
@@ -6040,11 +6074,13 @@ def main():
     # derives fk_columns / schema_missing; the DB-FK "covered" count is the
     # drop in db_fk-flagged associations from the raw DB layer to the result.
     tables = merge_ir(layers)
-    if db_result:  # only DB layers carry db_fk flags, so no db -> nothing covered
+    if db_result:  # count db_fk edges dropped from the raw DB layer to the merge.
+        # The raw DB layer carries legacy db_fk booleans; the merged IR carries
+        # provenance — _assoc_provenance reads either shape.
         covered = (sum(1 for t in db_result['tables'].values()
-                       for a in t['associations'] if a.get('db_fk'))
+                       for a in t['associations'] if _assoc_provenance(a) == 'db_fk')
                    - sum(1 for t in tables.values()
-                         for a in t['associations'] if a.get('db_fk')))
+                         for a in t['associations'] if _assoc_provenance(a) == 'db_fk'))
         if covered:
             print(f'{covered} DB FKs covered by explicit associations', file=sys.stderr)
 
@@ -6054,6 +6090,30 @@ def main():
         validate_config_references(config_tables, tables, cfg_label)
 
     _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)))
+
+def serialize_for_viewer(tables):
+    """Convert the internal merged IR to the shape the HTML viewer JSON and the
+    Excel export consume (§9.3): each association's structured `provenance` /
+    `sources` is replaced by the legacy boolean flag it maps to (db_fk / manual /
+    inferred, or NO flag for 'declared'), and both internal keys are dropped, so
+    the output carries EXACTLY today's fields — provenance/sources never leak
+    into the viewer JSON.
+
+    Handles BOTH IR shapes, so it is safe to call unconditionally:
+      - merged IR (main pipeline): an association has `provenance` -> convert it.
+      - legacy IR (the demo: gen_demo.py feeds mysql_ir output straight into
+        _finish; parser output carries db_fk/inferred booleans and no
+        provenance) -> pass the existing flags through unchanged.
+    This dual handling is what keeps the demo byte-identical. Pure: returns a
+    deep copy, never mutates the input."""
+    out = copy.deepcopy(tables)
+    for t in out.values():
+        for a in t.get('associations', []):
+            if 'provenance' in a:
+                prov = a.pop('provenance')
+                a.pop('sources', None)
+                a.update(legacy_flags_for(prov))
+    return out
 
 def _finish(tables, args, title_name):
     """Shared tail: FK inference, --only/--exclude filtering, HTML generation."""
@@ -6083,6 +6143,12 @@ def _finish(tables, args, title_name):
         if not tables:
             sys.exit('Error: no tables left after --only/--exclude filtering')
         print(f'Filtered: {len(tables)} tables', file=sys.stderr)
+
+    # §9.3 serialize boundary: convert the internal provenance/sources IR to
+    # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
+    # IR), so BOTH the HTML DATA_JSON and the Excel export below see exactly the
+    # fields they do today. This is the single point where provenance is undone.
+    tables = serialize_for_viewer(tables)
 
     # Substitute the other placeholders BEFORE inserting DATA_JSON, and
     # escape `</` in the JSON — otherwise a table/column comment containing

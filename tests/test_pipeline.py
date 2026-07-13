@@ -127,12 +127,14 @@ class TestPipelineDBPlusRails(_MainDriver):
         self._run('--models', str(FIXTURE_RAILS))
         new = self._data()['tables']
 
-        # the same merge, computed directly via the public pipeline blocks
-        old = erd.merge_ir([
+        # the same merge, computed directly via the public pipeline blocks, then
+        # run through the same serialize boundary main uses (provenance/sources
+        # -> legacy flags) so it matches the viewer JSON `new` reads back.
+        old = erd.serialize_for_viewer(erd.merge_ir([
             erd.make_provider_result('db', 'mysql',
                                      erd.mysql_ir(table_rows, col_rows, fk_rows, [])),
             erd.framework_provider(FIXTURE_RAILS),
-        ])
+        ]))
 
         self.assertEqual(list(new), list(old))  # same table set + order
         for name in old:
@@ -150,6 +152,24 @@ class TestPipelineDBPlusRails(_MainDriver):
         self.assertIn('crm_widgets', data['tables'])
         self.assertTrue(data['tables']['crm_widgets']['schema_missing'])
         self.assertEqual(data['tables']['crm_widgets']['columns'], [])
+
+    def test_viewer_json_has_no_provenance_or_sources(self):
+        # Step 10 (§9.3): the internal provenance/sources model must NOT leak
+        # into the viewer JSON — it carries exactly today's legacy flags.
+        self._run('--models', str(FIXTURE_RAILS))
+        data = self._data()['tables']
+        for t in data.values():
+            for a in t['associations']:
+                self.assertNotIn('provenance', a)
+                self.assertNotIn('sources', a)
+
+    def test_db_only_viewer_keeps_legacy_db_fk_flag(self):
+        # a surviving DB FK serializes back to the legacy db_fk boolean
+        self._run()  # DB only, no --models
+        posts = self._data()['tables']['posts']
+        user_fk = next(a for a in posts['associations'] if a['name'] == 'user')
+        self.assertTrue(user_fk.get('db_fk'))
+        self.assertNotIn('provenance', user_fk)
 
 
 class TestPipelineDBPlusPrisma(_MainDriver):

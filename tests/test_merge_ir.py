@@ -371,8 +371,12 @@ class TestAssociationMerge(unittest.TestCase):
         assoc = merged['orders']['associations']
         self.assertEqual(len(assoc), 1)
         self.assertEqual(assoc[0]['name'], 'creator')
-        self.assertEqual(assoc[0]['type'], 'has_one')     # config cardinality wins
-        self.assertTrue(assoc[0]['manual'])               # manual provenance wins
+        self.assertEqual(assoc[0]['type'], 'has_one')       # config cardinality wins
+        self.assertEqual(assoc[0]['provenance'], 'manual')  # manual provenance wins
+        # sources union: both the framework and config layers contributed
+        self.assertEqual(assoc[0]['sources'],
+                         [{'kind': 'config', 'provider': 'config'},
+                          {'kind': 'framework', 'provider': 'rails'}])
 
     def test_config_association_with_different_name_is_a_separate_edge(self):
         # a config association that RENAMES (different name, same column) is a
@@ -394,10 +398,14 @@ class TestAssociationMerge(unittest.TestCase):
         cfg = {'t': {'columns': [col('x_id')], 'associations': [
             {'type': 'belongs_to', 'name': 'x', 'target': 'xs', 'foreign_key': 'x_id'}]}}
         merged = erd.merge_ir([config_layer(cfg)])
-        self.assertTrue(merged['t']['associations'][0]['manual'])
+        a = merged['t']['associations'][0]
+        self.assertEqual(a['provenance'], 'manual')
+        self.assertEqual(a['sources'], [{'kind': 'config', 'provider': 'config'}])
+        # the merged IR carries NO legacy booleans
+        self.assertNotIn('manual', a)
 
     def test_provenance_representative_precedence(self):
-        # manual + db_fk on the same identity -> manual wins
+        # manual + db_fk on the same identity -> manual wins; sources unions both
         db = {'t': {'columns': [col('x_id')], 'associations': [
             {'type': 'belongs_to', 'name': 'x', 'target': 'xs',
              'foreign_key': 'x_id', 'db_fk': True}]}}
@@ -406,7 +414,10 @@ class TestAssociationMerge(unittest.TestCase):
              'foreign_key': 'x_id', 'manual': True}]}}
         merged = erd.merge_ir([db_layer(db), config_layer(cfg)])
         a = merged['t']['associations'][0]
-        self.assertTrue(a['manual'])
+        self.assertEqual(a['provenance'], 'manual')
+        self.assertEqual(a['sources'], [{'kind': 'config', 'provider': 'config'},
+                                        {'kind': 'db', 'provider': 'mysql'}])
+        self.assertNotIn('manual', a)
         self.assertNotIn('db_fk', a)
 
     def test_fk_columns_recomputed_from_final_associations(self):
@@ -622,6 +633,86 @@ class TestConfigIndexUniqueNormalization(unittest.TestCase):
         self.assertIn('idx_t_id', blob)
 
 
+class TestProvenanceAndSources(unittest.TestCase):
+    """Step 10 (§9.1): the merged IR carries structured `provenance` + `sources`
+    on associations instead of the legacy db_fk/manual/inferred booleans."""
+
+    def test_db_fk_plus_rails_declared_is_declared_with_both_sources(self):
+        # a DB FK ALSO declared in Rails on the same identity: provenance is
+        # 'declared' (declared beats db_fk), sources unions {db,mysql} + {fw,rails}
+        db = {'posts': {'columns': [col('user_id')], 'associations': [
+            {'type': 'belongs_to', 'name': 'user', 'target': 'users',
+             'foreign_key': 'user_id', 'db_fk': True}]},
+              'users': {'columns': [col('id', primary=True)], 'associations': []}}
+        rails = {'posts': {'associations': [
+            {'type': 'belongs_to', 'name': 'user', 'target': 'users',
+             'foreign_key': 'user_id'}]}}
+        merged = erd.merge_ir([db_layer(db), fw_layer(rails, 'rails')])
+        a = next(x for x in merged['posts']['associations'] if x['name'] == 'user')
+        self.assertEqual(a['provenance'], 'declared')
+        self.assertEqual(a['sources'], [{'kind': 'db', 'provider': 'mysql'},
+                                        {'kind': 'framework', 'provider': 'rails'}])
+        for legacy in ('db_fk', 'manual', 'inferred'):
+            self.assertNotIn(legacy, a)
+
+    def test_lone_db_fk_keeps_db_fk_provenance_and_source(self):
+        db = {'posts': {'columns': [col('user_id')], 'associations': [
+            {'type': 'belongs_to', 'name': 'user', 'target': 'users',
+             'foreign_key': 'user_id', 'db_fk': True}]},
+              'users': {'columns': [col('id', primary=True)], 'associations': []}}
+        a = erd.merge_ir([db_layer(db)])['posts']['associations'][0]
+        self.assertEqual(a['provenance'], 'db_fk')
+        self.assertEqual(a['sources'], [{'kind': 'db', 'provider': 'mysql'}])
+
+    def test_manual_config_association_provenance(self):
+        cfg = {'t': {'columns': [col('x_id')], 'associations': [
+            {'type': 'belongs_to', 'name': 'x', 'target': 'xs', 'foreign_key': 'x_id'}]}}
+        a = erd.merge_ir([config_layer(cfg)])['t']['associations'][0]
+        self.assertEqual(a['provenance'], 'manual')
+        self.assertEqual(a['sources'], [{'kind': 'config', 'provider': 'config'}])
+
+    def test_serialize_converts_each_provenance_to_its_legacy_flag(self):
+        # a table whose four associations carry the four provenances -> the
+        # serialized (viewer) shape carries the matching legacy flags and NO
+        # provenance/sources keys.
+        tables = {'t': {'associations': [
+            {'type': 'belongs_to', 'name': 'a', 'target': 'x', 'foreign_key': 'a_id',
+             'provenance': 'db_fk', 'sources': [{'kind': 'db', 'provider': 'mysql'}]},
+            {'type': 'belongs_to', 'name': 'b', 'target': 'x', 'foreign_key': 'b_id',
+             'provenance': 'manual', 'sources': [{'kind': 'config', 'provider': 'config'}]},
+            {'type': 'belongs_to', 'name': 'c', 'target': 'x', 'foreign_key': 'c_id',
+             'provenance': 'inferred', 'sources': []},
+            {'type': 'has_many', 'name': 'd', 'target': 'x',
+             'provenance': 'declared', 'sources': [{'kind': 'framework', 'provider': 'rails'}]}]}}
+        out = erd.serialize_for_viewer(tables)['t']['associations']
+        self.assertEqual(out[0].get('db_fk'), True)
+        self.assertEqual(out[1].get('manual'), True)
+        self.assertEqual(out[2].get('inferred'), True)
+        self.assertNotIn('db_fk', out[3])  # declared -> no badge
+        self.assertNotIn('manual', out[3])
+        for a in out:  # internal keys never leak into the viewer JSON
+            self.assertNotIn('provenance', a)
+            self.assertNotIn('sources', a)
+
+    def test_serialize_passes_legacy_shape_through_unchanged(self):
+        # demo shape: parser output already carries legacy flags and NO
+        # provenance -> serialize is a byte-preserving pass-through (deep-copied)
+        tables = {'t': {'associations': [
+            {'type': 'belongs_to', 'name': 'u', 'target': 'users',
+             'foreign_key': 'u_id', 'db_fk': True},
+            {'type': 'has_many', 'name': 'posts', 'target': 'posts'}]}}  # bare -> declared
+        out = erd.serialize_for_viewer(tables)
+        self.assertEqual(out, tables)
+        self.assertIsNot(out['t']['associations'][0], tables['t']['associations'][0])
+
+    def test_serialize_is_pure(self):
+        tables = {'t': {'associations': [
+            {'type': 'belongs_to', 'name': 'x', 'target': 'xs', 'foreign_key': 'x_id',
+             'provenance': 'manual', 'sources': [{'kind': 'config', 'provider': 'config'}]}]}}
+        erd.serialize_for_viewer(tables)
+        self.assertEqual(tables['t']['associations'][0]['provenance'], 'manual')  # input intact
+
+
 # ---------------------------------------------------------------------------
 # §6.2 — config operation markers: drop / *_mode: replace (Step 7a)
 # ---------------------------------------------------------------------------
@@ -733,7 +824,7 @@ class TestConfigDropAndReplace(unittest.TestCase):
         assoc = merged['orders']['associations']
         self.assertEqual(len(assoc), 1)
         self.assertEqual(assoc[0]['target'], 'staff')
-        self.assertTrue(assoc[0]['manual'])
+        self.assertEqual(assoc[0]['provenance'], 'manual')
 
     # ── *_mode: replace ──
     def test_columns_mode_replace_discards_lower_layers(self):

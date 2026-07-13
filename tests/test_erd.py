@@ -377,10 +377,11 @@ class TestOverlayAndInference(unittest.TestCase):
         # posts.user_id DB FK is covered by the explicit belongs_to and dropped,
         # while posts_tags FKs stay (no model declares that pair). The behavioral
         # signal (the pair got reconciled) is the resulting db_fk state below.
+        # the merged IR carries structured provenance, not the legacy db_fk flag
         merged = overlay_code(self.tables, FIXTURE)
-        self.assertFalse(any(a.get('db_fk')
+        self.assertFalse(any(a.get('provenance') == 'db_fk'
                              for a in merged['posts']['associations']))
-        self.assertTrue(any(a.get('db_fk')
+        self.assertTrue(any(a.get('provenance') == 'db_fk'
                             for a in merged['posts_tags']['associations']))
 
     def test_model_without_db_table_flagged(self):
@@ -569,7 +570,7 @@ class TestOverlayAndInference(unittest.TestCase):
         added = erd.infer_fk_associations(self.tables)
         targets = {a['target'] for a in self.tables['likes']['associations']}
         self.assertEqual(targets, {'posts', 'users'})
-        self.assertTrue(all(a['inferred']
+        self.assertTrue(all(a['provenance'] == 'inferred'
                             for a in self.tables['likes']['associations']))
         self.assertGreaterEqual(added, 2)
 
@@ -594,7 +595,7 @@ class TestOverlayAndInference(unittest.TestCase):
         added = erd.infer_fk_associations(tables)
         self.assertEqual(added, 1)
         a = tables['posts']['associations'][0]
-        self.assertEqual((a['target'], a['inferred']), ('author', True))
+        self.assertEqual((a['target'], a['provenance']), ('author', 'inferred'))
 
     def test_inference_detects_1to1_via_unique_index(self):
         table_rows = [('users', ''), ('profiles', '')]
@@ -621,7 +622,7 @@ class TestManualRelations(unittest.TestCase):
         a = merged['comments']['associations'][0]
         self.assertEqual((a['type'], a['name'], a['target'], a['foreign_key']),
                          ('belongs_to', 'post', 'posts', 'post_id'))
-        self.assertTrue(a['manual'])  # merge_ir forces config-kind to manual
+        self.assertEqual(a['provenance'], 'manual')  # merge_ir forces config-kind to manual
 
     def test_one_to_one_flag_forces_has_one(self):
         merged = apply_relations(self.tables, [
@@ -682,7 +683,7 @@ class TestManualRelations(unittest.TestCase):
         ])
         owner = [a for a in merged['posts']['associations'] if a['name'] == 'owner']
         self.assertEqual(len(owner), 1)
-        self.assertTrue(owner[0]['manual'])
+        self.assertEqual(owner[0]['provenance'], 'manual')
 
     def test_config_relation_overrides_existing_explicit_association(self):
         # P0-3 / §12 change: the OLD path SKIPPED a relation already covered by
@@ -701,7 +702,7 @@ class TestManualRelations(unittest.TestCase):
                     if a.get('foreign_key') == 'user_id' and a['target'] == 'users'
                     and a['name'] == 'author']
         self.assertEqual(len(matching), 1)      # merged, not duplicated
-        self.assertTrue(matching[0]['manual'])  # config authorship wins (override)
+        self.assertEqual(matching[0]['provenance'], 'manual')  # config authorship wins
 
     def test_takes_precedence_over_db_fk_via_reconcile(self):
         # config relation wins over a real (but differently-named) DB FK the
@@ -720,8 +721,8 @@ class TestManualRelations(unittest.TestCase):
         ])
         assocs = merged['b']['associations']
         self.assertEqual(len(assocs), 1)
-        self.assertTrue(assocs[0]['manual'])
-        self.assertNotIn('db_fk', assocs[0])
+        self.assertEqual(assocs[0]['provenance'], 'manual')
+        self.assertNotIn('db_fk', assocs[0])  # no legacy booleans on the merged IR
 
 
 class TestFkColumns(unittest.TestCase):
