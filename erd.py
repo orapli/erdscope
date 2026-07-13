@@ -211,6 +211,43 @@ def db_adapter_for(scheme):
     return DB_ADAPTERS.get((scheme or '').lower())
 
 
+def load_adapter_plugins(paths):
+    """Import each user adapter plugin (a --adapter path / config `adapters`
+    entry): a plain Python file that defines a DBAdapter subclass and registers
+    it with @register_adapter. The plugin can `from erd import DBAdapter,
+    register_adapter` — we alias the running erdscope module under both `erd`
+    and `erdscope` first, so the plugin registers into the LIVE registry rather
+    than a freshly re-imported second copy of it. Registration order is config
+    entries then CLI ones, and a later entry overriding a scheme is intentional
+    (last one wins), which is how a plugin can replace a built-in engine."""
+    import importlib.util, types
+    me = sys.modules.get(__name__)
+    if me is None:
+        # Exec'd without being registered in sys.modules (e.g. a test harness):
+        # expose a stand-in whose namespace shares the live globals, so
+        # `from erd import register_adapter` hands back the real, live objects
+        # (register_adapter still mutates the live DB_ADAPTERS).
+        me = types.ModuleType(__name__)
+        me.__dict__.update(globals())
+        sys.modules[__name__] = me
+    for alias in ('erd', 'erdscope'):
+        sys.modules.setdefault(alias, me)
+    for i, path in enumerate(paths):
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            sys.exit(f'Error: --adapter plugin {p} does not exist')
+        spec = importlib.util.spec_from_file_location(f'_erdscope_adapter_{i}', p)
+        if spec is None or spec.loader is None:
+            sys.exit(f'Error: could not load adapter plugin {p}')
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except SystemExit:
+            raise
+        except Exception as e:
+            sys.exit(f'Error: adapter plugin {p} failed to import: {e}')
+
+
 # --- Tab-separated CLI output unescaping (shared by the CLI fallbacks) ------
 _MYSQL_TSV_ESCAPES = {'0': '\0', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', '\\': '\\'}
 # COPY TO STDOUT (the psql CLI path) escapes the same characters plus \f \v
@@ -5704,7 +5741,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -5739,6 +5776,19 @@ def _check_config_types(config, path):
     for key in ('only', 'exclude'):
         if key in config and any(not isinstance(x, str) for x in config[key]):
             sys.exit(f'Error: {path} `{key}` must be a list of strings')
+    # adapters: a single path (str) or a list of paths (str) — custom DB
+    # adapter plugin files, same str-or-list shape as `models`
+    if 'adapters' in config:
+        a = config['adapters']
+        if isinstance(a, str):
+            pass
+        elif isinstance(a, list):
+            for i, item in enumerate(a):
+                if not isinstance(item, str):
+                    sys.exit(f'Error: {path} `adapters[{i}]` must be a string, got {item!r}')
+        else:
+            sys.exit(f'Error: {path} `adapters` must be a string or a list of strings, '
+                     f'got {a!r}')
     if 'table_map' in config and any(not isinstance(v, str) for v in config['table_map'].values()):
         sys.exit(f'Error: {path} `table_map` values must all be strings')
     if 'relations' in config and any(not isinstance(r, dict) for r in config['relations']):
@@ -6020,6 +6070,11 @@ def main():
                    help='Merge association semantics parsed from application code '
                         '(Rails project/app/models dir, schema.prisma, or Django project). '
                         'Repeatable to merge several frameworks; later ones win on ties')
+    p.add_argument('--adapter', metavar='PATH', action='append', default=argparse.SUPPRESS,
+                   help='Load a custom database adapter from a Python plugin file '
+                        '(subclass DBAdapter, register it with @register_adapter). '
+                        'Its URL scheme(s) then work like the built-in mysql:///'
+                        'postgres://. Repeatable; also settable as config `adapters`')
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
@@ -6057,6 +6112,15 @@ def main():
     args = p.parse_args()
 
     config = load_config(args)
+    # Load any custom DB adapters (--adapter / config `adapters`) before the URL
+    # is classified, so their schemes are registered in time. Config entries
+    # first, then CLI ones — a later entry overriding a scheme wins (§ plugins).
+    cfg_adapters = config.get('adapters') or []
+    if isinstance(cfg_adapters, str):
+        cfg_adapters = [cfg_adapters]
+    adapter_paths = list(cfg_adapters) + list(getattr(args, 'adapter', []) or [])
+    if adapter_paths:
+        load_adapter_plugins(adapter_paths)
     url = args.database or assemble_config_url(config)
     # DB is optional now (§10): a schema can also come from --models and/or
     # config.tables. Only a NON-EMPTY url with an unrecognized scheme is an

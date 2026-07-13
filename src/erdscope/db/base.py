@@ -57,6 +57,43 @@ def db_adapter_for(scheme):
     return DB_ADAPTERS.get((scheme or '').lower())
 
 
+def load_adapter_plugins(paths):
+    """Import each user adapter plugin (a --adapter path / config `adapters`
+    entry): a plain Python file that defines a DBAdapter subclass and registers
+    it with @register_adapter. The plugin can `from erd import DBAdapter,
+    register_adapter` — we alias the running erdscope module under both `erd`
+    and `erdscope` first, so the plugin registers into the LIVE registry rather
+    than a freshly re-imported second copy of it. Registration order is config
+    entries then CLI ones, and a later entry overriding a scheme is intentional
+    (last one wins), which is how a plugin can replace a built-in engine."""
+    import importlib.util, types
+    me = sys.modules.get(__name__)
+    if me is None:
+        # Exec'd without being registered in sys.modules (e.g. a test harness):
+        # expose a stand-in whose namespace shares the live globals, so
+        # `from erd import register_adapter` hands back the real, live objects
+        # (register_adapter still mutates the live DB_ADAPTERS).
+        me = types.ModuleType(__name__)
+        me.__dict__.update(globals())
+        sys.modules[__name__] = me
+    for alias in ('erd', 'erdscope'):
+        sys.modules.setdefault(alias, me)
+    for i, path in enumerate(paths):
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            sys.exit(f'Error: --adapter plugin {p} does not exist')
+        spec = importlib.util.spec_from_file_location(f'_erdscope_adapter_{i}', p)
+        if spec is None or spec.loader is None:
+            sys.exit(f'Error: could not load adapter plugin {p}')
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except SystemExit:
+            raise
+        except Exception as e:
+            sys.exit(f'Error: adapter plugin {p} failed to import: {e}')
+
+
 # --- Tab-separated CLI output unescaping (shared by the CLI fallbacks) ------
 _MYSQL_TSV_ESCAPES = {'0': '\0', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', '\\': '\\'}
 # COPY TO STDOUT (the psql CLI path) escapes the same characters plus \f \v

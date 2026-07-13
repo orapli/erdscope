@@ -598,5 +598,95 @@ class TestPipelineNoSchemaSourceErrors(_NoDBDriver):
         self.assertEqual(self.calls, [])
 
 
+class TestDBAdapterRegistry(unittest.TestCase):
+    """The DBAdapter base + scheme registry: register/resolve, db_provider
+    dispatch through the registry, and the ABC contract."""
+    def setUp(self):
+        # snapshot the registry so a test's registration can't leak
+        self._snapshot = dict(erd.DB_ADAPTERS)
+        self.addCleanup(lambda: (erd.DB_ADAPTERS.clear(),
+                                 erd.DB_ADAPTERS.update(self._snapshot)))
+
+    def test_builtins_registered_with_aliases(self):
+        self.assertIs(erd.db_adapter_for('mysql'), erd.MySQLAdapter)
+        self.assertIs(erd.db_adapter_for('postgres'), erd.PostgresAdapter)
+        self.assertIs(erd.db_adapter_for('postgresql'), erd.PostgresAdapter)
+        self.assertIs(erd.db_adapter_for('MySQL'), erd.MySQLAdapter)  # case-insensitive
+        self.assertIsNone(erd.db_adapter_for('mongodb'))
+
+    def test_base_is_abstract(self):
+        with self.assertRaises(TypeError):
+            erd.DBAdapter()
+
+    def test_register_and_dispatch(self):
+        @erd.register_adapter
+        class DemoAdapter(erd.DBAdapter):
+            schemes = ('demo',)
+            name = 'demo'
+            label = 'Demo'
+            def fetch(self, url):
+                return erd.mysql_ir([('t', '')],
+                                    [('t', 'id', 'integer', 'integer', 'NO', 'PRI', '', '', '')],
+                                    [], [])
+        self.assertIs(erd.db_adapter_for('demo'), DemoAdapter)
+        result = erd.db_provider('demo://host/db')
+        self.assertEqual(result['source'], {'kind': 'db', 'provider': 'demo',
+                                            'location': 'demo://host/db'})
+        self.assertIn('t', result['tables'])
+
+    def test_db_provider_unknown_scheme_errors(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.db_provider('mongodb://h/d')
+        self.assertIn('mongodb', str(cm.exception))
+
+
+class TestAdapterPlugins(_NoDBDriver):
+    """--adapter / config `adapters`: a plugin file that registers a custom
+    DBAdapter makes its URL scheme usable end-to-end, and the built-in
+    parse_mysql/parse_postgres spies confirm no built-in DB path is touched."""
+    def setUp(self):
+        super().setUp()
+        self._snapshot = dict(erd.DB_ADAPTERS)
+        self.addCleanup(lambda: (erd.DB_ADAPTERS.clear(),
+                                 erd.DB_ADAPTERS.update(self._snapshot)))
+
+    _PLUGIN = (
+        "from erd import DBAdapter, register_adapter, mysql_ir\n"
+        "@register_adapter\n"
+        "class FooAdapter(DBAdapter):\n"
+        "    schemes = ('foo',)\n"
+        "    name = 'foo'\n"
+        "    label = 'Foo'\n"
+        "    def fetch(self, url):\n"
+        "        return mysql_ir([('widgets', '')],\n"
+        "            [('widgets', 'id', 'integer', 'integer', 'NO', 'PRI', '', '', '')], [], [])\n"
+    )
+
+    def test_cli_adapter_registers_scheme_and_runs(self):
+        plug, out = self._p('foo_adapter.py'), self._p('out.html')
+        Path(plug).write_text(self._PLUGIN)
+        self._run('foo://host/db', '--adapter', plug, '--no-config', '-o', out)
+        self.assertEqual(self.calls, [])  # no built-in DB path touched
+        data = self._data(out)['tables']
+        self.assertIn('widgets', data)
+        self.assertIn('<title>db — ERD</title>', Path(out).read_text())
+
+    def test_config_adapters_registers_scheme(self):
+        plug, cfg, out = self._p('foo_adapter.py'), self._p('c.json'), self._p('out.html')
+        Path(plug).write_text(self._PLUGIN)
+        Path(cfg).write_text(json.dumps({'adapters': plug, 'database': 'db',
+                                         'engine': 'mysql'}))
+        # config supplies the adapter; the CLI URL uses its scheme
+        self._run('foo://host/db', '--config', cfg, '-o', out)
+        self.assertEqual(self.calls, [])
+        self.assertIn('widgets', self._data(out)['tables'])
+
+    def test_missing_plugin_errors(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._run('foo://host/db', '--adapter', self._p('nope.py'), '--no-config',
+                      '-o', self._p('out.html'))
+        self.assertIn('nope.py', str(cm.exception))
+
+
 if __name__ == '__main__':
     unittest.main()

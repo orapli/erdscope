@@ -102,7 +102,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -137,6 +137,19 @@ def _check_config_types(config, path):
     for key in ('only', 'exclude'):
         if key in config and any(not isinstance(x, str) for x in config[key]):
             sys.exit(f'Error: {path} `{key}` must be a list of strings')
+    # adapters: a single path (str) or a list of paths (str) — custom DB
+    # adapter plugin files, same str-or-list shape as `models`
+    if 'adapters' in config:
+        a = config['adapters']
+        if isinstance(a, str):
+            pass
+        elif isinstance(a, list):
+            for i, item in enumerate(a):
+                if not isinstance(item, str):
+                    sys.exit(f'Error: {path} `adapters[{i}]` must be a string, got {item!r}')
+        else:
+            sys.exit(f'Error: {path} `adapters` must be a string or a list of strings, '
+                     f'got {a!r}')
     if 'table_map' in config and any(not isinstance(v, str) for v in config['table_map'].values()):
         sys.exit(f'Error: {path} `table_map` values must all be strings')
     if 'relations' in config and any(not isinstance(r, dict) for r in config['relations']):

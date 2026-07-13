@@ -20,6 +20,11 @@ def main():
                    help='Merge association semantics parsed from application code '
                         '(Rails project/app/models dir, schema.prisma, or Django project). '
                         'Repeatable to merge several frameworks; later ones win on ties')
+    p.add_argument('--adapter', metavar='PATH', action='append', default=argparse.SUPPRESS,
+                   help='Load a custom database adapter from a Python plugin file '
+                        '(subclass DBAdapter, register it with @register_adapter). '
+                        'Its URL scheme(s) then work like the built-in mysql:///'
+                        'postgres://. Repeatable; also settable as config `adapters`')
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
@@ -57,6 +62,15 @@ def main():
     args = p.parse_args()
 
     config = load_config(args)
+    # Load any custom DB adapters (--adapter / config `adapters`) before the URL
+    # is classified, so their schemes are registered in time. Config entries
+    # first, then CLI ones — a later entry overriding a scheme wins (§ plugins).
+    cfg_adapters = config.get('adapters') or []
+    if isinstance(cfg_adapters, str):
+        cfg_adapters = [cfg_adapters]
+    adapter_paths = list(cfg_adapters) + list(getattr(args, 'adapter', []) or [])
+    if adapter_paths:
+        load_adapter_plugins(adapter_paths)
     url = args.database or assemble_config_url(config)
     # DB is optional now (§10): a schema can also come from --models and/or
     # config.tables. Only a NON-EMPTY url with an unrecognized scheme is an
