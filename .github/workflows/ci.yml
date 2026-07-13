@@ -33,6 +33,14 @@ jobs:
       # the generator without re-running it. PNGs (screenshot.png, img/*) are
       # rendering-dependent and NOT diff-checked — gen_shots.py is only smoke-
       # tested, and the diff check below is pinned to index.html.
+      # erd.py is a committed build artifact of src/erdscope/core.py +
+      # viewer.html (the ~3,600-line embedded viewer is kept out of the Python
+      # in its own file). The build is a pure textual inline, so any drift means
+      # someone edited erd.py directly instead of the source, or forgot to
+      # rebuild.
+      - name: erd.py is built from src/erdscope/
+        run: python3 tools/build_single_file.py --check
+
       - name: Demo is regenerated and committed
         run: |
           python3 docs/gen_demo.py

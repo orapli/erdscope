@@ -2,6 +2,7 @@
 mastodon/
 *.html
 !docs/*.html
+!src/erdscope/*.html
 __pycache__/
 HANDOFF.md
 COLLAB_*.md

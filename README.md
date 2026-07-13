@@ -13,10 +13,20 @@ erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
 ```
 
-The database is the source of truth (tables, columns, comments, indexes, real foreign
-keys). Application code (Rails / Prisma / Django) can optionally be layered on top to
-add association semantics the database cannot express (`has_many :through`,
-polymorphic, ...).
+**Three input sources — any one of them is enough** (a database is no longer required):
+
+- **Database** (MySQL / PostgreSQL) — the source of truth for tables, columns, comments,
+  indexes, and real foreign keys.
+- **Application code** (`--models`: Rails / Prisma / Django) — adds association semantics
+  the database cannot express (`has_many :through`, polymorphic, ...), and can stand on
+  its own when there is no DB to point at.
+- **Config file** (`tables:`) — declare or patch a schema by hand: add tables, columns,
+  indexes, and associations, or override and delete what the DB or code got wrong.
+
+They merge in that order — **database → code → config**, each layer refining the previous
+(the database wins on physical facts like column types; code and config win on
+associations and logical names; config always has the final say). With no database URL,
+nothing is connected and no password is prompted.
 
 ## Demo
 
@@ -55,6 +65,15 @@ erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
 # also write a table-definition workbook
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
         --excel table_definitions.xlsx -o erd.html
+
+# no database — generate straight from application code
+erdscope --models /path/to/rails/app -o erd.html
+
+# no database — generate from a hand-written config schema (see Config file below)
+erdscope --config schema.yml -o erd.html
+
+# multiple code sources merge in order, later wins (--models is repeatable)
+erdscope --models /path/to/rails/app --models /path/to/schema.prisma -o erd.html
 ```
 
 Behind a bastion? Open an SSH tunnel first and point at localhost:
@@ -74,7 +93,7 @@ itself is made.
 | Option | Description |
 |---|---|
 | `-o FILE` | Output HTML path (default: `erd.html`) |
-| `--models PATH` | Merge associations parsed from code: a Rails project (or `app/models` dir), a `schema.prisma`, or a Django project — auto-detected |
+| `--models PATH` | Merge associations parsed from code: a Rails project (or `app/models` dir), a `schema.prisma`, or a Django project — auto-detected. **Repeatable** — multiple sources merge in the order given (later wins). Usable with no database URL |
 | `--excel FILE.xlsx` | Also write a table-definition workbook: an overview sheet plus one sheet per table (columns, defaults, keys, comments, indexes, associations) |
 | `--excel-template FILE.xlsx` | Override the workbook's colors/fonts/borders from a template `.xlsx` — see `excel-template.xlsx` and its `Styles` sheet for the 5-cell contract (default: built-in styling) |
 | `--max-rows N` | Max column rows shown per table (default: 15; the rest scroll) |
@@ -95,6 +114,56 @@ no password field — and `relations` manually declares relations no FK, code, o
 can find. See the [Config file chapter of the manual](https://orapli.github.io/erdscope/manual.html#config-file) for the full key
 list and semantics, and [`erdscope.example.yml`](erdscope.example.yml) for a fully
 annotated sample based on the live demo's schema.
+
+### Config as a schema source
+
+Beyond settings, the config can carry a **`tables:`** section that is itself a full input
+source — enough to generate a diagram with no database and no code at all, or to patch
+what the other sources produce. It merges as the highest-priority layer, so it can add
+new tables/columns/indexes/associations, override attributes, or delete them:
+
+```yaml
+title: billing
+tables:
+  customers:
+    comment: Customer accounts
+    primary_key: id
+    columns:
+      - { name: id,    type: bigint,  primary: true }
+      - { name: email, type: varchar, nullable: false, comment: Login address }
+    associations:
+      - { type: has_many, name: invoices, target: invoices }
+  invoices:
+    columns:
+      - { name: id,          type: bigint, primary: true }
+      - { name: customer_id, type: bigint }
+    associations:
+      - { type: belongs_to, name: customer, target: customers, foreign_key: customer_id }
+```
+
+Patch an existing DB/code result instead of declaring from scratch — override a column,
+delete a stale one, drop a whole table, or replace a table's column list wholesale:
+
+```yaml
+tables:
+  orders:
+    columns:
+      - { name: status,      comment: Order status }   # override just this attribute
+      - { name: legacy_flag, drop: true }              # delete a column
+  temp_scratch:
+    drop: true                                         # delete a whole table
+  reports:
+    columns_mode: replace                              # discard lower-layer columns first
+    columns:
+      - { name: id,   type: bigint, primary: true }
+      - { name: body, type: text }
+```
+
+Config is validated in two passes: **syntactically at load** (unknown keys, bad types,
+malformed operations) and **semantically at run time** (a `drop`/reference must point at
+something that actually exists once all sources are merged) — typos never pass silently.
+The full `tables:` schema, the `drop`/`replace` operations, and the precedence rules are
+documented in the [manual](https://orapli.github.io/erdscope/manual.html#config-file).
 
 ## Dependencies
 
@@ -169,6 +238,26 @@ Everything downstream (UI, layouts, exports) consumes the intermediate represent
 documented at the top of `erd.py`. Adding another database engine means adding one
 parser that produces that shape — `parse_postgres()` (which reuses the MySQL
 adapter's IR builder wholesale) is the working example of the pattern.
+
+### Building `erd.py`
+
+The shipped `erd.py` is a **build artifact**: the development source lives under
+`src/erdscope/`. The Python is organised into concern-named fragments
+(`adapters.py`, `merge.py`, `overlays.py`, `providers.py`, `exporters.py`,
+`config.py`, `cli.py`, …) that are concatenated in order, and the ~3,600-line embedded
+viewer (HTML/CSS/JS) lives in `viewer.html`, out of the Python. Edit the relevant file,
+then regenerate the single file:
+
+```bash
+python3 tools/build_single_file.py          # rewrites erd.py from the source
+python3 tools/build_single_file.py --check   # CI-style check that erd.py is in sync
+```
+
+The fragments are an amalgamation of one flat module (SQLite-style) — no cross-module
+imports — and the viewer is inlined into a one-line sentinel, so the whole build is pure
+textual assembly and `erd.py` stays a self-contained, zero-dependency single file:
+grabbing and running it, or `pip install erdscope`, is unchanged. CI runs the `--check`
+above, so a hand-edit of `erd.py` or a forgotten rebuild fails the build.
 
 ## License
 
