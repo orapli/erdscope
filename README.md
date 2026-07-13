@@ -235,18 +235,70 @@ python3 -m unittest tests.test_e2e -v
 ## Extending
 
 Everything downstream (UI, layouts, exports) consumes the intermediate representation
-documented at the top of `erd.py`. Adding another database engine means adding one
-parser that produces that shape — `parse_postgres()` (which reuses the MySQL
-adapter's IR builder wholesale) is the working example of the pattern.
+documented at the top of `erd.py`. Both input layers are pluggable: a **database
+adapter** turns a URL scheme into that shape, and a **framework overlay** turns an
+application-code project into it. Each is a small class registered under the scheme /
+project kind it handles, so adding one never touches the dispatch code.
+
+### Custom adapters and overlays (a plugin file)
+
+Write a plain Python file that subclasses the base and registers itself, then load it
+with `--adapter path/to/plugin.py` (or config `adapters: [...]`). No need to rebuild
+`erd.py` — the plugin registers into the running process, and a plugin works the same
+against the single-file `erd.py` or a `pip install erdscope`.
+
+```python
+# my_sqlite.py — a custom database adapter
+from erd import DBAdapter, register_adapter, mysql_ir
+
+@register_adapter
+class SqliteAdapter(DBAdapter):
+    schemes = ('sqlite',)     # the URL scheme(s) it answers to
+    name = 'sqlite'           # provider id recorded in the output
+    label = 'SQLite'          # pretty name for the progress line
+
+    def fetch(self, url):
+        # ...read the schema for `url` and return the IR (the `tables` dict).
+        # mysql_ir() builds it from information_schema-shaped rows for you.
+        return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+```
+
+```bash
+python3 erd.py sqlite:///app.db --adapter my_sqlite.py -o erd.html
+```
+
+A **framework overlay** is the same idea against a `--models` path:
+
+```python
+# my_framework.py
+from erd import FrameworkOverlay, register_overlay, make_provider_result
+
+@register_overlay
+class SequelizeOverlay(FrameworkOverlay):
+    name = 'sequelize'
+    priority = 5              # lower detect()s first; first match wins
+
+    def detect(self, root):
+        return root.is_dir() and (root / 'models' / 'index.js').exists()
+
+    def build(self, root, table_map):
+        tables = ...          # parse `root` into the IR
+        return make_provider_result('framework', 'sequelize', tables, location=str(root))
+```
+
+The built-in `db/mysql.py`, `db/postgres.py` and `frameworks/{rails,prisma,django}.py`
+are the working examples of both patterns.
 
 ### Building `erd.py`
 
 The shipped `erd.py` is a **build artifact**: the development source lives under
-`src/erdscope/`. The Python is organised into concern-named fragments
-(`adapters.py`, `merge.py`, `overlays.py`, `providers.py`, `exporters.py`,
-`config.py`, `cli.py`, …) that are concatenated in order, and the ~3,600-line embedded
-viewer (HTML/CSS/JS) lives in `viewer.html`, out of the Python. Edit the relevant file,
-then regenerate the single file:
+`src/erdscope/`. The Python is organised into concern-named fragments (`ir.py`,
+`merge.py`, `providers.py`, `exporters.py`, `config.py`, `cli.py`, …) plus two
+self-assembling **folders** — `db/` (the DB adapters) and `frameworks/` (the overlays)
+— whose files are all included automatically (`base.py` first, then sorted), so adding a
+built-in adapter or overlay is just dropping a new file in the folder. They are
+concatenated in order, and the ~3,600-line embedded viewer (HTML/CSS/JS) lives in
+`viewer.html`, out of the Python. Edit the relevant file, then regenerate the single file:
 
 ```bash
 python3 tools/build_single_file.py          # rewrites erd.py from the source

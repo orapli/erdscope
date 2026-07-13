@@ -300,6 +300,7 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <tr><td><code>mysql://…</code> or <code>postgres://…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. Can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there — see <a href="#config-file">Config file</a>).</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
 <tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, or a Django project — source auto-detected</td></tr>
+<tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
@@ -736,14 +737,52 @@ one intermediate representation (IR), documented in <code>erd.py</code>'s own mo
   }
 }</code></pre>
 <p>
-Adding a new source database means adding one parser that produces this same shape.
-<code>parse_postgres()</code> is the working example of the pattern: it shapes
-<code>pg_catalog</code> query results into the exact row layout the MySQL adapter's IR builder
-consumes, so PK detection, unique-index 1:1 promotion, and index assembly are shared rather than
-duplicated — the whole adapter is four queries plus a connection layer. The SQL-type-shorthand
-table already carries names from both engines (<code>character varying</code>,
-<code>bigserial</code>, <code>jsonb</code>, <code>bytea</code>, <code>inet</code>, ...), so a
-further engine mostly means mapping its catalog into the same five-column row shapes.
+Both input layers are <strong>pluggable</strong>: a <em>database adapter</em> turns a URL scheme
+into this shape, and a <em>framework overlay</em> turns a <code>--models</code> project into it.
+Each is a small class registered under the scheme / project kind it handles, so adding one never
+touches the dispatch code. The built-in <code>db/mysql.py</code>, <code>db/postgres.py</code> and
+<code>frameworks/{rails,prisma,django}.py</code> are the working examples;
+<code>parse_postgres()</code> in particular reuses the MySQL adapter's IR builder wholesale
+(shaping <code>pg_catalog</code> results into the same five-column row layout), so PK detection,
+unique-index 1:1 promotion, and index assembly are shared rather than duplicated.
+</p>
+<h3>A custom adapter or overlay <a class="anchor-link" href="#extending">#</a></h3>
+<p>
+Write a plain Python file that subclasses the base and registers itself, then load it at run time
+with <code>--adapter path/to/plugin.py</code> (or config <code>adapters: [...]</code>). There's
+nothing to rebuild — the plugin registers into the running process, and it works the same against
+the single-file <code>erd.py</code> or a <code>pip install erdscope</code>:
+</p>
+<pre><code># my_sqlite.py — a custom database adapter
+from erd import DBAdapter, register_adapter, mysql_ir
+
+@register_adapter
+class SqliteAdapter(DBAdapter):
+    schemes = ('sqlite',)     # the URL scheme(s) it answers to
+    name = 'sqlite'           # provider id recorded in the output
+    label = 'SQLite'          # pretty name for the progress line
+
+    def fetch(self, url):
+        # ...read the schema for `url` and return the IR (the `tables` dict).
+        # mysql_ir() builds it from information_schema-shaped rows for you.
+        return mysql_ir(table_rows, col_rows, fk_rows, index_rows)</code></pre>
+<pre><code>python3 erd.py sqlite:///app.db --adapter my_sqlite.py -o erd.html</code></pre>
+<p>
+A framework overlay is the same idea against a <code>--models</code> path — implement
+<code>detect(root)</code> and <code>build(root, table_map)</code>, and register with
+<code>@register_overlay</code> (a lower <code>priority</code> is detected first; the first match
+wins). Both live in a normal Python file, so a plugin can register an adapter, an overlay, or both.
+</p>
+<h3>Building <code>erd.py</code> <a class="anchor-link" href="#extending">#</a></h3>
+<p>
+The shipped <code>erd.py</code> is a build artifact: the development source lives under
+<code>src/erdscope/</code> as concern-named fragments plus two self-assembling folders —
+<code>db/</code> (the adapters) and <code>frameworks/</code> (the overlays) — whose files are all
+picked up automatically (<code>base.py</code> first, then sorted), so a new built-in adapter or
+overlay is just a new file in the folder. Edit the source, then
+<code>python3 tools/build_single_file.py</code> regenerates the single, zero-dependency
+<code>erd.py</code> (the viewer HTML/CSS/JS is inlined from <code>viewer.html</code>);
+<code>--check</code> verifies it's in sync, as CI does.
 </p>
 </section>
 
