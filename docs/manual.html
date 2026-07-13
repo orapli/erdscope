@@ -180,11 +180,25 @@ an <strong>Excel table-definition workbook</strong> — from a live MySQL or Pos
 single Python file (<code>erd.py</code>, no install step) with <strong>zero required dependencies</strong>.
 </p>
 <p>
-The database is the source of truth: tables, columns, comments, indexes, and real foreign keys
-all come from the database catalog (<code>information_schema</code> on MySQL, <code>pg_catalog</code> on
-PostgreSQL). Application code (Rails, Prisma, Django) can
-optionally be layered on top with <code>--models</code> to add association semantics the database
-alone can't express — <code>has_many :through</code>, polymorphic associations, and so on.
+There are <strong>three input sources, and any one of them is enough</strong> — a database is
+no longer required:
+</p>
+<ul>
+<li><strong>Database</strong> (MySQL / PostgreSQL) — the source of truth for tables, columns,
+comments, indexes, and real foreign keys, read from the database catalog
+(<code>information_schema</code> on MySQL, <code>pg_catalog</code> on PostgreSQL).</li>
+<li><strong>Application code</strong> (<code>--models</code>: Rails / Prisma / Django) — adds
+association semantics the database alone can't express (<code>has_many :through</code>,
+polymorphic, …), and can stand on its own when there is no DB to point at.</li>
+<li><strong>Config file</strong> (a <code>tables:</code> section) — declare or patch a schema
+by hand: add tables, columns, indexes, and associations, or override and delete what the
+DB or code got wrong.</li>
+</ul>
+<p>
+They merge in that order — <strong>database → code → config</strong>, each layer refining the
+previous. The database wins on physical facts (column types, indexes, primary keys); code and
+config win on associations and logical names; config always has the final say. With no database
+URL, nothing is connected and no password is prompted.
 </p>
 <p>
 <a href="https://orapli.github.io/erdscope/"><strong>Try the live demo →</strong></a> —
@@ -348,6 +362,78 @@ Precedence is the same as a code-parsed association: applied before <code>--infe
 (so it also suppresses a wrong name-based guess for that column), and it takes priority over a
 real DB FK constraint for the same column. An unknown table/column/target in <code>relations</code>
 is always a typo, so it's a hard error, not a silent no-op.
+</p>
+
+<h3 id="config-schema">Config as a schema source (<code>tables:</code>)</h3>
+<p>
+Beyond settings and <code>relations</code>, a config can carry a <code>tables:</code> section that is
+a <strong>full input source in its own right</strong> — the third layer alongside the database and
+<code>--models</code>. It's enough to generate a diagram with no database and no code at all, and it
+merges as the highest-priority layer, so it can also <strong>patch</strong> what the other sources
+produce. Use it to describe an unsupported database or framework by hand, or to correct and enrich
+a real one.
+</p>
+<p>Declare a schema from scratch — <code>tables</code> is a map of table name → definition:</p>
+<pre><code>title: billing
+tables:
+  customers:
+    comment: Customer accounts
+    primary_key: id
+    columns:
+      - { name: id,    type: bigint,  primary: true }
+      - { name: email, type: varchar, nullable: false, comment: Login address }
+    indexes:
+      - { name: idx_customers_email, columns: [email], unique: true }
+    associations:
+      - { type: has_many, name: invoices, target: invoices }
+  invoices:
+    columns:
+      - { name: id,          type: bigint, primary: true }
+      - { name: customer_id, type: bigint }
+    associations:
+      - { type: belongs_to, name: customer, target: customers, foreign_key: customer_id }</code></pre>
+<p>
+Everything under a table is optional (an absent field means "don't touch" — the lower layer's value
+is kept). <code>primary_key</code> may be a single column or a list for a composite key; a
+composite foreign key isn't supported yet, so <code>foreign_key</code> is a single column.
+<code>title</code> (top-level) names the workbook/diagram when there's no database to take a name
+from; the fallback order is <code>title</code> → database name → framework project name → output
+filename.
+</p>
+<p>Patch an existing DB/code result instead of declaring from scratch — override an attribute,
+delete a column or table, or replace a table's list wholesale:</p>
+<pre><code>tables:
+  orders:
+    columns:
+      - { name: status,      comment: Order status }   # override just this attribute
+      - { name: legacy_flag, drop: true }              # delete a column
+    associations:
+      - { type: belongs_to, target: users, foreign_key: created_by_id, drop: true }  # delete an edge
+  temp_scratch:
+    drop: true                                         # delete a whole table
+  reports:
+    columns_mode: replace                              # discard lower-layer columns first
+    columns:
+      - { name: id,   type: bigint, primary: true }
+      - { name: body, type: text }</code></pre>
+<p>
+The default is additive/override merge; the explicit operations are <code>drop: true</code> (on a
+table, column, index, or association) and <code>columns_mode</code>/<code>indexes_mode</code>/<code>associations_mode:
+replace</code> (discard the lower layers' list for that table before applying the config's). An
+index needs a <code>name</code>; an association drop is targeted by identity (its foreign-key column
+and target, plus name for a non-FK relation).
+</p>
+<p>
+<strong>Precedence:</strong> physical facts — column types, indexes, primary keys — come from the
+database, with the config able to override; associations and comments (logical names) prefer code
+and config over the database. The config layer always wins over both database and code.
+</p>
+<p>
+<strong>Validation is two-pass.</strong> Syntax is checked when the config loads — unknown keys
+(including misspelled nested ones), wrong value types, and malformed operations are rejected upfront.
+References are checked at run time, once every source is merged: a <code>drop</code> or a
+<code>foreign_key</code>/<code>target</code> that points at a table or column which doesn't actually
+exist is a hard error. A typo never silently produces a wrong diagram.
 </p>
 
 <div class="warn"><strong>Config value types matter</strong>
