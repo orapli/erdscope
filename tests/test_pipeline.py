@@ -368,6 +368,16 @@ class TestPipelineConfigTables(_MainDriver):
             self._run()
         self.assertIn('planets', str(cm.exception))
 
+    def test_config_assoc_foreign_key_nonexistent_column_errors(self):
+        # P1-d: the association target exists (users), but the declared
+        # foreign_key names a column the source table (posts) doesn't have.
+        self._write({'tables': {'posts': {'associations': [
+            {'type': 'belongs_to', 'name': 'author', 'target': 'users',
+             'foreign_key': 'author_id'}]}}})  # posts has no author_id
+        with self.assertRaises(SystemExit) as cm:
+            self._run()
+        self.assertIn('author_id', str(cm.exception))
+
     # ── syntactic/semantic boundary, end-to-end ──
     def test_syntactically_valid_but_semantically_bad_errors_at_runtime(self):
         # a drop of an absent column: Step-3 load validation accepts it
@@ -462,6 +472,38 @@ class TestPipelineFrameworkOnly(_NoDBDriver):
         self._run('--config', cfg, '-o', out)
         self.assertEqual(self.calls, [])
         self.assertIn('<title>custom — ERD</title>', Path(out).read_text())
+
+    def test_multiple_models_merge_both_frameworks(self):
+        # P1-a (§10): two --models flags merge BOTH frameworks, rather than a
+        # second --models silently winning/dropping the first.
+        out = self._p('out.html')
+        self._run('--models', str(FIXTURE_RAILS), '--models', str(FIXTURE_PRISMA),
+                  '--no-config', '-o', out)
+        self.assertEqual(self.calls, [])
+        data = self._data(out)['tables']
+        self.assertIn('webhooks', data)  # a Rails-only table
+        self.assertIn('Post', data)      # a Prisma-only table
+
+    def test_config_models_list_merges_both_frameworks(self):
+        # P1-a: config `models` accepts a list of framework paths.
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps(
+            {'models': [str(FIXTURE_RAILS), str(FIXTURE_PRISMA)]}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '-o', out)
+        self.assertEqual(self.calls, [])
+        data = self._data(out)['tables']
+        self.assertIn('webhooks', data)
+        self.assertIn('Post', data)
+
+    def test_config_models_single_string_still_works(self):
+        # P1-a: a single string stays valid (back-compat).
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'models': str(FIXTURE_PRISMA)}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '-o', out)
+        self.assertEqual(self.calls, [])
+        self.assertIn('Post', self._data(out)['tables'])
 
 
 class TestPipelineConfigOnly(_NoDBDriver):

@@ -542,6 +542,15 @@ def _merge_column(name, contribs):
             out[attr] = _pick_by_authority(cc)
     return out
 
+def _assoc_content_differs(a, b):
+    """Do two same-identity associations differ in merge-visible content
+    (cardinality / target / through / polymorphic)? A name difference is
+    expected (declared vs machine-derived) and never counts. Shared by the
+    config-override (§8.6) and framework-vs-framework (§10) override warnings."""
+    return (a['type'] != b['type'] or a['target'] != b['target']
+            or a.get('through') != b.get('through')
+            or bool(a.get('polymorphic')) != bool(b.get('polymorphic')))
+
 def _merge_association_group(members):
     """members: list of (spec_order, kind, assoc_dict), same identity, in layer
     order. Merge into one association per §8.4 + §9."""
@@ -576,12 +585,21 @@ def _merge_association_group(members):
         for _, kind, a in ms:
             if kind == 'config':
                 continue
-            if (a['type'] != c['type'] or a['target'] != c['target']
-                    or a.get('through') != c.get('through')
-                    or bool(a.get('polymorphic')) != bool(c.get('polymorphic'))):
+            if _assoc_content_differs(a, c):
                 print(f"Warning: config association {c.get('name')!r} (on {c['target']!r}) "
                       f"overrides a differing {kind} association", file=sys.stderr)
                 break
+    # §10 (multiple --models): a later framework layer overriding an earlier
+    # framework layer's same-identity association with differing content is a
+    # multi-framework conflict the user should see. `ms` is already layer-order
+    # sorted, so the last framework member is the winner.
+    fw_members = [a for _, kind, a in ms if kind == 'framework']
+    if len(fw_members) >= 2:
+        winner = fw_members[-1]
+        if any(_assoc_content_differs(a, winner) for a in fw_members[:-1]):
+            print(f"Warning: framework association {winner.get('name')!r} (on "
+                  f"{winner['target']!r}) overrides a differing earlier framework "
+                  f"association", file=sys.stderr)
     # representative provenance -> legacy flag(s) (§9.3 seam). A config-layer
     # association is manual by definition (§9.1), even if its fragment carries
     # no flag; otherwise read the association's existing legacy flags.
@@ -711,24 +729,31 @@ def _merge_table(tname, contribs):
         if not any(_config_assoc_drop_matches(d, i) for d in a_drops)]
     return merged
 
-def _normalize_primary_key(tname, t, warn=True):
+def _normalize_primary_key(tname, t, warn=True, authoritative=False):
     """§7.3: primary_key is authoritative — ensure every column it names carries
     primary=True (a PK column whose primary flag a lower layer didn't set is
-    corrected up). Columns are NOT flipped to False, so a composite PK whose
-    columns were all flagged by the DB (primary_key stores only the first) keeps
-    every member primary. A PK naming an absent column is a warning, not fatal.
+    corrected up). By default columns are NOT flipped to False, so a composite PK
+    whose columns were all flagged by the DB (primary_key stores only the first)
+    keeps every member primary. A PK naming an absent column is a warning, not
+    fatal.
 
-    `warn=False` suppresses that warning for a config-declared primary_key:
-    validate_config_references issues an authoritative hard error for it, so the
-    non-fatal warning would be a redundant second message for the same problem."""
+    `authoritative=True` (a config layer supplied primary_key, so it is COMPLETE)
+    additionally RESETS every non-PK column's primary flag to False — and clears
+    ALL primary flags when the config primary_key is null. This is what makes
+    `primary_key: null` (or a config PK narrower than the DB's) take full effect
+    instead of leaving stale DB primary flags behind.
+
+    `warn=False` suppresses the missing-column warning for a config-declared
+    primary_key: validate_config_references issues an authoritative hard error
+    for it, so the non-fatal warning would be a redundant second message."""
     pk = t.get('primary_key')
-    if pk is None:
-        return
-    pk_names = [pk] if isinstance(pk, str) else list(pk)
+    pk_names = [] if pk is None else ([pk] if isinstance(pk, str) else list(pk))
     names = {c['name'] for c in t['columns']}
     for c in t['columns']:
         if c['name'] in pk_names:
             c['primary'] = True
+        elif authoritative:
+            c['primary'] = False
     missing = [n for n in pk_names if n not in names]
     if missing and warn:
         print(f"Warning: table {tname!r} primary_key names column(s) not present: "
@@ -757,14 +782,16 @@ def merge_ir(layers):
             if tname not in seen:
                 seen.add(tname)
                 order.append(tname)
-    # Tables whose primary_key is contributed by a config layer: config has the
-    # highest physical-field rank, so a config primary_key always wins. For these
-    # validate_config_references raises an authoritative hard error on a missing
-    # PK column, so _normalize_primary_key's non-fatal warning is suppressed to
-    # avoid a redundant second message. Non-config PK mismatches still warn.
+    # Tables whose primary_key is contributed by a config layer (the KEY is
+    # present, even if its value is null). config has the highest physical-field
+    # rank, so a config primary_key always wins and is authoritative/COMPLETE:
+    # _normalize_primary_key resets non-PK primary flags for these (§7.3, P1-c).
+    # It also suppresses the non-fatal missing-column warning (validate_config_
+    # references raises an authoritative hard error instead). Non-config PK
+    # mismatches still warn and never reset flags (composite-PK safe).
     config_pk_tables = {tname for kind, tbls in prepared if kind == 'config'
                         for tname, frag in tbls.items()
-                        if isinstance(frag, dict) and frag.get('primary_key') is not None}
+                        if isinstance(frag, dict) and 'primary_key' in frag}
     result = {}
     for tname in order:
         contribs = [(kind, spec, tbls[tname])
@@ -786,7 +813,15 @@ def merge_ir(layers):
             c.setdefault('type', '')
             c.setdefault('nullable', False)
             c.setdefault('primary', False)
-        _normalize_primary_key(tname, t, warn=tname not in config_pk_tables)
+        # Normalize indexes to always carry `unique` (mysql_ir/parsers already
+        # do; a config index may omit it — Step-3 accepts it as optional). This
+        # keeps every downstream ix['unique'] read (_unique_single_col, Excel,
+        # HTML) safe. Inert for db/framework indexes, so demo stays byte-equal.
+        for ix in t.get('indexes', []):
+            ix.setdefault('unique', False)
+        authoritative_pk = tname in config_pk_tables
+        _normalize_primary_key(tname, t, warn=not authoritative_pk,
+                               authoritative=authoritative_pk)
         t['fk_columns'] = sorted({a['foreign_key'] for a in t['associations']
                                   if a.get('foreign_key')})
         if len(t['columns']) == 0:
@@ -1492,11 +1527,11 @@ def validate_config_references(config_tables, tables, label):
     for tname, frag in config_tables.items():
         if not isinstance(frag, dict) or frag.get('drop') is True or tname not in tables:
             continue
+        col_names = {c['name'] for c in tables[tname]['columns']}
         pk = frag.get('primary_key')
         if pk is not None:
-            names = {c['name'] for c in tables[tname]['columns']}
             for n in ([pk] if isinstance(pk, str) else pk):
-                if n not in names:
+                if n not in col_names:
                     sys.exit(f"Error: {label} table {tname!r} primary_key names column {n!r} "
                              "which does not exist in the merged schema")
         for a in frag.get('associations', []):
@@ -1506,6 +1541,12 @@ def validate_config_references(config_tables, tables, label):
             if target and target not in tables:
                 sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
                          f"references unknown target table {target!r}")
+            # a declared foreign_key must name a real column on the SOURCE table
+            fk = a.get('foreign_key')
+            if fk and fk not in col_names:
+                sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
+                         f"declares foreign_key {fk!r} which does not exist in "
+                         f"{tname!r}'s merged columns")
 
 # ---------------------------------------------------------------------------
 # Excel export (.xlsx via zipfile — no third-party dependency)
@@ -5493,8 +5534,10 @@ def _reject_unknown_keys(obj, allowed, path, where):
 # character-by-character by fnmatch (silently matches everything, filter
 # does nothing); infer_fk as the string "false" is truthy. host/port/user/
 # database get their own, more detailed checks in assemble_config_url().
+# `models` is validated separately (below) because it accepts str OR list[str]
+# — multiple frameworks (§18 #3 / §10), e.g. a Rails app AND a schema.prisma.
 CONFIG_TYPES = {
-    'output': str, 'models': str, 'excel': str, 'excel_template': str, 'max_rows': int,
+    'output': str, 'excel': str, 'excel_template': str, 'max_rows': int,
     'only': list, 'exclude': list, 'infer_fk': bool, 'table_map': dict,
     'relations': list, 'title': str,
 }
@@ -5567,6 +5610,18 @@ def _check_config_types(config, path):
               isinstance(val, expected))
         if not ok:
             sys.exit(f'Error: {path} `{key}` must be a {expected.__name__}, got {val!r}')
+    # models: a single path (str) or a list of paths (str) — multiple frameworks
+    if 'models' in config:
+        m = config['models']
+        if isinstance(m, str):
+            pass
+        elif isinstance(m, list):
+            for i, item in enumerate(m):
+                if not isinstance(item, str):
+                    sys.exit(f'Error: {path} `models[{i}]` must be a string, got {item!r}')
+        else:
+            sys.exit(f'Error: {path} `models` must be a string or a list of strings, '
+                     f'got {m!r}')
     for key in ('only', 'exclude'):
         if key in config and any(not isinstance(x, str) for x in config[key]):
             sys.exit(f'Error: {path} `{key}` must be a list of strings')
@@ -5683,9 +5738,13 @@ def _check_config_indexes(indexes, path, where):
 def _config_assoc_identity(a):
     """Stable identity for an association fragment/drop (§8.1), used only for
     Config-internal duplicate detection. FK-holding side is keyed by its FK
-    column + target; a collection/inverse (no FK) by type + target + name."""
+    column + target + name; a collection/inverse (no FK) by type + target + name.
+    `name` is part of BOTH so it aligns with the runtime association_key (6b):
+    the Rails alias pattern (`user` AND `author`, both on `user_id` -> `users`)
+    is two distinct associations and must not be rejected as a duplicate. An
+    exact duplicate (same name+fk+target) is still caught."""
     if a.get('foreign_key'):
-        return ('fk', a.get('target'), a.get('foreign_key'))
+        return ('fk', a.get('target'), a.get('foreign_key'), a.get('name'))
     return ('rel', a.get('type'), a.get('target'), a.get('name'))
 
 def _check_config_associations(assocs, path, where):
@@ -5843,9 +5902,10 @@ def main():
     # built-in default" (attribute absent) — see the merge loop below.
     p.add_argument('-o', '--output', default=argparse.SUPPRESS,
                    help='Output HTML file (default: erd.html)')
-    p.add_argument('--models', metavar='PATH', default=argparse.SUPPRESS,
+    p.add_argument('--models', metavar='PATH', action='append', default=argparse.SUPPRESS,
                    help='Merge association semantics parsed from application code '
-                        '(Rails project/app/models dir, schema.prisma, or Django project)')
+                        '(Rails project/app/models dir, schema.prisma, or Django project). '
+                        'Repeatable to merge several frameworks; later ones win on ties')
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
@@ -5915,6 +5975,14 @@ def main():
     for key, default in CONFIG_DEFAULTS.items():
         if not hasattr(args, key):  # not explicitly passed on the CLI
             setattr(args, key, config.get(key, default))
+    # --models is repeatable (append) and config `models` may be str or list;
+    # normalize both to a list of paths, in given order (§10: later wins on ties)
+    if args.models is None:
+        models_list = []
+    elif isinstance(args.models, str):
+        models_list = [args.models]
+    else:
+        models_list = list(args.models)
     relations = config.get('relations', [])  # shape already validated by load_config()
     config_tables = config.get('tables')     # shape already validated by load_config()
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
@@ -5922,7 +5990,7 @@ def main():
 
     # ── valid-input check (§10): at least one SCHEMA source (DB / Framework /
     #    config.tables). relations alone is not a source — it needs a base. ──
-    if not (url or args.models or config_tables):
+    if not (url or models_list or config_tables):
         sys.exit('Error: no schema input. Provide at least one of: a database URL '
                  '(mysql:// or postgres://) as the argument or config `database`; '
                  '--models pointing at a Rails/Prisma/Django project; or a config file '
@@ -5938,13 +6006,14 @@ def main():
         layers.append(db_result)
 
     fw_root = None
-    if args.models:
-        mroot = Path(args.models).expanduser().resolve()
+    for m in models_list:  # each --models / config `models` entry, in order
+        mroot = Path(m).expanduser().resolve()
         if not mroot.exists():
             sys.exit(f'Error: {mroot} does not exist')
         fw = framework_provider(mroot, args.table_map)
         layers.append(fw)
-        fw_root = mroot
+        if fw_root is None:
+            fw_root = mroot  # the first framework drives the title fallback (§10)
         print(f'Merged {fw["source"]["provider"]} associations from {mroot}', file=sys.stderr)
 
     # config.tables join as a top-priority config layer (add/override/drop/

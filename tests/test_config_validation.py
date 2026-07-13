@@ -265,11 +265,22 @@ class TestAssociationFragmentAndDrop(unittest.TestCase):
                 {'type': 'belongs_to', 'name': 'x', 'target': 'y', 'foreign_key': 5}]}}})
 
     def test_duplicate_owner_fk_identity_rejected(self):
+        # an EXACT duplicate (same name + fk + target) is still an error
         with self.assertRaises(SystemExit) as cm:
             _load({'tables': {'t': {'associations': [
                 {'type': 'belongs_to', 'name': 'a', 'target': 'users', 'foreign_key': 'uid'},
-                {'type': 'belongs_to', 'name': 'b', 'target': 'users', 'foreign_key': 'uid'}]}}})
+                {'type': 'belongs_to', 'name': 'a', 'target': 'users', 'foreign_key': 'uid'}]}}})
         self.assertIn('duplicate', str(cm.exception).lower())
+
+    def test_owner_fk_aliases_on_same_column_allowed(self):
+        # P1-e: the Rails alias pattern — two differently-NAMED owner_fk
+        # associations on the same fk column/target (user AND author, both on
+        # user_id -> users) is two distinct associations (aligned with the
+        # runtime association_key, 6b), NOT a duplicate. Must load cleanly.
+        cfg = _load({'tables': {'t': {'associations': [
+            {'type': 'belongs_to', 'name': 'user', 'target': 'users', 'foreign_key': 'user_id'},
+            {'type': 'belongs_to', 'name': 'author', 'target': 'users', 'foreign_key': 'user_id'}]}}})
+        self.assertEqual(len(cfg['tables']['t']['associations']), 2)
 
     def test_duplicate_collection_identity_rejected(self):
         with self.assertRaises(SystemExit):
@@ -395,6 +406,41 @@ class TestLegacyRelationsUnchanged(unittest.TestCase):
     def test_relations_still_rejects_non_object_entries(self):
         with self.assertRaises(SystemExit):
             _load({'relations': ['not-an-object']})
+
+
+class TestConfigModelsKey(unittest.TestCase):
+    """P1-a: config `models` accepts a single path (str) or a list of paths."""
+
+    def test_models_string_accepted(self):
+        self.assertEqual(_load({'models': '/some/app'})['models'], '/some/app')
+
+    def test_models_list_accepted(self):
+        self.assertEqual(_load({'models': ['/a', '/b']})['models'], ['/a', '/b'])
+
+    def test_models_list_with_non_string_element_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'models': ['/a', 5]})
+        self.assertIn('models', str(cm.exception))
+
+    def test_models_wrong_type_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'models': 5})
+        self.assertIn('models', str(cm.exception))
+
+
+class TestConfigOwnerFkAliasMerge(unittest.TestCase):
+    def test_owner_fk_aliases_survive_into_merged_ir(self):
+        # P1-e: two aliased owner_fk associations on the same column both reach
+        # the merged IR (not collapsed / rejected).
+        db = erd.make_provider_result('db', 'mysql', {
+            'posts': {'columns': [{'name': 'user_id'}], 'indexes': [], 'associations': []},
+            'users': {'columns': [{'name': 'id'}], 'indexes': [], 'associations': []}})
+        cfg = erd.make_provider_result('config', 'config', {'posts': {'associations': [
+            {'type': 'belongs_to', 'name': 'user', 'target': 'users', 'foreign_key': 'user_id'},
+            {'type': 'belongs_to', 'name': 'author', 'target': 'users', 'foreign_key': 'user_id'}]}})
+        merged = erd.merge_ir([db, cfg])
+        names = sorted(a['name'] for a in merged['posts']['associations'])
+        self.assertEqual(names, ['author', 'user'])
 
 
 if __name__ == '__main__':

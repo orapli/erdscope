@@ -533,6 +533,94 @@ class TestConfigOverrideWarning(unittest.TestCase):
         _, err = self._merge_capturing_stderr([fw_layer(fw), config_layer(cfg)])
         self.assertNotIn('overrides a differing', err)
 
+    def test_framework_vs_framework_override_warns_and_later_wins(self):
+        # P1-a (§10): two --models. A later framework layer overriding an
+        # earlier one's same-identity association with a DIFFERING cardinality
+        # warns, and the later layer's value wins.
+        fw1 = {'t': {'columns': [col('u_id')], 'associations': [
+            {'type': 'belongs_to', 'name': 'u', 'target': 'us', 'foreign_key': 'u_id'}]}}
+        fw2 = {'t': {'associations': [
+            {'type': 'has_one', 'name': 'u', 'target': 'us', 'foreign_key': 'u_id'}]}}
+        merged, err = self._merge_capturing_stderr(
+            [fw_layer(fw1, 'rails'), fw_layer(fw2, 'prisma')])
+        self.assertIn('overrides a differing earlier framework', err)
+        a = next(a for a in merged['t']['associations'] if a['name'] == 'u')
+        self.assertEqual(a['type'], 'has_one')  # later framework wins
+
+    def test_framework_vs_framework_no_warning_when_identical(self):
+        fw1 = {'t': {'associations': [
+            {'type': 'belongs_to', 'name': 'u', 'target': 'us', 'foreign_key': 'u_id'}]}}
+        fw2 = {'t': {'associations': [
+            {'type': 'belongs_to', 'name': 'u', 'target': 'us', 'foreign_key': 'u_id'}]}}
+        _, err = self._merge_capturing_stderr(
+            [fw_layer(fw1, 'rails'), fw_layer(fw2, 'prisma')])
+        self.assertNotIn('framework association', err)
+
+
+class TestPrimaryKeyAuthoritative(unittest.TestCase):
+    """P1-c: a config layer's primary_key is authoritative/COMPLETE — it resets
+    other columns' `primary` flags. A DB/framework PK only ever sets True (safe
+    for composite PKs the DB reports partially)."""
+
+    def test_config_null_pk_clears_stale_db_primary(self):
+        db = {'t': {'columns': [col('id', type='bigint', primary=True),
+                                col('name', type='string')],
+                    'primary_key': 'id', 'associations': []}}
+        cfg = {'t': {'primary_key': None}}
+        merged = erd.merge_ir([db_layer(db), config_layer(cfg)])
+        self.assertIsNone(merged['t']['primary_key'])
+        self.assertFalse(any(c['primary'] for c in merged['t']['columns']))
+
+    def test_config_narrower_pk_over_db_composite_resets_the_rest(self):
+        # DB composite PK (a, b) flags both a and b primary; config narrows it
+        # to just [a] -> only a stays primary, b is reset to False.
+        db = {'t': {'columns': [col('a', type='bigint', primary=True),
+                                col('b', type='bigint', primary=True),
+                                col('c', type='string')],
+                    'primary_key': 'a', 'associations': []}}
+        cfg = {'t': {'primary_key': ['a']}}
+        merged = erd.merge_ir([db_layer(db), config_layer(cfg)])
+        prim = {c['name']: c['primary'] for c in merged['t']['columns']}
+        self.assertEqual(prim, {'a': True, 'b': False, 'c': False})
+
+    def test_plain_db_composite_pk_keeps_all_members_primary(self):
+        # no config: the existing composite-PK-safe behavior is preserved
+        # (DB stores only the first PK col in primary_key but flags all members)
+        db = {'t': {'columns': [col('a', type='bigint', primary=True),
+                                col('b', type='bigint', primary=True)],
+                    'primary_key': 'a', 'associations': []}}
+        merged = erd.merge_ir([db_layer(db)])
+        self.assertTrue(all(c['primary'] for c in merged['t']['columns']))
+
+
+class TestConfigIndexUniqueNormalization(unittest.TestCase):
+    """P1-b: a config index may omit `unique` (Step-3 accepts it as optional);
+    merge_ir's derive step normalizes it to False so every downstream
+    ix['unique'] read is safe."""
+
+    def test_config_index_without_unique_defaults_to_false(self):
+        cfg = {'t': {'columns': [col('id', type='bigint', primary=True)],
+                     'primary_key': 'id',
+                     'indexes': [{'name': 'idx_t_id', 'columns': ['id']}],  # no `unique`
+                     'associations': []}}
+        merged = erd.merge_ir([config_layer(cfg)])
+        self.assertEqual(merged['t']['indexes'][0]['unique'], False)
+
+    def test_write_excel_survives_config_index_without_unique(self):
+        import tempfile, zipfile
+        cfg = {'t': {'columns': [col('id', type='bigint', primary=True)],
+                     'primary_key': 'id',
+                     'indexes': [{'name': 'idx_t_id', 'columns': ['id']}],
+                     'associations': []}}
+        merged = erd.merge_ir([config_layer(cfg)])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'defs.xlsx'
+            erd.write_excel(merged, out, 'testdb')  # must not raise KeyError
+            with zipfile.ZipFile(out) as z:
+                blob = ''.join(z.read(n).decode() for n in z.namelist()
+                               if n.startswith('xl/worksheets/'))
+        self.assertIn('idx_t_id', blob)
+
 
 # ---------------------------------------------------------------------------
 # §6.2 — config operation markers: drop / *_mode: replace (Step 7a)
