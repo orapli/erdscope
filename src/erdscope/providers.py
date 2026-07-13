@@ -1,0 +1,194 @@
+def detect_code_source(root):
+    """Classify a --models path: a Rails app/models dir, a Prisma schema,
+    or a Django project."""
+    if root.is_file():
+        return 'prisma' if root.suffix == '.prisma' else None
+    if (root / 'app' / 'models').is_dir() or any(root.glob('*.rb')):
+        return 'rails'
+    if (root / 'manage.py').exists():
+        return 'django'
+    for cand in (root / 'prisma' / 'schema.prisma', root / 'schema.prisma'):
+        if cand.exists():
+            return 'prisma'
+    return None
+
+# ---------------------------------------------------------------------------
+# Framework leaf providers (REFACTOR_PLAN.md §5) — ProviderResult wrappers.
+#
+# Each wraps its existing parser (unchanged) and packages the FULL IR —
+# crucially the columns — as a ProviderResult, which merge_ir folds against the
+# DB layer. The `framework_provider` dispatcher (detect + resolve path) routes
+# the merge through these. These leaf providers take an already-resolved input
+# (a .prisma file path / a Django project root); detection and path resolution
+# live in detect_code_source / framework_provider.
+# ---------------------------------------------------------------------------
+def prisma_provider(schema_path):
+    """ProviderResult for a resolved Prisma schema file. Retains columns
+    (with Prisma types, including enum field types as the enum name) so a
+    Prisma-only run (Step 8) or the Step-6 merge can use them instead of
+    discarding them the way the current association-only overlay does."""
+    tables = parse_prisma(schema_path)
+    return make_provider_result('framework', 'prisma', tables,
+                                location=str(schema_path))
+
+def django_provider(root):
+    """ProviderResult for a resolved Django project root. Retains columns —
+    including the synthetic `id` PK Django backfills and the `<name>_id` FK
+    columns emitted for ForeignKey/OneToOneField — that the current overlay
+    path drops."""
+    tables = parse_django(root)
+    return make_provider_result('framework', 'django', tables,
+                                location=str(root))
+
+def _password_free_url(url):
+    """Rebuild a connection URL without its password, for a ProviderResult's
+    Source.location (§5: location is password-free). Keeps user@host:port/db
+    and any ?query (e.g. postgres ?schema=name)."""
+    u = urlparse(url)
+    netloc = u.hostname or ''
+    if u.username:
+        netloc = f'{u.username}@{netloc}'
+    if u.port:
+        netloc = f'{netloc}:{u.port}'
+    out = f'{u.scheme}://{netloc}{u.path}'
+    return f'{out}?{u.query}' if u.query else out
+
+def db_provider(url):
+    """DB ProviderResult (§5). Dispatches on the URL scheme to the existing
+    parse_mysql/parse_postgres (unchanged) and packages the IR with a
+    password-free location. Referenced as module globals so the test harness's
+    parse_mysql monkeypatch still applies."""
+    scheme = urlparse(url).scheme
+    if scheme == 'mysql':
+        return make_provider_result('db', 'mysql', parse_mysql(url),
+                                    location=_password_free_url(url))
+    if scheme in ('postgres', 'postgresql'):
+        return make_provider_result('db', 'postgres', parse_postgres(url),
+                                    location=_password_free_url(url))
+    sys.exit('Error: a database URL is required (mysql:// or postgres://)')
+
+def framework_provider(mroot, table_map=None):
+    """Framework ProviderResult (§5). Detects the code kind and resolves the
+    concrete input path (the Rails app/models dir, the schema.prisma file, or
+    the Django root), then dispatches to the matching leaf provider."""
+    kind = detect_code_source(mroot)
+    if kind == 'rails':
+        mdir = mroot / 'app' / 'models' if (mroot / 'app' / 'models').is_dir() else mroot
+        return rails_provider(mdir, table_map)
+    if kind == 'prisma':
+        schema = mroot if mroot.is_file() else next(
+            c for c in (mroot / 'prisma' / 'schema.prisma', mroot / 'schema.prisma') if c.exists())
+        return prisma_provider(schema)
+    if kind == 'django':
+        return django_provider(mroot)
+    sys.exit(f'Error: could not detect the code kind at {mroot} '
+             '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
+
+def relations_to_config_layer(relations, base_tables):
+    """Convert the config `relations` list into a config-kind ProviderResult of
+    association fragments (§8.6/P0-3). Validates hard (unknown table/column/
+    target are the user's typo), and cardinality is has_one when one_to_one is
+    set OR the FK column is single-column-unique in the merged base, else
+    belongs_to.
+
+    No `manual` flag is written into the fragment — merge_ir forces config-kind
+    associations to manual provenance (§9.1). And no "skip if already covered":
+    a config relation OVERRIDES a db/framework association of the same identity
+    (the intentional §12/P0-3 behavior), which merge_ir's Phase A handles."""
+    tables = {}
+    for i, r in enumerate(relations):
+        where = f'relations[{i}]'
+        for key in ('table', 'column', 'references'):
+            if not r.get(key):
+                sys.exit(f'Error: {where} is missing required key {key!r}')
+        table, col, target = r['table'], r['column'], r['references']
+        if table not in base_tables:
+            sys.exit(f'Error: {where}: unknown table {table!r}')
+        if not any(c['name'] == col for c in base_tables[table]['columns']):
+            sys.exit(f'Error: {where}: {table!r} has no column {col!r}')
+        if target not in base_tables:
+            sys.exit(f'Error: {where}: unknown target table {target!r}')
+        if r.get('one_to_one'):
+            assoc_type = 'has_one'
+        else:
+            assoc_type = 'has_one' if _unique_single_col(base_tables[table], col) else 'belongs_to'
+        name = r.get('name') or (col[:-3] if col.endswith('_id') else col)
+        tables.setdefault(table, {'associations': []})['associations'].append(
+            {'type': assoc_type, 'name': name, 'target': target, 'foreign_key': col})
+    return make_provider_result('config', 'config', tables)
+
+def config_provider(config, location=None):
+    """Config ProviderResult (§5) from config['tables'] — the table fragments
+    WITH their `drop`/`*_mode` operation markers intact (merge_ir consumes and
+    strips them). Associations carry no `manual` flag; merge_ir forces
+    config-kind associations to manual provenance (§9.1). Semantic validation
+    of the ops/refs (§6.4②) is done by the caller against the merged base."""
+    return make_provider_result('config', 'config', config.get('tables', {}) or {},
+                                location=location)
+
+def validate_config_drops(config_tables, base, label):
+    """Semantic validation (§6.4②) of config.tables DropOperations against the
+    merged db+framework `base`: a drop must target something that actually
+    exists in a lower layer (dropping a nonexistent table/column/index/
+    association — or one only config itself adds — is the user's mistake). Runs
+    BEFORE the config layer is merged. Hard error via sys.exit; `label` is the
+    config path (or 'config') for the message."""
+    for tname, frag in config_tables.items():
+        if not isinstance(frag, dict):
+            continue  # shape already checked at load time
+        if frag.get('drop') is True:
+            if tname not in base:
+                sys.exit(f"Error: {label} drops table {tname!r} but no such table exists")
+            continue
+        for c in frag.get('columns', []):
+            if c.get('drop') is True and not (
+                    tname in base and any(x['name'] == c['name'] for x in base[tname]['columns'])):
+                sys.exit(f"Error: {label} drops column {tname}.{c['name']} but no such column exists")
+        for ix in frag.get('indexes', []):
+            if ix.get('drop') is True and not (
+                    tname in base and any(i.get('name') == ix['name']
+                                          for i in base[tname].get('indexes', []))):
+                sys.exit(f"Error: {label} drops index {ix['name']!r} on {tname!r} "
+                         "but no such index exists")
+        for a in frag.get('associations', []):
+            if a.get('drop') is True:
+                idents = [association_key(tname, x)
+                          for x in base.get(tname, {}).get('associations', [])]
+                if not any(_config_assoc_drop_matches(a, i) for i in idents):
+                    sys.exit(f"Error: {label} drops an association on {tname!r} "
+                             "but no matching association exists")
+
+def validate_config_references(config_tables, tables, label):
+    """Semantic validation (§6.4②) of config.tables references against the FINAL
+    merged IR: every config-declared association `target` must be an existing
+    table, and every config-declared `primary_key` column must exist in that
+    table's final columns. A config-ADDED table/column is already merged in, so
+    referencing it is valid (self- and cross-references included). Runs AFTER
+    the final merge. Hard error via sys.exit."""
+    for tname, frag in config_tables.items():
+        if not isinstance(frag, dict) or frag.get('drop') is True or tname not in tables:
+            continue
+        col_names = {c['name'] for c in tables[tname]['columns']}
+        pk = frag.get('primary_key')
+        if pk is not None:
+            for n in ([pk] if isinstance(pk, str) else pk):
+                if n not in col_names:
+                    sys.exit(f"Error: {label} table {tname!r} primary_key names column {n!r} "
+                             "which does not exist in the merged schema")
+        for a in frag.get('associations', []):
+            if a.get('drop') is True:
+                continue
+            target = a.get('target')
+            if target and target not in tables:
+                sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
+                         f"references unknown target table {target!r}")
+            # a declared foreign_key must name a real column on the SOURCE table
+            fk = a.get('foreign_key')
+            if fk and fk not in col_names:
+                sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
+                         f"declares foreign_key {fk!r} which does not exist in "
+                         f"{tname!r}'s merged columns")
+
+# ---------------------------------------------------------------------------
+# Excel export (.xlsx via zipfile — no third-party dependency)
+# ---------------------------------------------------------------------------

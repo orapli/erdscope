@@ -1,7 +1,8 @@
-"""The committed ``erd.py`` is a build artifact of ``src/erdscope/core.py`` +
-``src/erdscope/viewer.html`` (the ~3,600-line embedded viewer lives in its own
-file, out of the Python). ``tools/build_single_file.py`` inlines the viewer back
-into a one-line sentinel in ``core.py`` to produce ``erd.py``.
+"""The committed ``erd.py`` is a build artifact of the split source under
+``src/erdscope/``: concern-named Python fragments (concatenated in order) plus
+``viewer.html`` (the ~3,600-line embedded viewer, out of the Python).
+``tools/build_single_file.py`` concatenates the fragments and inlines the viewer
+into a one-line sentinel to produce ``erd.py``.
 
 This mirrors, as a unittest, the CI check that ``erd.py`` has not drifted from
 its source — so editing ``erd.py`` directly (instead of the source) or forgetting

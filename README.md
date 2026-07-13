@@ -242,8 +242,10 @@ adapter's IR builder wholesale) is the working example of the pattern.
 ### Building `erd.py`
 
 The shipped `erd.py` is a **build artifact**: the development source lives under
-`src/erdscope/`, splitting the ~3,600-line embedded viewer (HTML/CSS/JS) out of the
-Python. Edit `src/erdscope/core.py` (Python) or `src/erdscope/viewer.html` (viewer),
+`src/erdscope/`. The Python is organised into concern-named fragments
+(`adapters.py`, `merge.py`, `overlays.py`, `providers.py`, `exporters.py`,
+`config.py`, `cli.py`, …) that are concatenated in order, and the ~3,600-line embedded
+viewer (HTML/CSS/JS) lives in `viewer.html`, out of the Python. Edit the relevant file,
 then regenerate the single file:
 
 ```bash
@@ -251,10 +253,11 @@ python3 tools/build_single_file.py          # rewrites erd.py from the source
 python3 tools/build_single_file.py --check   # CI-style check that erd.py is in sync
 ```
 
-The build is a pure textual inline (it substitutes the viewer into a one-line sentinel
-in `core.py`), so `erd.py` stays a self-contained, zero-dependency single file — grabbing
-and running it, or `pip install erdscope`, is unchanged. CI runs the `--check` above so a
-hand-edit of `erd.py` or a forgotten rebuild fails the build.
+The fragments are an amalgamation of one flat module (SQLite-style) — no cross-module
+imports — and the viewer is inlined into a one-line sentinel, so the whole build is pure
+textual assembly and `erd.py` stays a self-contained, zero-dependency single file:
+grabbing and running it, or `pip install erdscope`, is unchanged. CI runs the `--check`
+above, so a hand-edit of `erd.py` or a forgotten rebuild fails the build.
 
 ## License
 
