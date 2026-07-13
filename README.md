@@ -239,6 +239,23 @@ documented at the top of `erd.py`. Adding another database engine means adding o
 parser that produces that shape — `parse_postgres()` (which reuses the MySQL
 adapter's IR builder wholesale) is the working example of the pattern.
 
+### Building `erd.py`
+
+The shipped `erd.py` is a **build artifact**: the development source lives under
+`src/erdscope/`, splitting the ~3,600-line embedded viewer (HTML/CSS/JS) out of the
+Python. Edit `src/erdscope/core.py` (Python) or `src/erdscope/viewer.html` (viewer),
+then regenerate the single file:
+
+```bash
+python3 tools/build_single_file.py          # rewrites erd.py from the source
+python3 tools/build_single_file.py --check   # CI-style check that erd.py is in sync
+```
+
+The build is a pure textual inline (it substitutes the viewer into a one-line sentinel
+in `core.py`), so `erd.py` stays a self-contained, zero-dependency single file — grabbing
+and running it, or `pip install erdscope`, is unchanged. CI runs the `--check` above so a
+hand-edit of `erd.py` or a forgotten rebuild fails the build.
+
 ## License
 
 MIT
