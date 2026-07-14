@@ -261,16 +261,29 @@ def _check_config_indexes(indexes, path, where):
         _check_bool(ix.get('unique'), 'unique' in ix, path, f'{iw}.unique')
 
 def _config_assoc_identity(a):
-    """Stable identity for an association fragment/drop (§8.1), used only for
-    Config-internal duplicate detection. FK-holding side is keyed by its FK
-    column + target + name; a collection/inverse (no FK) by type + target + name.
-    `name` is part of BOTH so it aligns with the runtime association_key (6b):
-    the Rails alias pattern (`user` AND `author`, both on `user_id` -> `users`)
-    is two distinct associations and must not be rejected as a duplicate. An
-    exact duplicate (same name+fk+target) is still caught."""
-    if a.get('foreign_key'):
-        return ('fk', a.get('target'), a.get('foreign_key'), a.get('name'))
-    return ('rel', a.get('type'), a.get('target'), a.get('name'))
+    """Stable identity for an association fragment/drop, used only for
+    Config-internal duplicate detection. Mirrors the runtime association_key
+    (§8.1) so the two never disagree about what counts as "the same" edge:
+    role (owner_fk / collection / inverse_one / named) + target + FK column +
+    name, PLUS `through` and `polymorphic` when present. Including the last two
+    is what lets two associations that share type/name/target but differ only in
+    `through` (e.g. `through: orders` vs `through: archived_orders`) coexist —
+    the runtime treats them as distinct, so the syntactic check must too. `name`
+    is part of the identity for every role, so the Rails alias pattern (`user`
+    AND `author`, both on `user_id` -> `users`) is not a duplicate; an exact
+    duplicate is still caught. Uses .get() throughout so a DropOperation (which
+    may omit name/type) is handled by the same rule."""
+    role = ('owner_fk' if a.get('foreign_key')
+            else 'collection' if a.get('type') in ('has_many', 'has_and_belongs_to_many')
+            else 'inverse_one' if a.get('type') == 'has_one'
+            else 'named')
+    fk = frozenset([a['foreign_key']]) if a.get('foreign_key') else frozenset()
+    ident = [role, a.get('target'), fk, a.get('name')]
+    if a.get('through'):
+        ident.append(('through', a['through']))
+    if a.get('polymorphic'):
+        ident.append(('polymorphic', True))
+    return tuple(ident)
 
 def _check_config_associations(assocs, path, where):
     if not isinstance(assocs, list):

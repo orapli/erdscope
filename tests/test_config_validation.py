@@ -296,6 +296,34 @@ class TestAssociationFragmentAndDrop(unittest.TestCase):
             {'type': 'belongs_to', 'name': 'updater', 'target': 'users', 'foreign_key': 'updated_by_id'}]}}})
         self.assertEqual(len(cfg['tables']['posts']['associations']), 2)
 
+    def test_through_variants_are_not_duplicates(self):
+        # P2: same type/name/target but a different `through` are distinct edges
+        # at runtime (association_key includes through), so the syntactic dup
+        # check must accept them too rather than falsely reject the second.
+        cfg = _load({'tables': {'users': {'associations': [
+            {'type': 'has_many', 'name': 'products', 'target': 'products', 'through': 'orders'},
+            {'type': 'has_many', 'name': 'products', 'target': 'products',
+             'through': 'archived_orders'}]}}})
+        self.assertEqual(len(cfg['tables']['users']['associations']), 2)
+
+    def test_polymorphic_flag_distinguishes_identity(self):
+        # P2: polymorphic is part of the runtime identity, so a polymorphic and
+        # a non-polymorphic association that otherwise match are not duplicates.
+        cfg = _load({'tables': {'comments': {'associations': [
+            {'type': 'belongs_to', 'name': 'subject', 'target': 'posts', 'foreign_key': 'subject_id'},
+            {'type': 'belongs_to', 'name': 'subject', 'target': 'posts',
+             'foreign_key': 'subject_id', 'polymorphic': True}]}}})
+        self.assertEqual(len(cfg['tables']['comments']['associations']), 2)
+
+    def test_exact_duplicate_with_same_through_still_rejected(self):
+        # the fix must not weaken the real check: identical through and all —
+        # still a duplicate.
+        with self.assertRaises(SystemExit) as cm:
+            _load({'tables': {'users': {'associations': [
+                {'type': 'has_many', 'name': 'products', 'target': 'products', 'through': 'orders'},
+                {'type': 'has_many', 'name': 'products', 'target': 'products', 'through': 'orders'}]}}})
+        self.assertIn('duplicate', str(cm.exception).lower())
+
 
 class TestUnknownNestedKeys(unittest.TestCase):
     """Typo protection (§6.4 "typo を黙って無視しない"): a misspelled nested

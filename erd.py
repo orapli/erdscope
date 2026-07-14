@@ -615,6 +615,21 @@ def _pick_by_authority(contribs):
     greatest (rank, spec_order)."""
     return max(contribs, key=lambda c: (c[0], c[1]))[2]
 
+def _pick_by_authority_warned(contribs, label):
+    """Like _pick_by_authority, but warn when two SAME-rank layers disagree on
+    the value — a silent last-wins among equals (§7/§10). The archetype is two
+    --models frameworks (both kind='framework', so equal physical/logical rank)
+    that each define `t.col` with a different type: the later one wins by spec
+    order, and without this the override is invisible. A lower-rank contributor
+    losing to a higher one is the authority ladder working as designed and never
+    warns. `label` is a human field id like `table.column.type`."""
+    winner = _pick_by_authority(contribs)
+    top = max(c[0] for c in contribs)
+    if any(c[0] == top and c[2] != winner for c in contribs):
+        print(f"Warning: {label} has conflicting values from same-priority "
+              f"sources; using {winner!r}", file=sys.stderr)
+    return winner
+
 def _assoc_role(a):
     """Identity role for an association (§8.1). owner_fk holds the FK column;
     collection is has_many/habtm without an FK; inverse_one is has_one without
@@ -647,10 +662,11 @@ def association_key(source_table, a):
         key.append(('polymorphic', True))
     return tuple(key)
 
-def _merge_column(name, contribs):
+def _merge_column(tname, name, contribs):
     """contribs: list of (kind, spec_order, column_dict) for one column name,
     in layer order. Physical attrs resolve Config>DB>Framework, `comment`
-    resolves Config>Framework>DB, present-only (§7.2)."""
+    resolves Config>Framework>DB, present-only (§7.2). A same-rank disagreement
+    (e.g. two frameworks giving a different `type`) is warned per attribute."""
     out = {'name': name}
     present = set()
     for _, _, c in contribs:
@@ -663,7 +679,7 @@ def _merge_column(name, contribs):
         rank_map = _PHYSICAL_RANK if attr in _PHYSICAL_COL_ATTRS else _LOGICAL_RANK
         cc = [(rank_map[kind], order, c[attr]) for kind, order, c in contribs if attr in c]
         if cc:
-            out[attr] = _pick_by_authority(cc)
+            out[attr] = _pick_by_authority_warned(cc, f'{tname}.{name}.{attr}')
     return out
 
 def _assoc_content_differs(a, b):
@@ -816,12 +832,13 @@ def _merge_table(tname, contribs, layer_sources):
                 col_seen.add(nm)
                 col_order.append(nm)
             col_contribs.setdefault(nm, []).append((kind, order, c))
-    merged['columns'] = [_merge_column(nm, col_contribs[nm])
+    merged['columns'] = [_merge_column(tname, nm, col_contribs[nm])
                          for nm in col_order if nm not in col_drops]
     # ── primary_key: physical authority, present-only (§7.3) ──
     pk = [(_PHYSICAL_RANK[kind], order, frag['primary_key'])
           for kind, order, frag in contribs if 'primary_key' in frag]
-    merged['primary_key'] = _pick_by_authority(pk) if pk else None
+    merged['primary_key'] = (_pick_by_authority_warned(pk, f'{tname}.primary_key')
+                             if pk else None)
     # ── indexes: keyed by name (unnamed -> tuple(columns), NOT unique — §7.4);
     #    whole-index physical authority; union across keys ──
     ix_replace = replace('indexes_mode')
@@ -842,14 +859,15 @@ def _merge_table(tname, contribs, layer_sources):
     for k in ix_order:
         if k in ix_drops:
             continue
-        ix = copy.deepcopy(_pick_by_authority(ix_contribs[k]))
+        label = f'{tname} index {k if isinstance(k, str) else "(" + ", ".join(k) + ")"}'
+        ix = copy.deepcopy(_pick_by_authority_warned(ix_contribs[k], label))
         ix.pop('drop', None)  # strip any op marker
         merged['indexes'].append(ix)
     # ── comment: logical authority, present-only; null/"" = delete (§7.5) ──
     cm = [(_LOGICAL_RANK[kind], order, frag['comment'])
           for kind, order, frag in contribs if 'comment' in frag]
     if cm:
-        val = _pick_by_authority(cm)
+        val = _pick_by_authority_warned(cm, f'{tname}.comment')
         if val:  # a non-empty string; null/"" resolves to "no comment"
             merged['comment'] = val
     # ── associations: Phase A identity merge (§7.6/§8) ──
@@ -5996,16 +6014,29 @@ def _check_config_indexes(indexes, path, where):
         _check_bool(ix.get('unique'), 'unique' in ix, path, f'{iw}.unique')
 
 def _config_assoc_identity(a):
-    """Stable identity for an association fragment/drop (§8.1), used only for
-    Config-internal duplicate detection. FK-holding side is keyed by its FK
-    column + target + name; a collection/inverse (no FK) by type + target + name.
-    `name` is part of BOTH so it aligns with the runtime association_key (6b):
-    the Rails alias pattern (`user` AND `author`, both on `user_id` -> `users`)
-    is two distinct associations and must not be rejected as a duplicate. An
-    exact duplicate (same name+fk+target) is still caught."""
-    if a.get('foreign_key'):
-        return ('fk', a.get('target'), a.get('foreign_key'), a.get('name'))
-    return ('rel', a.get('type'), a.get('target'), a.get('name'))
+    """Stable identity for an association fragment/drop, used only for
+    Config-internal duplicate detection. Mirrors the runtime association_key
+    (§8.1) so the two never disagree about what counts as "the same" edge:
+    role (owner_fk / collection / inverse_one / named) + target + FK column +
+    name, PLUS `through` and `polymorphic` when present. Including the last two
+    is what lets two associations that share type/name/target but differ only in
+    `through` (e.g. `through: orders` vs `through: archived_orders`) coexist —
+    the runtime treats them as distinct, so the syntactic check must too. `name`
+    is part of the identity for every role, so the Rails alias pattern (`user`
+    AND `author`, both on `user_id` -> `users`) is not a duplicate; an exact
+    duplicate is still caught. Uses .get() throughout so a DropOperation (which
+    may omit name/type) is handled by the same rule."""
+    role = ('owner_fk' if a.get('foreign_key')
+            else 'collection' if a.get('type') in ('has_many', 'has_and_belongs_to_many')
+            else 'inverse_one' if a.get('type') == 'has_one'
+            else 'named')
+    fk = frozenset([a['foreign_key']]) if a.get('foreign_key') else frozenset()
+    ident = [role, a.get('target'), fk, a.get('name')]
+    if a.get('through'):
+        ident.append(('through', a['through']))
+    if a.get('polymorphic'):
+        ident.append(('polymorphic', True))
+    return tuple(ident)
 
 def _check_config_associations(assocs, path, where):
     if not isinstance(assocs, list):
