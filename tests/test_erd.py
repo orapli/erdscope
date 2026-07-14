@@ -893,10 +893,11 @@ class TestGeneration(unittest.TestCase):
         self.assertEqual(set(data['tables']), {'posts', 'tags'})
 
     def test_cli_requires_database_url(self):
+        # a bare path (not a URL) as the positional arg has no recognized scheme
         res = subprocess.run([sys.executable, str(ROOT / 'erd.py'),
                               str(FIXTURE)], capture_output=True, text=True)
         self.assertNotEqual(res.returncode, 0)
-        self.assertIn('database URL is required', res.stderr)
+        self.assertIn('unrecognized database URL scheme', res.stderr)
 
 
 class TestExcel(unittest.TestCase):
@@ -1625,6 +1626,89 @@ class TestPostgresConfigUrl(unittest.TestCase):
         url = erd.assemble_config_url(
             {'engine': 'postgres', 'database': 'shop', 'port': 6432})
         self.assertEqual(url, 'postgres://127.0.0.1:6432/shop')
+
+
+class TestSQLiteAdapter(unittest.TestCase):
+    """The SQLite adapter reads a real file via the sqlite3 stdlib module (so
+    this is a genuine end-to-end DB test, no container needed) and shapes it
+    into the same IR as the other engines."""
+    def setUp(self):
+        import sqlite3
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, 'shop.db')
+        conn = sqlite3.connect(self.path)
+        conn.executescript("""
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                name TEXT NOT NULL);
+            CREATE TABLE posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                title VARCHAR(200) NOT NULL DEFAULT 'untitled');
+            CREATE INDEX idx_posts_user ON posts (user_id);
+            CREATE TABLE profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+                bio TEXT);
+            CREATE VIEW active_users AS SELECT * FROM users;
+        """)
+        conn.commit()
+        conn.close()
+
+    def _url(self):
+        return f'sqlite:///{self.path}'
+
+    def test_url_path_parsing(self):
+        self.assertEqual(erd.sqlite_path_from_url('sqlite:///rel.db'), 'rel.db')
+        self.assertEqual(erd.sqlite_path_from_url('sqlite:////abs/x.db'), '/abs/x.db')
+
+    def test_tables_and_views(self):
+        t = erd.parse_sqlite(self._url())
+        # the VIEW and internal sqlite_* tables are excluded
+        self.assertEqual(sorted(t), ['posts', 'profiles', 'users'])
+
+    def test_columns_types_pk_default_and_autoincrement(self):
+        t = erd.parse_sqlite(self._url())
+        idc = next(c for c in t['users']['columns'] if c['name'] == 'id')
+        self.assertTrue(idc['primary'])
+        self.assertFalse(idc['nullable'])         # PK forced NOT NULL
+        self.assertEqual(idc['extra'], 'autoincrement')
+        self.assertEqual(t['users']['primary_key'], 'id')
+        title = next(c for c in t['posts']['columns'] if c['name'] == 'title')
+        self.assertEqual(title['type'], 'string')  # VARCHAR -> string shorthand
+        self.assertEqual(title['default'], 'untitled')  # quotes stripped
+
+    def test_foreign_keys_and_one_to_one(self):
+        t = erd.parse_sqlite(self._url())
+        posts = [(a['type'], a['target'], a.get('foreign_key'))
+                 for a in t['posts']['associations']]
+        self.assertIn(('belongs_to', 'users', 'user_id'), posts)
+        # profiles.user_id is UNIQUE -> 1:1, promoted to has_one
+        prof = [(a['type'], a['target']) for a in t['profiles']['associations']]
+        self.assertEqual(prof, [('has_one', 'users')])
+
+    def test_missing_file_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.parse_sqlite('sqlite:///' + os.path.join(self.tmp.name, 'nope.db'))
+        self.assertIn('not found', str(cm.exception))
+
+    def test_db_provider_dispatches_to_sqlite(self):
+        r = erd.db_provider(self._url())
+        self.assertEqual(r['source']['provider'], 'sqlite')
+        self.assertIn('users', r['tables'])
+
+    def test_end_to_end_main_generates_html(self):
+        out = os.path.join(self.tmp.name, 'out.html')
+        argv = sys.argv
+        self.addCleanup(lambda: setattr(sys, 'argv', argv))
+        sys.argv = ['erd.py', self._url(), '-o', out, '--no-config']
+        erd.main()
+        with open(out, encoding='utf-8') as f:
+            html = f.read()
+        self.assertIn('"posts"', html)
+        self.assertIn('<title>shop — ERD</title>', html)  # title from the db filename
 
 
 if __name__ == '__main__':

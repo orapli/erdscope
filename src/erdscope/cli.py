@@ -3,12 +3,14 @@ def main():
         description='Generate an interactive ER diagram from a live database, '
                     'optionally enriched with association semantics parsed from '
                     'application code (Rails / Prisma / Django)')
-    p.add_argument('database', metavar='mysql://user@host/db | postgres://user@host/db',
+    p.add_argument('database',
+                   metavar='mysql://user@host/db | postgres://user@host/db | sqlite:///file.db',
                    nargs='?',
-                   help='Database connection URL (postgres:// takes an optional '
-                        '?schema=name, default public). Can also be assembled from '
-                        '`engine`/`host`/`port`/`user`/`database` in the config file (no '
-                        'password field there — use MYSQL_PWD/PGPASSWORD, '
+                   help='Database connection URL. postgres:// takes an optional '
+                        '?schema=name (default public); sqlite:///path/to/app.db reads a '
+                        'local file (no server, nothing to install). MySQL/Postgres can '
+                        'also be assembled from `engine`/`host`/`port`/`user`/`database` in '
+                        'the config file (no password field there — use MYSQL_PWD/PGPASSWORD, '
                         '~/.my.cnf/~/.pgpass, or the interactive prompt). A read-only '
                         'account is recommended')
     # SUPPRESS on every config-mirrorable flag so we can tell "explicitly
@@ -81,10 +83,12 @@ def main():
         scheme = url.split('://', 1)[0]
         adapter_cls = db_adapter_for(scheme)
         if adapter_cls is None:
-            sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
-                     'as the CLI argument, or set `database` (and optionally engine/host/user/'
-                     'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
-                     'postgres://readonly@127.0.0.1:5432/myapp. Or run with no database at '
+            known = ', '.join(f'{s}://' for s in sorted(DB_ADAPTERS))
+            sys.exit(f'Error: unrecognized database URL scheme {scheme!r} (known: {known}). '
+                     'Pass it as the CLI argument, or set `database` (and optionally engine/'
+                     'host/user/port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/'
+                     'myapp, postgres://readonly@127.0.0.1:5432/myapp, or sqlite:///./app.db. '
+                     'A custom scheme needs its --adapter plugin. Or run with no database at '
                      'all by supplying --models and/or a config file with a `tables:` section')
         engine_name = adapter_cls.label or adapter_cls.name or scheme
 
