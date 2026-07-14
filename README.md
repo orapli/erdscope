@@ -4,19 +4,20 @@
 [![PyPI](https://img.shields.io/pypi/v/erdscope)](https://pypi.org/project/erdscope/)
 
 Generate a **self-contained, interactive ER diagram** — and an **Excel table-definition
-workbook** — from a live MySQL or PostgreSQL database, with a single-file,
+workbook** — from a live MySQL, PostgreSQL, or SQLite database, with a single-file,
 zero-dependency Python CLI.
 
 ```bash
 pip install erdscope
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
+erdscope sqlite:///path/to/app.db -o erd.html
 ```
 
 **Three input sources — any one of them is enough** (a database is no longer required):
 
-- **Database** (MySQL / PostgreSQL) — the source of truth for tables, columns, comments,
-  indexes, and real foreign keys.
+- **Database** (MySQL / PostgreSQL / SQLite) — the source of truth for tables, columns,
+  comments, indexes, and real foreign keys.
 - **Application code** (`--models`: Rails / Prisma / Django) — adds association semantics
   the database cannot express (`has_many :through`, polymorphic, ...), and can stand on
   its own when there is no DB to point at.
@@ -58,6 +59,9 @@ erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 # PostgreSQL: same thing (schema defaults to public; override with ?schema=name)
 erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
 
+# SQLite: just point at the file (no server, nothing to install — uses stdlib sqlite3)
+erdscope sqlite:///path/to/app.db -o erd.html
+
 # enrich with association semantics parsed from application code (optional)
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
         --models /path/to/rails/app -o erd.html
@@ -75,6 +79,10 @@ erdscope --config schema.yml -o erd.html
 # multiple code sources merge in order, later wins (--models is repeatable)
 erdscope --models /path/to/rails/app --models /path/to/schema.prisma -o erd.html
 ```
+
+Want to try it right now with no database of your own? A ready-to-run SQLite
+sample ships in [`examples/`](examples/) — `python3 erd.py
+sqlite:///examples/demo_shop.db -o shop.html`. See [examples/README.md](examples/README.md).
 
 Behind a bastion? Open an SSH tunnel first and point at localhost:
 
@@ -177,6 +185,7 @@ is missing. If you installed via pip, extras pull them in for you:
 |---|---|---|
 | [PyMySQL](https://pypi.org/project/PyMySQL/) | MySQL connections | Falls back to shelling out to the `mysql` CLI (must be on `PATH`) |
 | [psycopg](https://pypi.org/project/psycopg/) (or psycopg2) | PostgreSQL connections | Falls back to shelling out to the `psql` CLI (must be on `PATH`) |
+| _(none)_ | **SQLite** connections (`sqlite:///file.db`) | Uses Python's built-in `sqlite3` — always available, nothing to install or fall back to |
 | [PyYAML](https://pypi.org/project/PyYAML/) | Reading a `.yml`/`.yaml` config file | A `.json` config still works with no dependency; pointing `--config`/auto-discovery at a `.yml`/`.yaml` file without PyYAML installed exits with a clear error |
 
 Excel output (`--excel`) needs none of these — it's written directly via the stdlib

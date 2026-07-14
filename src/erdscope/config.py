@@ -411,9 +411,15 @@ def _resolve_title(config, url, fw_root, output):
     if config.get('title'):
         return config['title']
     if url:
-        db = urlparse(url).path.lstrip('/')
-        if db:
-            return db
+        u = urlparse(url)
+        if u.scheme == 'sqlite':
+            stem = Path(u.path).stem   # sqlite:///path/to/shop.db -> "shop"
+            if stem:
+                return stem
+        else:
+            db = u.path.lstrip('/')
+            if db:
+                return db
     if fw_root is not None:
         return _framework_project_name(fw_root)
     if output:

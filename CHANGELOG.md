@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- SQLite support: `erdscope sqlite:///path/to/app.db`. Reads tables, columns,
+  primary keys, foreign keys, unique/1:1 constraints, and indexes via Python's
+  built-in `sqlite3` module — zero dependencies, nothing to install. A ready-to-run
+  sample database ships in `examples/` (`examples/demo_shop.db`), with
+  `examples/README.md` explaining how to try it
+- Pluggable database adapters and framework overlays: engines and code parsers are
+  now registered classes (`DBAdapter` / `FrameworkOverlay`). Load a custom one at
+  runtime from a plugin file with `--adapter path/to/plugin.py` (or config
+  `adapters:`) — no rebuild, works against the single-file `erd.py` or the pip install
+- Three input sources, any one sufficient (a database is no longer required): the
+  DB, application code (`--models`), and a config `tables:` schema now merge as
+  layered providers (database → code → config). Config can declare or patch a full
+  schema — add/override/drop tables, columns, indexes, and associations — with
+  two-phase (syntactic + semantic) validation
+- `--models` is repeatable and merges multiple frameworks in order
+
+### Changed
+
+- `erd.py` is now a build artifact assembled from split sources under `src/erdscope/`
+  by `tools/build_single_file.py` (CI verifies it stays in sync). Distribution is
+  unchanged: still a single, zero-dependency file
+
 ## [0.2.0] - 2026-07-10
 
 ### Added
