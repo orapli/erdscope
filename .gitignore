@@ -6,6 +6,9 @@ mastodon/
 __pycache__/
 HANDOFF.md
 COLLAB_*.md
+# internal design/working docs (kept local, like HANDOFF.md above)
+PRODUCT_REVIEW.md
+REFACTOR_PLAN.md
 dist/
 build/
 *.egg-info/
