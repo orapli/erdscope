@@ -1,3 +1,15 @@
+# ---------------------------------------------------------------------------
+# Layered IR merge — Phase A (identity merge) + Phase B (reconcile_db_fks)
+# REFACTOR_PLAN.md §7 (field rules), §8 (association identity), §9 (provenance).
+#
+# The pipeline builds ProviderResult layers (db / framework / config) and folds
+# them with merge_ir, whose Phase B reconcile_db_fks subsumes the old
+# per-table dedupe pass.
+# ---------------------------------------------------------------------------
+# Field authority as a numeric rank: among the layers that PROVIDE a field
+# (key present — §4: an absent key never participates), pick the value
+# maximizing (rank, spec_order); spec_order is the index in `layers`, so a
+# later layer wins ties (e.g. multiple frameworks -> last one wins).
 _PHYSICAL_RANK = {'config': 3, 'db': 2, 'framework': 1}   # DB is the physical truth
 _LOGICAL_RANK = {'config': 3, 'framework': 2, 'db': 1}    # code owns logical names
 # Column attributes split by authority kind (§7.2). Everything not physical
@@ -13,6 +25,21 @@ def _pick_by_authority(contribs):
     """contribs: list of (rank, spec_order, value). Return the value with the
     greatest (rank, spec_order)."""
     return max(contribs, key=lambda c: (c[0], c[1]))[2]
+
+def _pick_by_authority_warned(contribs, label):
+    """Like _pick_by_authority, but warn when two SAME-rank layers disagree on
+    the value — a silent last-wins among equals (§7/§10). The archetype is two
+    --models frameworks (both kind='framework', so equal physical/logical rank)
+    that each define `t.col` with a different type: the later one wins by spec
+    order, and without this the override is invisible. A lower-rank contributor
+    losing to a higher one is the authority ladder working as designed and never
+    warns. `label` is a human field id like `table.column.type`."""
+    winner = _pick_by_authority(contribs)
+    top = max(c[0] for c in contribs)
+    if any(c[0] == top and c[2] != winner for c in contribs):
+        print(f"Warning: {label} has conflicting values from same-priority "
+              f"sources; using {winner!r}", file=sys.stderr)
+    return winner
 
 def _assoc_role(a):
     """Identity role for an association (§8.1). owner_fk holds the FK column;
@@ -46,10 +73,11 @@ def association_key(source_table, a):
         key.append(('polymorphic', True))
     return tuple(key)
 
-def _merge_column(name, contribs):
+def _merge_column(tname, name, contribs):
     """contribs: list of (kind, spec_order, column_dict) for one column name,
     in layer order. Physical attrs resolve Config>DB>Framework, `comment`
-    resolves Config>Framework>DB, present-only (§7.2)."""
+    resolves Config>Framework>DB, present-only (§7.2). A same-rank disagreement
+    (e.g. two frameworks giving a different `type`) is warned per attribute."""
     out = {'name': name}
     present = set()
     for _, _, c in contribs:
@@ -62,7 +90,7 @@ def _merge_column(name, contribs):
         rank_map = _PHYSICAL_RANK if attr in _PHYSICAL_COL_ATTRS else _LOGICAL_RANK
         cc = [(rank_map[kind], order, c[attr]) for kind, order, c in contribs if attr in c]
         if cc:
-            out[attr] = _pick_by_authority(cc)
+            out[attr] = _pick_by_authority_warned(cc, f'{tname}.{name}.{attr}')
     return out
 
 def _assoc_content_differs(a, b):
@@ -215,12 +243,13 @@ def _merge_table(tname, contribs, layer_sources):
                 col_seen.add(nm)
                 col_order.append(nm)
             col_contribs.setdefault(nm, []).append((kind, order, c))
-    merged['columns'] = [_merge_column(nm, col_contribs[nm])
+    merged['columns'] = [_merge_column(tname, nm, col_contribs[nm])
                          for nm in col_order if nm not in col_drops]
     # ── primary_key: physical authority, present-only (§7.3) ──
     pk = [(_PHYSICAL_RANK[kind], order, frag['primary_key'])
           for kind, order, frag in contribs if 'primary_key' in frag]
-    merged['primary_key'] = _pick_by_authority(pk) if pk else None
+    merged['primary_key'] = (_pick_by_authority_warned(pk, f'{tname}.primary_key')
+                             if pk else None)
     # ── indexes: keyed by name (unnamed -> tuple(columns), NOT unique — §7.4);
     #    whole-index physical authority; union across keys ──
     ix_replace = replace('indexes_mode')
@@ -241,14 +270,15 @@ def _merge_table(tname, contribs, layer_sources):
     for k in ix_order:
         if k in ix_drops:
             continue
-        ix = copy.deepcopy(_pick_by_authority(ix_contribs[k]))
+        label = f'{tname} index {k if isinstance(k, str) else "(" + ", ".join(k) + ")"}'
+        ix = copy.deepcopy(_pick_by_authority_warned(ix_contribs[k], label))
         ix.pop('drop', None)  # strip any op marker
         merged['indexes'].append(ix)
     # ── comment: logical authority, present-only; null/"" = delete (§7.5) ──
     cm = [(_LOGICAL_RANK[kind], order, frag['comment'])
           for kind, order, frag in contribs if 'comment' in frag]
     if cm:
-        val = _pick_by_authority(cm)
+        val = _pick_by_authority_warned(cm, f'{tname}.comment')
         if val:  # a non-empty string; null/"" resolves to "no comment"
             merged['comment'] = val
     # ── associations: Phase A identity merge (§7.6/§8) ──

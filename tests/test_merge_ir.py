@@ -568,6 +568,53 @@ class TestConfigOverrideWarning(unittest.TestCase):
         self.assertNotIn('framework association', err)
 
 
+class TestSameRankFieldConflictWarning(unittest.TestCase):
+    """§7/§10: two SAME-priority layers (e.g. two --models frameworks) disagreeing
+    on a field's value is a silent last-wins — warn, don't hide it. A lower-rank
+    layer losing to a higher one is the authority ladder and must NOT warn."""
+    def _merge_capturing_stderr(self, layers):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            merged = erd.merge_ir(layers)
+        return merged, buf.getvalue()
+
+    def test_two_frameworks_conflicting_column_type_warns_and_later_wins(self):
+        prisma = {'t': {'columns': [col('x', type='integer')], 'associations': []}}
+        django = {'t': {'columns': [col('x', type='uuid')], 'associations': []}}
+        merged, err = self._merge_capturing_stderr(
+            [fw_layer(prisma, 'prisma'), fw_layer(django, 'django')])
+        self.assertIn('t.x.type', err)
+        self.assertIn('conflicting values', err)
+        self.assertIn('uuid', err)  # the winner (later layer)
+        x = next(c for c in merged['t']['columns'] if c['name'] == 'x')
+        self.assertEqual(x['type'], 'uuid')
+
+    def test_db_vs_framework_different_rank_does_not_warn(self):
+        # DB and framework have DIFFERENT ranks, so DB's physical type winning
+        # is the ladder working — no warning, even though the values differ.
+        db = {'t': {'columns': [col('x', type='integer')], 'associations': []}}
+        fw = {'t': {'columns': [col('x', type='uuid')], 'associations': []}}
+        merged, err = self._merge_capturing_stderr([db_layer(db), fw_layer(fw)])
+        self.assertNotIn('conflicting values', err)
+        x = next(c for c in merged['t']['columns'] if c['name'] == 'x')
+        self.assertEqual(x['type'], 'integer')  # DB wins physical
+
+    def test_two_frameworks_same_value_no_warning(self):
+        prisma = {'t': {'columns': [col('x', type='integer')], 'associations': []}}
+        django = {'t': {'columns': [col('x', type='integer')], 'associations': []}}
+        _, err = self._merge_capturing_stderr(
+            [fw_layer(prisma, 'prisma'), fw_layer(django, 'django')])
+        self.assertNotIn('conflicting values', err)
+
+    def test_two_frameworks_conflicting_primary_key_warns(self):
+        fw1 = {'t': {'columns': [col('a')], 'associations': [], 'primary_key': 'a'}}
+        fw2 = {'t': {'columns': [col('a')], 'associations': [], 'primary_key': 'b'}}
+        _, err = self._merge_capturing_stderr(
+            [fw_layer(fw1, 'prisma'), fw_layer(fw2, 'django')])
+        self.assertIn('t.primary_key', err)
+        self.assertIn('conflicting values', err)
+
+
 class TestPrimaryKeyAuthoritative(unittest.TestCase):
     """P1-c: a config layer's primary_key is authoritative/COMPLETE — it resets
     other columns' `primary` flags. A DB/framework PK only ever sets True (safe

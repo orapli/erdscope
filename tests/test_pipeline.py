@@ -598,5 +598,164 @@ class TestPipelineNoSchemaSourceErrors(_NoDBDriver):
         self.assertEqual(self.calls, [])
 
 
+class TestDBAdapterRegistry(unittest.TestCase):
+    """The DBAdapter base + scheme registry: register/resolve, db_provider
+    dispatch through the registry, and the ABC contract."""
+    def setUp(self):
+        # snapshot the registry so a test's registration can't leak
+        self._snapshot = dict(erd.DB_ADAPTERS)
+        self.addCleanup(lambda: (erd.DB_ADAPTERS.clear(),
+                                 erd.DB_ADAPTERS.update(self._snapshot)))
+
+    def test_builtins_registered_with_aliases(self):
+        self.assertIs(erd.db_adapter_for('mysql'), erd.MySQLAdapter)
+        self.assertIs(erd.db_adapter_for('postgres'), erd.PostgresAdapter)
+        self.assertIs(erd.db_adapter_for('postgresql'), erd.PostgresAdapter)
+        self.assertIs(erd.db_adapter_for('MySQL'), erd.MySQLAdapter)  # case-insensitive
+        self.assertIsNone(erd.db_adapter_for('mongodb'))
+
+    def test_base_is_abstract(self):
+        with self.assertRaises(TypeError):
+            erd.DBAdapter()
+
+    def test_register_and_dispatch(self):
+        @erd.register_adapter
+        class DemoAdapter(erd.DBAdapter):
+            schemes = ('demo',)
+            name = 'demo'
+            label = 'Demo'
+            def fetch(self, url):
+                return erd.mysql_ir([('t', '')],
+                                    [('t', 'id', 'integer', 'integer', 'NO', 'PRI', '', '', '')],
+                                    [], [])
+        self.assertIs(erd.db_adapter_for('demo'), DemoAdapter)
+        result = erd.db_provider('demo://host/db')
+        self.assertEqual(result['source'], {'kind': 'db', 'provider': 'demo',
+                                            'location': 'demo://host/db'})
+        self.assertIn('t', result['tables'])
+
+    def test_db_provider_unknown_scheme_errors(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.db_provider('mongodb://h/d')
+        self.assertIn('mongodb', str(cm.exception))
+
+
+class TestFrameworkOverlayRegistry(unittest.TestCase):
+    """The FrameworkOverlay base + registry: register/detect, dispatch through
+    framework_provider, priority ordering, and the ABC contract."""
+    def setUp(self):
+        self._snapshot = list(erd.FRAMEWORK_OVERLAYS)
+        self.addCleanup(lambda: erd.FRAMEWORK_OVERLAYS.__setitem__(
+            slice(None), self._snapshot))
+
+    def test_builtins_detect(self):
+        self.assertEqual(erd.detect_code_source(FIXTURE_RAILS), 'rails')
+        self.assertEqual(erd.detect_code_source(FIXTURE_PRISMA), 'prisma')
+        self.assertEqual(erd.detect_code_source(FIXTURE_DJANGO), 'django')
+        self.assertIsNone(erd.detect_code_source(Path(__file__).resolve().parent))
+
+    def test_base_is_abstract(self):
+        with self.assertRaises(TypeError):
+            erd.FrameworkOverlay()
+
+    def test_register_detect_and_build(self):
+        @erd.register_overlay
+        class MarkerOverlay(erd.FrameworkOverlay):
+            name = 'marker'
+            priority = 0  # runs before the built-ins
+            def detect(self, root):
+                return root.is_dir() and (root / '.marker').exists()
+            def build(self, root, table_map):
+                return erd.make_provider_result('framework', 'marker',
+                    {'gizmos': {'associations': []}}, location=str(root))
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / '.marker').write_text('')
+            self.assertEqual(erd.detect_code_source(Path(d)), 'marker')
+            result = erd.framework_provider(Path(d))
+            self.assertEqual(result['source']['provider'], 'marker')
+            self.assertIn('gizmos', result['tables'])
+
+    def test_undetected_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(SystemExit) as cm:
+                erd.framework_provider(Path(d))
+            self.assertIn('could not detect', str(cm.exception))
+
+
+class TestAdapterPlugins(_NoDBDriver):
+    """--adapter / config `adapters`: a plugin file that registers a custom
+    DBAdapter makes its URL scheme usable end-to-end, and the built-in
+    parse_mysql/parse_postgres spies confirm no built-in DB path is touched."""
+    def setUp(self):
+        super().setUp()
+        self._snapshot = dict(erd.DB_ADAPTERS)
+        self._overlays = list(erd.FRAMEWORK_OVERLAYS)
+        self.addCleanup(lambda: (erd.DB_ADAPTERS.clear(),
+                                 erd.DB_ADAPTERS.update(self._snapshot)))
+        self.addCleanup(lambda: erd.FRAMEWORK_OVERLAYS.__setitem__(
+            slice(None), self._overlays))
+
+    _PLUGIN = (
+        "from erd import DBAdapter, register_adapter, mysql_ir\n"
+        "@register_adapter\n"
+        "class FooAdapter(DBAdapter):\n"
+        "    schemes = ('foo',)\n"
+        "    name = 'foo'\n"
+        "    label = 'Foo'\n"
+        "    def fetch(self, url):\n"
+        "        return mysql_ir([('widgets', '')],\n"
+        "            [('widgets', 'id', 'integer', 'integer', 'NO', 'PRI', '', '', '')], [], [])\n"
+    )
+
+    def test_cli_adapter_registers_scheme_and_runs(self):
+        plug, out = self._p('foo_adapter.py'), self._p('out.html')
+        Path(plug).write_text(self._PLUGIN)
+        self._run('foo://host/db', '--adapter', plug, '--no-config', '-o', out)
+        self.assertEqual(self.calls, [])  # no built-in DB path touched
+        data = self._data(out)['tables']
+        self.assertIn('widgets', data)
+        self.assertIn('<title>db — ERD</title>', Path(out).read_text())
+
+    def test_config_adapters_registers_scheme(self):
+        plug, cfg, out = self._p('foo_adapter.py'), self._p('c.json'), self._p('out.html')
+        Path(plug).write_text(self._PLUGIN)
+        Path(cfg).write_text(json.dumps({'adapters': plug, 'database': 'db',
+                                         'engine': 'mysql'}))
+        # config supplies the adapter; the CLI URL uses its scheme
+        self._run('foo://host/db', '--config', cfg, '-o', out)
+        self.assertEqual(self.calls, [])
+        self.assertIn('widgets', self._data(out)['tables'])
+
+    def test_missing_plugin_errors(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._run('foo://host/db', '--adapter', self._p('nope.py'), '--no-config',
+                      '-o', self._p('out.html'))
+        self.assertIn('nope.py', str(cm.exception))
+
+    def test_plugin_can_register_framework_overlay(self):
+        # the same plugin mechanism registers a custom FrameworkOverlay, driven
+        # off a --models path with no DB at all
+        plug, out = self._p('gadget_overlay.py'), self._p('out.html')
+        proj = Path(self._p('gadget_project'))
+        proj.mkdir()
+        (proj / '.gadget').write_text('')
+        Path(plug).write_text(
+            "from erd import FrameworkOverlay, register_overlay, make_provider_result\n"
+            "@register_overlay\n"
+            "class GadgetOverlay(FrameworkOverlay):\n"
+            "    name = 'gadget'\n"
+            "    priority = 0\n"
+            "    def detect(self, root):\n"
+            "        return root.is_dir() and (root / '.gadget').exists()\n"
+            "    def build(self, root, table_map):\n"
+            "        return make_provider_result('framework', 'gadget',\n"
+            "            {'gadgets': {'columns': [{'name': 'id', 'type': 'integer',\n"
+            "             'nullable': False, 'primary': True}], 'associations': [],\n"
+            "             'primary_key': 'id'}}, location=str(root))\n")
+        self._run('--adapter', plug, '--models', str(proj), '--no-config', '-o', out)
+        self.assertEqual(self.calls, [])
+        self.assertIn('gadgets', self._data(out)['tables'])
+
+
 if __name__ == '__main__':
     unittest.main()

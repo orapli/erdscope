@@ -20,6 +20,12 @@ def main():
                    help='Merge association semantics parsed from application code '
                         '(Rails project/app/models dir, schema.prisma, or Django project). '
                         'Repeatable to merge several frameworks; later ones win on ties')
+    p.add_argument('--adapter', metavar='PATH', action='append', default=argparse.SUPPRESS,
+                   help='Load a Python plugin file that registers a custom database '
+                        'adapter (subclass DBAdapter + @register_adapter) and/or a '
+                        'framework overlay (subclass FrameworkOverlay + @register_overlay). '
+                        'The new URL scheme / --models project kind then works like the '
+                        'built-ins. Repeatable; also settable as config `adapters`')
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
@@ -57,6 +63,15 @@ def main():
     args = p.parse_args()
 
     config = load_config(args)
+    # Load any custom DB adapters (--adapter / config `adapters`) before the URL
+    # is classified, so their schemes are registered in time. Config entries
+    # first, then CLI ones — a later entry overriding a scheme wins (§ plugins).
+    cfg_adapters = config.get('adapters') or []
+    if isinstance(cfg_adapters, str):
+        cfg_adapters = [cfg_adapters]
+    adapter_paths = list(cfg_adapters) + list(getattr(args, 'adapter', []) or [])
+    if adapter_paths:
+        load_adapter_plugins(adapter_paths)
     url = args.database or assemble_config_url(config)
     # DB is optional now (§10): a schema can also come from --models and/or
     # config.tables. Only a NON-EMPTY url with an unrecognized scheme is an
@@ -64,16 +79,14 @@ def main():
     engine_name = None
     if url:
         scheme = url.split('://', 1)[0]
-        if scheme == 'mysql':
-            engine_name = 'MySQL'
-        elif scheme in ('postgres', 'postgresql'):
-            engine_name = 'PostgreSQL'
-        else:
+        adapter_cls = db_adapter_for(scheme)
+        if adapter_cls is None:
             sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
                      'as the CLI argument, or set `database` (and optionally engine/host/user/'
                      'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
                      'postgres://readonly@127.0.0.1:5432/myapp. Or run with no database at '
                      'all by supplying --models and/or a config file with a `tables:` section')
+        engine_name = adapter_cls.label or adapter_cls.name or scheme
 
     if hasattr(args, 'table_map'):
         tm = {}

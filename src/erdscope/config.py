@@ -102,7 +102,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -137,6 +137,19 @@ def _check_config_types(config, path):
     for key in ('only', 'exclude'):
         if key in config and any(not isinstance(x, str) for x in config[key]):
             sys.exit(f'Error: {path} `{key}` must be a list of strings')
+    # adapters: a single path (str) or a list of paths (str) — custom DB
+    # adapter plugin files, same str-or-list shape as `models`
+    if 'adapters' in config:
+        a = config['adapters']
+        if isinstance(a, str):
+            pass
+        elif isinstance(a, list):
+            for i, item in enumerate(a):
+                if not isinstance(item, str):
+                    sys.exit(f'Error: {path} `adapters[{i}]` must be a string, got {item!r}')
+        else:
+            sys.exit(f'Error: {path} `adapters` must be a string or a list of strings, '
+                     f'got {a!r}')
     if 'table_map' in config and any(not isinstance(v, str) for v in config['table_map'].values()):
         sys.exit(f'Error: {path} `table_map` values must all be strings')
     if 'relations' in config and any(not isinstance(r, dict) for r in config['relations']):
@@ -248,16 +261,29 @@ def _check_config_indexes(indexes, path, where):
         _check_bool(ix.get('unique'), 'unique' in ix, path, f'{iw}.unique')
 
 def _config_assoc_identity(a):
-    """Stable identity for an association fragment/drop (§8.1), used only for
-    Config-internal duplicate detection. FK-holding side is keyed by its FK
-    column + target + name; a collection/inverse (no FK) by type + target + name.
-    `name` is part of BOTH so it aligns with the runtime association_key (6b):
-    the Rails alias pattern (`user` AND `author`, both on `user_id` -> `users`)
-    is two distinct associations and must not be rejected as a duplicate. An
-    exact duplicate (same name+fk+target) is still caught."""
-    if a.get('foreign_key'):
-        return ('fk', a.get('target'), a.get('foreign_key'), a.get('name'))
-    return ('rel', a.get('type'), a.get('target'), a.get('name'))
+    """Stable identity for an association fragment/drop, used only for
+    Config-internal duplicate detection. Mirrors the runtime association_key
+    (§8.1) so the two never disagree about what counts as "the same" edge:
+    role (owner_fk / collection / inverse_one / named) + target + FK column +
+    name, PLUS `through` and `polymorphic` when present. Including the last two
+    is what lets two associations that share type/name/target but differ only in
+    `through` (e.g. `through: orders` vs `through: archived_orders`) coexist —
+    the runtime treats them as distinct, so the syntactic check must too. `name`
+    is part of the identity for every role, so the Rails alias pattern (`user`
+    AND `author`, both on `user_id` -> `users`) is not a duplicate; an exact
+    duplicate is still caught. Uses .get() throughout so a DropOperation (which
+    may omit name/type) is handled by the same rule."""
+    role = ('owner_fk' if a.get('foreign_key')
+            else 'collection' if a.get('type') in ('has_many', 'has_and_belongs_to_many')
+            else 'inverse_one' if a.get('type') == 'has_one'
+            else 'named')
+    fk = frozenset([a['foreign_key']]) if a.get('foreign_key') else frozenset()
+    ident = [role, a.get('target'), fk, a.get('name')]
+    if a.get('through'):
+        ident.append(('through', a['through']))
+    if a.get('polymorphic'):
+        ident.append(('polymorphic', True))
+    return tuple(ident)
 
 def _check_config_associations(assocs, path, where):
     if not isinstance(assocs, list):

@@ -72,7 +72,7 @@ they are not yet used by the main path.
     #   config relations/associations -> manual ; --infer-fk post-pass -> inferred
     #   legacy flag mapping: db_fk/inferred/manual -> {<flag>: True}; declared -> {}
 """
-import ast, copy, getpass, os, subprocess, sys, json, re, argparse
+import abc, ast, copy, getpass, os, subprocess, sys, json, re, argparse
 from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse
@@ -152,63 +152,103 @@ SQL_TYPES = {
     'boolean': 'boolean', 'jsonb': 'jsonb', 'json': 'json', 'uuid': 'uuid',
     'bytea': 'binary', 'blob': 'binary', 'longblob': 'binary', 'inet': 'inet',
 }
-
 # ---------------------------------------------------------------------------
-# MySQL adapter (information_schema via PyMySQL or the mysql CLI)
+# Database adapters — the DB layer's pluggable "URL scheme -> IR" surface.
+#
+# A DBAdapter turns a connection URL into the IR (the `tables` dict every
+# downstream step consumes). The built-in engines live in the sibling db/*.py
+# fragments — one file per engine — and each @register_adapter's its class under
+# the URL scheme(s) it answers to. Adding an engine is "drop a db/<name>.py that
+# subclasses DBAdapter and registers itself"; the build picks the folder up
+# automatically (tools/build_single_file.py), and users can register the very
+# same way at run time from a --adapter plugin file, without editing erdscope.
+#
+# This base file also holds the machinery the built-in adapters share: the
+# information_schema-shaped IR builder (mysql_ir), the "is this FK 1:1" test,
+# and the tab-separated-output unescaping the CLI fallbacks need. Those stay
+# module-level free functions (not methods) on purpose — the test suite
+# monkeypatches them by name, and gen_demo calls erd.mysql_ir directly.
 # ---------------------------------------------------------------------------
-def mysql_query_rows(url, sql):
-    """Run a query and return rows as tuples of strings ('' for NULL).
-    Prefers PyMySQL when installed; otherwise shells out to the mysql CLI,
-    so the tool itself stays dependency-free."""
-    u = urlparse(url)
-    host, port, db = u.hostname or '127.0.0.1', u.port or 3306, u.path.lstrip('/')
-    try:
-        import pymysql
-    except ImportError:
-        pymysql = None
-    if pymysql:
-        try:
-            conn = pymysql.connect(host=host, port=port, user=u.username,
-                                   password=u.password or os.environ.get('MYSQL_PWD', ''),
-                                   database=db, charset='utf8mb4')
-        except pymysql.err.MySQLError as e:
-            # wrong host/password/db is the single most common daily failure
-            # here — a raw pymysql traceback is far less useful than the
-            # clean one-liner the mysql-CLI path below already gives
-            sys.exit(f'Error: could not connect to MySQL at {host}:{port}: {e}')
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql)
-                return [tuple('' if v is None else str(v) for v in r)
-                        for r in cur.fetchall()]
-        except pymysql.err.MySQLError as e:
-            sys.exit(f'Error: mysql query failed: {e}')
-        finally:
-            conn.close()
-    # No --raw: table/column comments are free-text and commonly contain
-    # tabs or newlines, which --raw's disabled escaping would otherwise
-    # leave as literal bytes in the tab-separated stream — corrupting the
-    # field count on split('\t') and splitting records early on splitlines().
-    # Without --raw, mysql escapes \0 \b \n \r \t \\ and represents NULL as
-    # the literal two-char marker \N, all unescaped below.
-    cmd = ['mysql', '--batch', '--skip-column-names',
-           '--default-character-set=utf8mb4', '-h', host, '-P', str(port)]
-    if u.username:
-        cmd += ['-u', u.username]
-    cmd += [db, '-e', sql]
-    env = dict(os.environ)
-    if u.password:
-        env['MYSQL_PWD'] = u.password  # keep the password off the argv
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
-    except FileNotFoundError:
-        sys.exit('Error: neither PyMySQL nor the mysql CLI is available '
-                 '(pip install pymysql, or install a MySQL client)')
-    if r.returncode != 0:
-        sys.exit(f'Error: mysql query failed: {r.stderr.strip()}')
-    return [tuple(_unescape_mysql_field(v) for v in line.split('\t'))
-            for line in r.stdout.splitlines()]
+DB_ADAPTERS = {}   # url scheme (lower-case) -> DBAdapter subclass
 
+
+def register_adapter(cls):
+    """Class decorator: register a DBAdapter subclass under each of its
+    `schemes` (case-insensitively). Returns the class unchanged, so it can also
+    be used directly. A later registration for a scheme replaces an earlier one,
+    which is exactly what lets a --adapter plugin override a built-in engine."""
+    for scheme in cls.schemes:
+        DB_ADAPTERS[scheme.lower()] = cls
+    return cls
+
+
+class DBAdapter(abc.ABC):
+    """Abstract base for a database adapter: read a live schema from a
+    connection URL and return the IR (the `tables` dict mysql_ir builds).
+
+    To add another engine, subclass this and:
+      * set `schemes` to the URL scheme(s) it answers to, e.g. ('sqlite',);
+      * set `name` to the short provider id recorded in the IR's Source (§5),
+        e.g. 'sqlite' — it appears in provenance and the output;
+      * optionally set `label` to a pretty display name for the progress line
+        (defaults to `name`);
+      * implement fetch(url) to return the IR;
+      * decorate the class with @register_adapter.
+    """
+    schemes = ()      # URL schemes handled, e.g. ('postgres', 'postgresql')
+    name = ''         # provider id for the ProviderResult Source (§5)
+    label = ''        # pretty display name for the "Fetched from …" line
+
+    @abc.abstractmethod
+    def fetch(self, url):
+        """Return the IR (`tables` dict) for `url`. Called once per run."""
+        raise NotImplementedError
+
+
+def db_adapter_for(scheme):
+    """The registered DBAdapter subclass for a URL scheme (case-insensitive),
+    or None if no adapter handles it."""
+    return DB_ADAPTERS.get((scheme or '').lower())
+
+
+def load_adapter_plugins(paths):
+    """Import each user adapter plugin (a --adapter path / config `adapters`
+    entry): a plain Python file that defines a DBAdapter subclass and registers
+    it with @register_adapter. The plugin can `from erd import DBAdapter,
+    register_adapter` — we alias the running erdscope module under both `erd`
+    and `erdscope` first, so the plugin registers into the LIVE registry rather
+    than a freshly re-imported second copy of it. Registration order is config
+    entries then CLI ones, and a later entry overriding a scheme is intentional
+    (last one wins), which is how a plugin can replace a built-in engine."""
+    import importlib.util, types
+    me = sys.modules.get(__name__)
+    if me is None:
+        # Exec'd without being registered in sys.modules (e.g. a test harness):
+        # expose a stand-in whose namespace shares the live globals, so
+        # `from erd import register_adapter` hands back the real, live objects
+        # (register_adapter still mutates the live DB_ADAPTERS).
+        me = types.ModuleType(__name__)
+        me.__dict__.update(globals())
+        sys.modules[__name__] = me
+    for alias in ('erd', 'erdscope'):
+        sys.modules.setdefault(alias, me)
+    for i, path in enumerate(paths):
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            sys.exit(f'Error: --adapter plugin {p} does not exist')
+        spec = importlib.util.spec_from_file_location(f'_erdscope_adapter_{i}', p)
+        if spec is None or spec.loader is None:
+            sys.exit(f'Error: could not load adapter plugin {p}')
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except SystemExit:
+            raise
+        except Exception as e:
+            sys.exit(f'Error: adapter plugin {p} failed to import: {e}')
+
+
+# --- Tab-separated CLI output unescaping (shared by the CLI fallbacks) ------
 _MYSQL_TSV_ESCAPES = {'0': '\0', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', '\\': '\\'}
 # COPY TO STDOUT (the psql CLI path) escapes the same characters plus \f \v
 _COPY_TSV_ESCAPES = {**_MYSQL_TSV_ESCAPES, 'f': '\f', 'v': '\v'}
@@ -303,6 +343,61 @@ def _unique_single_col(table, col):
     """True if `col` is, by itself, the entire column list of some unique
     index on `table` — the DB-level signal for "this FK is really 1:1"."""
     return any(ix['unique'] and ix['columns'] == [col] for ix in table['indexes'])
+# ---------------------------------------------------------------------------
+# MySQL adapter (information_schema via PyMySQL or the mysql CLI)
+# ---------------------------------------------------------------------------
+def mysql_query_rows(url, sql):
+    """Run a query and return rows as tuples of strings ('' for NULL).
+    Prefers PyMySQL when installed; otherwise shells out to the mysql CLI,
+    so the tool itself stays dependency-free."""
+    u = urlparse(url)
+    host, port, db = u.hostname or '127.0.0.1', u.port or 3306, u.path.lstrip('/')
+    try:
+        import pymysql
+    except ImportError:
+        pymysql = None
+    if pymysql:
+        try:
+            conn = pymysql.connect(host=host, port=port, user=u.username,
+                                   password=u.password or os.environ.get('MYSQL_PWD', ''),
+                                   database=db, charset='utf8mb4')
+        except pymysql.err.MySQLError as e:
+            # wrong host/password/db is the single most common daily failure
+            # here — a raw pymysql traceback is far less useful than the
+            # clean one-liner the mysql-CLI path below already gives
+            sys.exit(f'Error: could not connect to MySQL at {host}:{port}: {e}')
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return [tuple('' if v is None else str(v) for v in r)
+                        for r in cur.fetchall()]
+        except pymysql.err.MySQLError as e:
+            sys.exit(f'Error: mysql query failed: {e}')
+        finally:
+            conn.close()
+    # No --raw: table/column comments are free-text and commonly contain
+    # tabs or newlines, which --raw's disabled escaping would otherwise
+    # leave as literal bytes in the tab-separated stream — corrupting the
+    # field count on split('\t') and splitting records early on splitlines().
+    # Without --raw, mysql escapes \0 \b \n \r \t \\ and represents NULL as
+    # the literal two-char marker \N, all unescaped below.
+    cmd = ['mysql', '--batch', '--skip-column-names',
+           '--default-character-set=utf8mb4', '-h', host, '-P', str(port)]
+    if u.username:
+        cmd += ['-u', u.username]
+    cmd += [db, '-e', sql]
+    env = dict(os.environ)
+    if u.password:
+        env['MYSQL_PWD'] = u.password  # keep the password off the argv
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        sys.exit('Error: neither PyMySQL nor the mysql CLI is available '
+                 '(pip install pymysql, or install a MySQL client)')
+    if r.returncode != 0:
+        sys.exit(f'Error: mysql query failed: {r.stderr.strip()}')
+    return [tuple(_unescape_mysql_field(v) for v in line.split('\t'))
+            for line in r.stdout.splitlines()]
 
 def parse_mysql(url):
     db = urlparse(url).path.lstrip('/')
@@ -335,6 +430,16 @@ def parse_mysql(url):
         f"ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX")
     return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
 
+@register_adapter
+class MySQLAdapter(DBAdapter):
+    """MySQL / MariaDB, read from information_schema (PyMySQL, or the mysql CLI
+    as a dependency-free fallback)."""
+    schemes = ('mysql',)
+    name = 'mysql'
+    label = 'MySQL'
+
+    def fetch(self, url):
+        return parse_mysql(url)
 # ---------------------------------------------------------------------------
 # PostgreSQL adapter (pg_catalog via psycopg/psycopg2 or the psql CLI)
 # ---------------------------------------------------------------------------
@@ -472,6 +577,16 @@ def parse_postgres(url):
         f"ORDER BY c.relname, i.relname, k.ord")
     return mysql_ir(table_rows, col_rows, fk_rows, index_rows)
 
+@register_adapter
+class PostgresAdapter(DBAdapter):
+    """PostgreSQL, read from pg_catalog (psycopg/psycopg2, or the psql CLI as a
+    dependency-free fallback)."""
+    schemes = ('postgres', 'postgresql')
+    name = 'postgres'
+    label = 'PostgreSQL'
+
+    def fetch(self, url):
+        return parse_postgres(url)
 # ---------------------------------------------------------------------------
 # Layered IR merge — Phase A (identity merge) + Phase B (reconcile_db_fks)
 # REFACTOR_PLAN.md §7 (field rules), §8 (association identity), §9 (provenance).
@@ -499,6 +614,21 @@ def _pick_by_authority(contribs):
     """contribs: list of (rank, spec_order, value). Return the value with the
     greatest (rank, spec_order)."""
     return max(contribs, key=lambda c: (c[0], c[1]))[2]
+
+def _pick_by_authority_warned(contribs, label):
+    """Like _pick_by_authority, but warn when two SAME-rank layers disagree on
+    the value — a silent last-wins among equals (§7/§10). The archetype is two
+    --models frameworks (both kind='framework', so equal physical/logical rank)
+    that each define `t.col` with a different type: the later one wins by spec
+    order, and without this the override is invisible. A lower-rank contributor
+    losing to a higher one is the authority ladder working as designed and never
+    warns. `label` is a human field id like `table.column.type`."""
+    winner = _pick_by_authority(contribs)
+    top = max(c[0] for c in contribs)
+    if any(c[0] == top and c[2] != winner for c in contribs):
+        print(f"Warning: {label} has conflicting values from same-priority "
+              f"sources; using {winner!r}", file=sys.stderr)
+    return winner
 
 def _assoc_role(a):
     """Identity role for an association (§8.1). owner_fk holds the FK column;
@@ -532,10 +662,11 @@ def association_key(source_table, a):
         key.append(('polymorphic', True))
     return tuple(key)
 
-def _merge_column(name, contribs):
+def _merge_column(tname, name, contribs):
     """contribs: list of (kind, spec_order, column_dict) for one column name,
     in layer order. Physical attrs resolve Config>DB>Framework, `comment`
-    resolves Config>Framework>DB, present-only (§7.2)."""
+    resolves Config>Framework>DB, present-only (§7.2). A same-rank disagreement
+    (e.g. two frameworks giving a different `type`) is warned per attribute."""
     out = {'name': name}
     present = set()
     for _, _, c in contribs:
@@ -548,7 +679,7 @@ def _merge_column(name, contribs):
         rank_map = _PHYSICAL_RANK if attr in _PHYSICAL_COL_ATTRS else _LOGICAL_RANK
         cc = [(rank_map[kind], order, c[attr]) for kind, order, c in contribs if attr in c]
         if cc:
-            out[attr] = _pick_by_authority(cc)
+            out[attr] = _pick_by_authority_warned(cc, f'{tname}.{name}.{attr}')
     return out
 
 def _assoc_content_differs(a, b):
@@ -701,12 +832,13 @@ def _merge_table(tname, contribs, layer_sources):
                 col_seen.add(nm)
                 col_order.append(nm)
             col_contribs.setdefault(nm, []).append((kind, order, c))
-    merged['columns'] = [_merge_column(nm, col_contribs[nm])
+    merged['columns'] = [_merge_column(tname, nm, col_contribs[nm])
                          for nm in col_order if nm not in col_drops]
     # ── primary_key: physical authority, present-only (§7.3) ──
     pk = [(_PHYSICAL_RANK[kind], order, frag['primary_key'])
           for kind, order, frag in contribs if 'primary_key' in frag]
-    merged['primary_key'] = _pick_by_authority(pk) if pk else None
+    merged['primary_key'] = (_pick_by_authority_warned(pk, f'{tname}.primary_key')
+                             if pk else None)
     # ── indexes: keyed by name (unnamed -> tuple(columns), NOT unique — §7.4);
     #    whole-index physical authority; union across keys ──
     ix_replace = replace('indexes_mode')
@@ -727,14 +859,15 @@ def _merge_table(tname, contribs, layer_sources):
     for k in ix_order:
         if k in ix_drops:
             continue
-        ix = copy.deepcopy(_pick_by_authority(ix_contribs[k]))
+        label = f'{tname} index {k if isinstance(k, str) else "(" + ", ".join(k) + ")"}'
+        ix = copy.deepcopy(_pick_by_authority_warned(ix_contribs[k], label))
         ix.pop('drop', None)  # strip any op marker
         merged['indexes'].append(ix)
     # ── comment: logical authority, present-only; null/"" = delete (§7.5) ──
     cm = [(_LOGICAL_RANK[kind], order, frag['comment'])
           for kind, order, frag in contribs if 'comment' in frag]
     if cm:
-        val = _pick_by_authority(cm)
+        val = _pick_by_authority_warned(cm, f'{tname}.comment')
         if val:  # a non-empty string; null/"" resolves to "no comment"
             merged['comment'] = val
     # ── associations: Phase A identity merge (§7.6/§8) ──
@@ -896,6 +1029,23 @@ def reconcile_db_fks(tables):
 # ---------------------------------------------------------------------------
 # Pluralizer / inflector
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Framework overlays — the Framework layer's pluggable "code -> IR" surface.
+#
+# A FrameworkOverlay reads association (and, for Prisma/Django, column)
+# semantics out of application code and returns a ProviderResult that merge_ir
+# folds over the DB layer. The built-in overlays (Rails, Prisma, Django) live in
+# the sibling frameworks/*.py fragments — one per framework — and each
+# @register_overlay's its class. Adding one is "drop a frameworks/<name>.py that
+# subclasses FrameworkOverlay and registers itself"; the build picks the folder
+# up automatically, and a --adapter plugin can register the very same way at run
+# time (register_overlay is exported alongside register_adapter).
+#
+# This base file also holds the machinery the overlays share: the inflector
+# (pluralize / to_snake / class_to_table, used by Rails and by FK inference) and
+# the post-merge *_id FK inference pass. Those stay module-level free functions
+# because the test suite calls them by name.
+# ---------------------------------------------------------------------------
 IRREGULAR = {
     'person':'people','child':'children','mouse':'mice','datum':'data',
     'medium':'media','analysis':'analyses','criterion':'criteria',
@@ -918,7 +1068,411 @@ def class_to_table(name):
     return pluralize(to_snake(name.split('::')[-1]))
 
 # ---------------------------------------------------------------------------
-# Model parser (app/models/**/*.rb)
+# Overlay base class + registry
+# ---------------------------------------------------------------------------
+FRAMEWORK_OVERLAYS = []   # registered FrameworkOverlay subclasses (see priority)
+
+
+def register_overlay(cls):
+    """Class decorator: register a FrameworkOverlay subclass. Returns the class
+    unchanged. Detection consults overlays in `priority` order (see
+    framework_overlay_for), so registration/concat order does not matter."""
+    FRAMEWORK_OVERLAYS.append(cls)
+    return cls
+
+
+class FrameworkOverlay(abc.ABC):
+    """Abstract base for a framework overlay: recognise an application-code
+    project and parse its schema/associations into a ProviderResult.
+
+    To add another framework, subclass this and:
+      * set `name` to the short provider id recorded in the IR's Source (§5),
+        e.g. 'sequelize';
+      * set `priority` if detection ordering matters (lower runs first; the
+        first overlay whose detect() is true wins);
+      * implement detect(root) -> bool over a --models path (a directory, or a
+        single schema file);
+      * implement build(root, table_map) -> ProviderResult (table_map is the
+        Rails table override map; ignore it if not applicable);
+      * decorate the class with @register_overlay.
+    """
+    name = ''
+    priority = 100
+
+    @abc.abstractmethod
+    def detect(self, root):
+        """True if `root` (a --models path) is a project this overlay handles."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def build(self, root, table_map):
+        """Return a framework ProviderResult for `root`."""
+        raise NotImplementedError
+
+
+def framework_overlay_for(root):
+    """The first registered overlay (in priority order) that recognises `root`,
+    or None. Instantiating each is cheap — they hold no state."""
+    for cls in sorted(FRAMEWORK_OVERLAYS, key=lambda c: (c.priority, c.name)):
+        overlay = cls()
+        if overlay.detect(root):
+            return overlay
+    return None
+
+def detect_code_source(root):
+    """Classify a --models path: the `name` of the overlay that recognises it
+    (a Rails app/models dir, a Prisma schema, or a Django project), or None."""
+    overlay = framework_overlay_for(root)
+    return overlay.name if overlay else None
+
+def framework_provider(mroot, table_map=None):
+    """Framework ProviderResult (§5). Finds the overlay that recognises the
+    --models path and delegates to its build(), which resolves the concrete
+    input (the Rails app/models dir, the schema.prisma file, or the Django
+    root) and parses it."""
+    overlay = framework_overlay_for(mroot)
+    if overlay is None:
+        sys.exit(f'Error: could not detect the code kind at {mroot} '
+                 '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
+    return overlay.build(mroot, table_map)
+
+# ---------------------------------------------------------------------------
+# FK column inference — guess relations from `xxx_id` columns (IR post-pass)
+# ---------------------------------------------------------------------------
+def infer_fk_associations(tables):
+    """Infer edges from FK-looking column names even when no association is
+    declared. Pairs already related in either direction are skipped. Marked with
+    provenance 'inferred' and an empty `sources` (no provider layer contributed
+    it — it is a post-merge heuristic derived from *_id column names, not a
+    merge of source layers). Tries the pluralized table name first (Rails
+    convention) and falls back to the singular stem as-is (common with
+    Prisma/other schemas that don't pluralize table names) — whichever
+    actually exists. A column alone under a single-column unique index is
+    inferred as has_one (1:1) instead of belongs_to (default many:1), same
+    signal the real-DB-FK path uses."""
+    added = 0
+    incoming = {}  # table -> set(tables that reference it)
+    for name, t in tables.items():
+        for a in t['associations']:
+            incoming.setdefault(a['target'], set()).add(name)
+    for name, t in tables.items():
+        outgoing = {a['target'] for a in t['associations']}
+        for c in t['columns']:
+            cn = c['name']
+            if not cn.endswith('_id') or c.get('primary'):
+                continue
+            stem = cn[:-3]
+            plural = pluralize(stem)
+            target = plural if plural in tables else stem if stem in tables else None
+            if (target is None or target == name
+                    or target in outgoing              # we already reference it
+                    or target in incoming.get(name, ())):  # it already references us
+                continue
+            assoc_type = 'has_one' if _unique_single_col(t, cn) else 'belongs_to'
+            t['associations'].append({'type': assoc_type, 'name': stem,
+                                      'target': target, 'foreign_key': cn,
+                                      'provenance': 'inferred', 'sources': []})
+            outgoing.add(target)
+            added += 1
+    return added
+# ---------------------------------------------------------------------------
+# Django models parser (**/models.py, AST based)
+# ---------------------------------------------------------------------------
+DJANGO_TYPES = {
+    'CharField': 'string', 'TextField': 'text', 'SlugField': 'string',
+    'EmailField': 'string', 'URLField': 'string', 'FileField': 'string',
+    'ImageField': 'string', 'FilePathField': 'string',
+    'IntegerField': 'integer', 'SmallIntegerField': 'integer',
+    'PositiveIntegerField': 'integer', 'PositiveSmallIntegerField': 'integer',
+    'BigIntegerField': 'bigint', 'PositiveBigIntegerField': 'bigint',
+    'AutoField': 'integer', 'BigAutoField': 'bigint', 'SmallAutoField': 'integer',
+    'FloatField': 'float', 'DecimalField': 'decimal', 'BooleanField': 'boolean',
+    'DateTimeField': 'datetime', 'DateField': 'date', 'TimeField': 'time',
+    'DurationField': 'interval', 'UUIDField': 'uuid', 'JSONField': 'jsonb',
+    'BinaryField': 'binary', 'GenericIPAddressField': 'inet', 'IPAddressField': 'inet',
+}
+DJANGO_REL_FIELDS = {'ForeignKey', 'OneToOneField', 'ManyToManyField'}
+_DJANGO_SKIP_DIRS = {'venv', '.venv', 'env', 'site-packages', 'node_modules',
+                     'migrations', '.git', 'tests', 'staticfiles'}
+
+def parse_django(root):
+    # collect model files: <app>/models.py and <app>/models/*.py
+    files = []
+    for p in sorted(root.rglob('*.py')):
+        if set(p.relative_to(root).parts) & _DJANGO_SKIP_DIRS:
+            continue
+        if p.name == 'models.py':
+            files.append((p.parent.name, p))
+        elif p.parent.name == 'models':
+            files.append((p.parent.parent.name, p))
+
+    # pass 1: collect every class definition
+    classes = {}  # class name -> {app, bases, fields, meta}
+    for app, path in files:
+        try:
+            tree = ast.parse(path.read_text(encoding='utf-8', errors='replace'))
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            bases = [b.attr if isinstance(b, ast.Attribute) else
+                     b.id if isinstance(b, ast.Name) else '' for b in node.bases]
+            meta, fields = {}, []
+            for stmt in node.body:
+                if isinstance(stmt, ast.ClassDef) and stmt.name == 'Meta':
+                    for ms in stmt.body:
+                        if (isinstance(ms, ast.Assign) and len(ms.targets) == 1
+                                and isinstance(ms.targets[0], ast.Name)
+                                and isinstance(ms.value, ast.Constant)):
+                            meta[ms.targets[0].id] = ms.value.value
+                elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                        and isinstance(stmt.targets[0], ast.Name)
+                        and isinstance(stmt.value, ast.Call)):
+                    fn = stmt.value.func
+                    ftype = fn.attr if isinstance(fn, ast.Attribute) else \
+                            fn.id if isinstance(fn, ast.Name) else None
+                    if ftype and (ftype in DJANGO_TYPES or ftype in DJANGO_REL_FIELDS):
+                        fields.append({
+                            'name': stmt.targets[0].id, 'ftype': ftype,
+                            'args': stmt.value.args,
+                            'kw': {k.arg: k.value for k in stmt.value.keywords if k.arg},
+                        })
+            classes[node.name] = {'app': app, 'bases': bases,
+                                  'fields': fields, 'meta': meta}
+
+    # a class is a model if models.Model is among its ancestors (transitively)
+    model_names, changed = set(), True
+    while changed:
+        changed = False
+        for name, c in classes.items():
+            if name not in model_names and (
+                    'Model' in c['bases']
+                    or any(b in model_names for b in c['bases'])):
+                model_names.add(name)
+                changed = True
+
+    def const(v):
+        return v.value if isinstance(v, ast.Constant) else None
+
+    def merged_fields(name, seen=None):
+        # inherit fields from abstract base classes
+        seen = seen or set()
+        if name not in classes or name in seen:
+            return []
+        seen.add(name)
+        out = []
+        for b in classes[name]['bases']:
+            if b in model_names:
+                out.extend(merged_fields(b, seen))
+        out.extend(classes[name]['fields'])
+        return out
+
+    concrete = [n for n in model_names if n in classes
+                and not classes[n]['meta'].get('abstract')
+                and not classes[n]['meta'].get('proxy')]
+    table_of = {n: classes[n]['meta'].get('db_table')
+                or f"{classes[n]['app']}_{n.lower()}" for n in concrete}
+
+    def resolve(node, own):
+        # ForeignKey(Author) / ForeignKey('Author') / ForeignKey('blog.Author') / 'self'
+        if isinstance(node, ast.Name) and node.id in table_of:
+            return table_of[node.id]
+        if isinstance(node, ast.Attribute) and node.attr in table_of:
+            return table_of[node.attr]
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            s = node.value
+            if s == 'self':
+                return table_of.get(own)
+            cls = s.split('.')[-1]
+            if cls in table_of:
+                return table_of[cls]
+            app = s.split('.')[0].lower() if '.' in s else classes[own]['app']
+            return f'{app}_{cls.lower()}'
+        return None
+
+    tables = {}
+    for n in concrete:
+        tname = table_of[n]
+        cols, assocs, pk = [], [], None
+        for f in merged_fields(n):
+            fname, ftype, kw = f['name'], f['ftype'], f['kw']
+            if ftype in DJANGO_REL_FIELDS:
+                tnode = kw.get('to') or (f['args'][0] if f['args'] else None)
+                target = resolve(tnode, n) if tnode is not None else None
+                if not target:
+                    continue
+                if ftype == 'ManyToManyField':
+                    a = {'type': 'has_and_belongs_to_many', 'name': fname, 'target': target}
+                    thr = resolve(kw['through'], n) if 'through' in kw else None
+                    if thr:
+                        a['through'] = thr
+                    assocs.append(a)
+                else:
+                    col = const(kw.get('db_column')) or f'{fname}_id'
+                    cols.append({'name': col, 'type': 'bigint',
+                                 'nullable': bool(const(kw.get('null'))), 'primary': False})
+                    # OneToOneField: the declaring side holds the FK, but we emit
+                    # has_one so the edge renders as 1:1
+                    assocs.append({'type': 'has_one' if ftype == 'OneToOneField' else 'belongs_to',
+                                   'name': fname, 'target': target, 'foreign_key': col})
+                continue
+            col = const(kw.get('db_column')) or fname
+            primary = bool(const(kw.get('primary_key')))
+            if primary:
+                pk = col
+            cols.append({'name': col, 'type': DJANGO_TYPES[ftype],
+                         'nullable': bool(const(kw.get('null'))) and not primary,
+                         'primary': primary})
+        if pk is None:  # Django creates an implicit id (BigAutoField)
+            pk = 'id'
+            cols.insert(0, {'name': 'id', 'type': 'bigint',
+                            'nullable': False, 'primary': True})
+        tables[tname] = {'columns': cols, 'associations': assocs, 'primary_key': pk}
+    return tables
+
+def django_provider(root):
+    """ProviderResult for a resolved Django project root. Retains columns —
+    including the synthetic `id` PK Django backfills and the `<name>_id` FK
+    columns emitted for ForeignKey/OneToOneField — that the current overlay
+    path drops."""
+    tables = parse_django(root)
+    return make_provider_result('framework', 'django', tables,
+                                location=str(root))
+
+@register_overlay
+class DjangoOverlay(FrameworkOverlay):
+    """A Django project: a directory containing manage.py. Retains columns."""
+    name = 'django'
+    priority = 2
+
+    def detect(self, root):
+        return root.is_dir() and (root / 'manage.py').exists()
+
+    def build(self, root, table_map):
+        return django_provider(root)
+# ---------------------------------------------------------------------------
+# Prisma schema parser (schema.prisma)
+# ---------------------------------------------------------------------------
+PRISMA_TYPES = {
+    'Int': 'integer', 'BigInt': 'bigint', 'String': 'string',
+    'Boolean': 'boolean', 'DateTime': 'datetime', 'Json': 'jsonb',
+    'Float': 'float', 'Decimal': 'decimal', 'Bytes': 'binary',
+}
+
+def parse_prisma(schema_path):
+    text = schema_path.read_text(encoding='utf-8', errors='replace')
+    text = re.sub(r'//[^\n]*', '', text)  # strip comments
+
+    blocks = {m.group(1): m.group(2)
+              for m in re.finditer(r'model\s+(\w+)\s*\{([^}]*)\}', text)}
+    enums = set(re.findall(r'enum\s+(\w+)\s*\{', text))
+
+    def table_of(model):
+        mm = re.search(r'@@map\("([^"]+)"\)', blocks[model])
+        return mm.group(1) if mm else model
+
+    def is_list_of(model, other):
+        # does `model` declare an `xxx Other[]` field? (implicit m2m check)
+        return re.search(r'\w+\s+%s\[\]' % re.escape(other), blocks[model]) is not None
+
+    tables = {}
+    for model, block in blocks.items():
+        cols, assocs, pk = [], [], None
+        unique_cols = set()  # scalar fields with @unique — used below to
+                              # tell a 1:1 FK-holding side from a plain belongs_to
+        lines = [l.strip() for l in block.splitlines() if l.strip() and not l.strip().startswith('@@')]
+
+        # pass 1: scalar/enum columns only — relation fields need unique_cols
+        # fully populated first (a relation's `fields: [...]` FK column can be
+        # declared on any line in the block, not necessarily before it)
+        for line in lines:
+            fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
+            if not fm:
+                continue
+            fname, ftype, is_list, optional, rest = fm.groups()
+            if ftype in blocks:
+                continue  # relation field, handled in pass 2
+            col = fname
+            cm = re.search(r'@map\("([^"]+)"\)', rest)
+            if cm:
+                col = cm.group(1)
+            primary = '@id' in rest
+            if primary:
+                pk = col
+            if '@unique' in rest:
+                unique_cols.add(col)
+            cols.append({
+                'name': col,
+                'type': PRISMA_TYPES.get(ftype, ftype if ftype in enums else ftype.lower()),
+                'nullable': bool(optional) and not primary,
+                'primary': primary,
+            })
+
+        # pass 2: relation fields
+        for line in lines:
+            fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
+            if not fm:
+                continue
+            fname, ftype, is_list, optional, rest = fm.groups()
+            if ftype not in blocks:
+                continue
+            target = table_of(ftype)
+            fields = re.search(r'fields:\s*\[\s*(\w+)', rest)
+            if is_list:
+                # the other side lists this model too -> implicit many-to-many
+                if is_list_of(ftype, model):
+                    assocs.append({'type': 'has_and_belongs_to_many',
+                                   'name': fname, 'target': target})
+                else:
+                    assocs.append({'type': 'has_many', 'name': fname, 'target': target})
+            elif fields:  # the side holding the FK
+                fk_col = fields.group(1)
+                # @unique on the scalar FK field means each value can only
+                # appear once — a real 1:1, not the default many:1 a bare FK
+                # column implies. Same has_one convention parse_django uses.
+                assoc_type = 'has_one' if fk_col in unique_cols else 'belongs_to'
+                assocs.append({'type': assoc_type, 'name': fname,
+                               'target': target, 'foreign_key': fk_col})
+            else:  # 1:1 parent side without the FK
+                assocs.append({'type': 'has_one', 'name': fname, 'target': target})
+
+        tables[table_of(model)] = {'columns': cols, 'associations': assocs,
+                                   'primary_key': pk}
+    return tables
+
+def prisma_provider(schema_path):
+    """ProviderResult for a resolved Prisma schema file. Retains columns
+    (with Prisma types, including enum field types as the enum name) so a
+    Prisma-only run (Step 8) or the Step-6 merge can use them instead of
+    discarding them the way the current association-only overlay does."""
+    tables = parse_prisma(schema_path)
+    return make_provider_result('framework', 'prisma', tables,
+                                location=str(schema_path))
+
+@register_overlay
+class PrismaOverlay(FrameworkOverlay):
+    """A Prisma schema: a schema.prisma file directly, or a project containing
+    prisma/schema.prisma (or schema.prisma at the root). Retains columns."""
+    name = 'prisma'
+    priority = 3
+
+    def _schema(self, root):
+        if root.is_file():
+            return root
+        return next(c for c in (root / 'prisma' / 'schema.prisma', root / 'schema.prisma')
+                    if c.exists())
+
+    def detect(self, root):
+        if root.is_file():
+            return root.suffix == '.prisma'
+        return any(c.exists() for c in
+                   (root / 'prisma' / 'schema.prisma', root / 'schema.prisma'))
+
+    def build(self, root, table_map):
+        return prisma_provider(self._schema(root))
+# ---------------------------------------------------------------------------
+# Rails model parser (app/models/**/*.rb)
 # ---------------------------------------------------------------------------
 def rails_provider(models_dir, table_map=None):
     """ProviderResult for a Rails app/models directory (REFACTOR_PLAN.md §5).
@@ -1103,336 +1657,28 @@ def _parse_rails_models(models_dir, fragment, table_map):
             if poly:      assoc['polymorphic'] = True
             frag['associations'].append(assoc)
 
+@register_overlay
+class RailsOverlay(FrameworkOverlay):
+    """A Rails project: an app/models directory (or a directory of *.rb model
+    files). Contributes associations only — no columns."""
+    name = 'rails'
+    priority = 1
+
+    def detect(self, root):
+        return root.is_dir() and (
+            (root / 'app' / 'models').is_dir() or any(root.glob('*.rb')))
+
+    def build(self, root, table_map):
+        mdir = root / 'app' / 'models' if (root / 'app' / 'models').is_dir() else root
+        return rails_provider(mdir, table_map)
 # ---------------------------------------------------------------------------
-# Prisma schema parser (schema.prisma)
-# ---------------------------------------------------------------------------
-PRISMA_TYPES = {
-    'Int': 'integer', 'BigInt': 'bigint', 'String': 'string',
-    'Boolean': 'boolean', 'DateTime': 'datetime', 'Json': 'jsonb',
-    'Float': 'float', 'Decimal': 'decimal', 'Bytes': 'binary',
-}
-
-def parse_prisma(schema_path):
-    text = schema_path.read_text(encoding='utf-8', errors='replace')
-    text = re.sub(r'//[^\n]*', '', text)  # strip comments
-
-    blocks = {m.group(1): m.group(2)
-              for m in re.finditer(r'model\s+(\w+)\s*\{([^}]*)\}', text)}
-    enums = set(re.findall(r'enum\s+(\w+)\s*\{', text))
-
-    def table_of(model):
-        mm = re.search(r'@@map\("([^"]+)"\)', blocks[model])
-        return mm.group(1) if mm else model
-
-    def is_list_of(model, other):
-        # does `model` declare an `xxx Other[]` field? (implicit m2m check)
-        return re.search(r'\w+\s+%s\[\]' % re.escape(other), blocks[model]) is not None
-
-    tables = {}
-    for model, block in blocks.items():
-        cols, assocs, pk = [], [], None
-        unique_cols = set()  # scalar fields with @unique — used below to
-                              # tell a 1:1 FK-holding side from a plain belongs_to
-        lines = [l.strip() for l in block.splitlines() if l.strip() and not l.strip().startswith('@@')]
-
-        # pass 1: scalar/enum columns only — relation fields need unique_cols
-        # fully populated first (a relation's `fields: [...]` FK column can be
-        # declared on any line in the block, not necessarily before it)
-        for line in lines:
-            fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
-            if not fm:
-                continue
-            fname, ftype, is_list, optional, rest = fm.groups()
-            if ftype in blocks:
-                continue  # relation field, handled in pass 2
-            col = fname
-            cm = re.search(r'@map\("([^"]+)"\)', rest)
-            if cm:
-                col = cm.group(1)
-            primary = '@id' in rest
-            if primary:
-                pk = col
-            if '@unique' in rest:
-                unique_cols.add(col)
-            cols.append({
-                'name': col,
-                'type': PRISMA_TYPES.get(ftype, ftype if ftype in enums else ftype.lower()),
-                'nullable': bool(optional) and not primary,
-                'primary': primary,
-            })
-
-        # pass 2: relation fields
-        for line in lines:
-            fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
-            if not fm:
-                continue
-            fname, ftype, is_list, optional, rest = fm.groups()
-            if ftype not in blocks:
-                continue
-            target = table_of(ftype)
-            fields = re.search(r'fields:\s*\[\s*(\w+)', rest)
-            if is_list:
-                # the other side lists this model too -> implicit many-to-many
-                if is_list_of(ftype, model):
-                    assocs.append({'type': 'has_and_belongs_to_many',
-                                   'name': fname, 'target': target})
-                else:
-                    assocs.append({'type': 'has_many', 'name': fname, 'target': target})
-            elif fields:  # the side holding the FK
-                fk_col = fields.group(1)
-                # @unique on the scalar FK field means each value can only
-                # appear once — a real 1:1, not the default many:1 a bare FK
-                # column implies. Same has_one convention parse_django uses.
-                assoc_type = 'has_one' if fk_col in unique_cols else 'belongs_to'
-                assocs.append({'type': assoc_type, 'name': fname,
-                               'target': target, 'foreign_key': fk_col})
-            else:  # 1:1 parent side without the FK
-                assocs.append({'type': 'has_one', 'name': fname, 'target': target})
-
-        tables[table_of(model)] = {'columns': cols, 'associations': assocs,
-                                   'primary_key': pk}
-    return tables
-
-# ---------------------------------------------------------------------------
-# Django models parser (**/models.py, AST based)
-# ---------------------------------------------------------------------------
-DJANGO_TYPES = {
-    'CharField': 'string', 'TextField': 'text', 'SlugField': 'string',
-    'EmailField': 'string', 'URLField': 'string', 'FileField': 'string',
-    'ImageField': 'string', 'FilePathField': 'string',
-    'IntegerField': 'integer', 'SmallIntegerField': 'integer',
-    'PositiveIntegerField': 'integer', 'PositiveSmallIntegerField': 'integer',
-    'BigIntegerField': 'bigint', 'PositiveBigIntegerField': 'bigint',
-    'AutoField': 'integer', 'BigAutoField': 'bigint', 'SmallAutoField': 'integer',
-    'FloatField': 'float', 'DecimalField': 'decimal', 'BooleanField': 'boolean',
-    'DateTimeField': 'datetime', 'DateField': 'date', 'TimeField': 'time',
-    'DurationField': 'interval', 'UUIDField': 'uuid', 'JSONField': 'jsonb',
-    'BinaryField': 'binary', 'GenericIPAddressField': 'inet', 'IPAddressField': 'inet',
-}
-DJANGO_REL_FIELDS = {'ForeignKey', 'OneToOneField', 'ManyToManyField'}
-_DJANGO_SKIP_DIRS = {'venv', '.venv', 'env', 'site-packages', 'node_modules',
-                     'migrations', '.git', 'tests', 'staticfiles'}
-
-def parse_django(root):
-    # collect model files: <app>/models.py and <app>/models/*.py
-    files = []
-    for p in sorted(root.rglob('*.py')):
-        if set(p.relative_to(root).parts) & _DJANGO_SKIP_DIRS:
-            continue
-        if p.name == 'models.py':
-            files.append((p.parent.name, p))
-        elif p.parent.name == 'models':
-            files.append((p.parent.parent.name, p))
-
-    # pass 1: collect every class definition
-    classes = {}  # class name -> {app, bases, fields, meta}
-    for app, path in files:
-        try:
-            tree = ast.parse(path.read_text(encoding='utf-8', errors='replace'))
-        except SyntaxError:
-            continue
-        for node in tree.body:
-            if not isinstance(node, ast.ClassDef):
-                continue
-            bases = [b.attr if isinstance(b, ast.Attribute) else
-                     b.id if isinstance(b, ast.Name) else '' for b in node.bases]
-            meta, fields = {}, []
-            for stmt in node.body:
-                if isinstance(stmt, ast.ClassDef) and stmt.name == 'Meta':
-                    for ms in stmt.body:
-                        if (isinstance(ms, ast.Assign) and len(ms.targets) == 1
-                                and isinstance(ms.targets[0], ast.Name)
-                                and isinstance(ms.value, ast.Constant)):
-                            meta[ms.targets[0].id] = ms.value.value
-                elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
-                        and isinstance(stmt.targets[0], ast.Name)
-                        and isinstance(stmt.value, ast.Call)):
-                    fn = stmt.value.func
-                    ftype = fn.attr if isinstance(fn, ast.Attribute) else                             fn.id if isinstance(fn, ast.Name) else None
-                    if ftype and (ftype in DJANGO_TYPES or ftype in DJANGO_REL_FIELDS):
-                        fields.append({
-                            'name': stmt.targets[0].id, 'ftype': ftype,
-                            'args': stmt.value.args,
-                            'kw': {k.arg: k.value for k in stmt.value.keywords if k.arg},
-                        })
-            classes[node.name] = {'app': app, 'bases': bases,
-                                  'fields': fields, 'meta': meta}
-
-    # a class is a model if models.Model is among its ancestors (transitively)
-    model_names, changed = set(), True
-    while changed:
-        changed = False
-        for name, c in classes.items():
-            if name not in model_names and (
-                    'Model' in c['bases']
-                    or any(b in model_names for b in c['bases'])):
-                model_names.add(name)
-                changed = True
-
-    def const(v):
-        return v.value if isinstance(v, ast.Constant) else None
-
-    def merged_fields(name, seen=None):
-        # inherit fields from abstract base classes
-        seen = seen or set()
-        if name not in classes or name in seen:
-            return []
-        seen.add(name)
-        out = []
-        for b in classes[name]['bases']:
-            if b in model_names:
-                out.extend(merged_fields(b, seen))
-        out.extend(classes[name]['fields'])
-        return out
-
-    concrete = [n for n in model_names if n in classes
-                and not classes[n]['meta'].get('abstract')
-                and not classes[n]['meta'].get('proxy')]
-    table_of = {n: classes[n]['meta'].get('db_table')
-                or f"{classes[n]['app']}_{n.lower()}" for n in concrete}
-
-    def resolve(node, own):
-        # ForeignKey(Author) / ForeignKey('Author') / ForeignKey('blog.Author') / 'self'
-        if isinstance(node, ast.Name) and node.id in table_of:
-            return table_of[node.id]
-        if isinstance(node, ast.Attribute) and node.attr in table_of:
-            return table_of[node.attr]
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            s = node.value
-            if s == 'self':
-                return table_of.get(own)
-            cls = s.split('.')[-1]
-            if cls in table_of:
-                return table_of[cls]
-            app = s.split('.')[0].lower() if '.' in s else classes[own]['app']
-            return f'{app}_{cls.lower()}'
-        return None
-
-    tables = {}
-    for n in concrete:
-        tname = table_of[n]
-        cols, assocs, pk = [], [], None
-        for f in merged_fields(n):
-            fname, ftype, kw = f['name'], f['ftype'], f['kw']
-            if ftype in DJANGO_REL_FIELDS:
-                tnode = kw.get('to') or (f['args'][0] if f['args'] else None)
-                target = resolve(tnode, n) if tnode is not None else None
-                if not target:
-                    continue
-                if ftype == 'ManyToManyField':
-                    a = {'type': 'has_and_belongs_to_many', 'name': fname, 'target': target}
-                    thr = resolve(kw['through'], n) if 'through' in kw else None
-                    if thr:
-                        a['through'] = thr
-                    assocs.append(a)
-                else:
-                    col = const(kw.get('db_column')) or f'{fname}_id'
-                    cols.append({'name': col, 'type': 'bigint',
-                                 'nullable': bool(const(kw.get('null'))), 'primary': False})
-                    # OneToOneField: the declaring side holds the FK, but we emit
-                    # has_one so the edge renders as 1:1
-                    assocs.append({'type': 'has_one' if ftype == 'OneToOneField' else 'belongs_to',
-                                   'name': fname, 'target': target, 'foreign_key': col})
-                continue
-            col = const(kw.get('db_column')) or fname
-            primary = bool(const(kw.get('primary_key')))
-            if primary:
-                pk = col
-            cols.append({'name': col, 'type': DJANGO_TYPES[ftype],
-                         'nullable': bool(const(kw.get('null'))) and not primary,
-                         'primary': primary})
-        if pk is None:  # Django creates an implicit id (BigAutoField)
-            pk = 'id'
-            cols.insert(0, {'name': 'id', 'type': 'bigint',
-                            'nullable': False, 'primary': True})
-        tables[tname] = {'columns': cols, 'associations': assocs, 'primary_key': pk}
-    return tables
-
-# ---------------------------------------------------------------------------
-# FK column inference — guess relations from `xxx_id` columns (IR post-pass)
-# ---------------------------------------------------------------------------
-def infer_fk_associations(tables):
-    """Infer edges from FK-looking column names even when no association is
-    declared. Pairs already related in either direction are skipped. Marked with
-    provenance 'inferred' and an empty `sources` (no provider layer contributed
-    it — it is a post-merge heuristic derived from *_id column names, not a
-    merge of source layers). Tries the pluralized table name first (Rails
-    convention) and falls back to the singular stem as-is (common with
-    Prisma/other schemas that don't pluralize table names) — whichever
-    actually exists. A column alone under a single-column unique index is
-    inferred as has_one (1:1) instead of belongs_to (default many:1), same
-    signal the real-DB-FK path uses."""
-    added = 0
-    incoming = {}  # table -> set(tables that reference it)
-    for name, t in tables.items():
-        for a in t['associations']:
-            incoming.setdefault(a['target'], set()).add(name)
-    for name, t in tables.items():
-        outgoing = {a['target'] for a in t['associations']}
-        for c in t['columns']:
-            cn = c['name']
-            if not cn.endswith('_id') or c.get('primary'):
-                continue
-            stem = cn[:-3]
-            plural = pluralize(stem)
-            target = plural if plural in tables else stem if stem in tables else None
-            if (target is None or target == name
-                    or target in outgoing              # we already reference it
-                    or target in incoming.get(name, ())):  # it already references us
-                continue
-            assoc_type = 'has_one' if _unique_single_col(t, cn) else 'belongs_to'
-            t['associations'].append({'type': assoc_type, 'name': stem,
-                                      'target': target, 'foreign_key': cn,
-                                      'provenance': 'inferred', 'sources': []})
-            outgoing.add(target)
-            added += 1
-    return added
-
-# ---------------------------------------------------------------------------
-# Source detection
-# ---------------------------------------------------------------------------
-def detect_code_source(root):
-    """Classify a --models path: a Rails app/models dir, a Prisma schema,
-    or a Django project."""
-    if root.is_file():
-        return 'prisma' if root.suffix == '.prisma' else None
-    if (root / 'app' / 'models').is_dir() or any(root.glob('*.rb')):
-        return 'rails'
-    if (root / 'manage.py').exists():
-        return 'django'
-    for cand in (root / 'prisma' / 'schema.prisma', root / 'schema.prisma'):
-        if cand.exists():
-            return 'prisma'
-    return None
-
-# ---------------------------------------------------------------------------
-# Framework leaf providers (REFACTOR_PLAN.md §5) — ProviderResult wrappers.
+# Provider dispatchers (DB) + config layer construction/validation.
 #
-# Each wraps its existing parser (unchanged) and packages the FULL IR —
-# crucially the columns — as a ProviderResult, which merge_ir folds against the
-# DB layer. The `framework_provider` dispatcher (detect + resolve path) routes
-# the merge through these. These leaf providers take an already-resolved input
-# (a .prisma file path / a Django project root); detection and path resolution
-# live in detect_code_source / framework_provider.
+# The framework overlays and their dispatcher (framework_provider /
+# detect_code_source) live in the frameworks/ package; db_provider dispatches
+# through the db/ adapter registry. What remains here is the DB provider seam
+# and everything that builds/validates the config layer.
 # ---------------------------------------------------------------------------
-def prisma_provider(schema_path):
-    """ProviderResult for a resolved Prisma schema file. Retains columns
-    (with Prisma types, including enum field types as the enum name) so a
-    Prisma-only run (Step 8) or the Step-6 merge can use them instead of
-    discarding them the way the current association-only overlay does."""
-    tables = parse_prisma(schema_path)
-    return make_provider_result('framework', 'prisma', tables,
-                                location=str(schema_path))
-
-def django_provider(root):
-    """ProviderResult for a resolved Django project root. Retains columns —
-    including the synthetic `id` PK Django backfills and the `<name>_id` FK
-    columns emitted for ForeignKey/OneToOneField — that the current overlay
-    path drops."""
-    tables = parse_django(root)
-    return make_provider_result('framework', 'django', tables,
-                                location=str(root))
-
 def _password_free_url(url):
     """Rebuild a connection URL without its password, for a ProviderResult's
     Source.location (§5: location is password-free). Keeps user@host:port/db
@@ -1447,35 +1693,20 @@ def _password_free_url(url):
     return f'{out}?{u.query}' if u.query else out
 
 def db_provider(url):
-    """DB ProviderResult (§5). Dispatches on the URL scheme to the existing
-    parse_mysql/parse_postgres (unchanged) and packages the IR with a
-    password-free location. Referenced as module globals so the test harness's
-    parse_mysql monkeypatch still applies."""
+    """DB ProviderResult (§5). Dispatches on the URL scheme to the registered
+    DBAdapter (built-in MySQL/PostgreSQL, or a user adapter loaded via
+    --adapter) and packages the IR with a password-free location. The built-in
+    adapters delegate to the module-level parse_mysql/parse_postgres, so the
+    test harness's monkeypatch of those still applies."""
     scheme = urlparse(url).scheme
-    if scheme == 'mysql':
-        return make_provider_result('db', 'mysql', parse_mysql(url),
-                                    location=_password_free_url(url))
-    if scheme in ('postgres', 'postgresql'):
-        return make_provider_result('db', 'postgres', parse_postgres(url),
-                                    location=_password_free_url(url))
-    sys.exit('Error: a database URL is required (mysql:// or postgres://)')
-
-def framework_provider(mroot, table_map=None):
-    """Framework ProviderResult (§5). Detects the code kind and resolves the
-    concrete input path (the Rails app/models dir, the schema.prisma file, or
-    the Django root), then dispatches to the matching leaf provider."""
-    kind = detect_code_source(mroot)
-    if kind == 'rails':
-        mdir = mroot / 'app' / 'models' if (mroot / 'app' / 'models').is_dir() else mroot
-        return rails_provider(mdir, table_map)
-    if kind == 'prisma':
-        schema = mroot if mroot.is_file() else next(
-            c for c in (mroot / 'prisma' / 'schema.prisma', mroot / 'schema.prisma') if c.exists())
-        return prisma_provider(schema)
-    if kind == 'django':
-        return django_provider(mroot)
-    sys.exit(f'Error: could not detect the code kind at {mroot} '
-             '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
+    adapter_cls = db_adapter_for(scheme)
+    if adapter_cls is None:
+        known = ', '.join(sorted(DB_ADAPTERS)) or '(none registered)'
+        sys.exit(f'Error: no database adapter for URL scheme {scheme!r} '
+                 f'(known schemes: {known})')
+    adapter = adapter_cls()
+    return make_provider_result('db', adapter.name, adapter.fetch(url),
+                                location=_password_free_url(url))
 
 def relations_to_config_layer(relations, base_tables):
     """Convert the config `relations` list into a config-kind ProviderResult of
@@ -5624,7 +5855,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -5659,6 +5890,19 @@ def _check_config_types(config, path):
     for key in ('only', 'exclude'):
         if key in config and any(not isinstance(x, str) for x in config[key]):
             sys.exit(f'Error: {path} `{key}` must be a list of strings')
+    # adapters: a single path (str) or a list of paths (str) — custom DB
+    # adapter plugin files, same str-or-list shape as `models`
+    if 'adapters' in config:
+        a = config['adapters']
+        if isinstance(a, str):
+            pass
+        elif isinstance(a, list):
+            for i, item in enumerate(a):
+                if not isinstance(item, str):
+                    sys.exit(f'Error: {path} `adapters[{i}]` must be a string, got {item!r}')
+        else:
+            sys.exit(f'Error: {path} `adapters` must be a string or a list of strings, '
+                     f'got {a!r}')
     if 'table_map' in config and any(not isinstance(v, str) for v in config['table_map'].values()):
         sys.exit(f'Error: {path} `table_map` values must all be strings')
     if 'relations' in config and any(not isinstance(r, dict) for r in config['relations']):
@@ -5770,16 +6014,29 @@ def _check_config_indexes(indexes, path, where):
         _check_bool(ix.get('unique'), 'unique' in ix, path, f'{iw}.unique')
 
 def _config_assoc_identity(a):
-    """Stable identity for an association fragment/drop (§8.1), used only for
-    Config-internal duplicate detection. FK-holding side is keyed by its FK
-    column + target + name; a collection/inverse (no FK) by type + target + name.
-    `name` is part of BOTH so it aligns with the runtime association_key (6b):
-    the Rails alias pattern (`user` AND `author`, both on `user_id` -> `users`)
-    is two distinct associations and must not be rejected as a duplicate. An
-    exact duplicate (same name+fk+target) is still caught."""
-    if a.get('foreign_key'):
-        return ('fk', a.get('target'), a.get('foreign_key'), a.get('name'))
-    return ('rel', a.get('type'), a.get('target'), a.get('name'))
+    """Stable identity for an association fragment/drop, used only for
+    Config-internal duplicate detection. Mirrors the runtime association_key
+    (§8.1) so the two never disagree about what counts as "the same" edge:
+    role (owner_fk / collection / inverse_one / named) + target + FK column +
+    name, PLUS `through` and `polymorphic` when present. Including the last two
+    is what lets two associations that share type/name/target but differ only in
+    `through` (e.g. `through: orders` vs `through: archived_orders`) coexist —
+    the runtime treats them as distinct, so the syntactic check must too. `name`
+    is part of the identity for every role, so the Rails alias pattern (`user`
+    AND `author`, both on `user_id` -> `users`) is not a duplicate; an exact
+    duplicate is still caught. Uses .get() throughout so a DropOperation (which
+    may omit name/type) is handled by the same rule."""
+    role = ('owner_fk' if a.get('foreign_key')
+            else 'collection' if a.get('type') in ('has_many', 'has_and_belongs_to_many')
+            else 'inverse_one' if a.get('type') == 'has_one'
+            else 'named')
+    fk = frozenset([a['foreign_key']]) if a.get('foreign_key') else frozenset()
+    ident = [role, a.get('target'), fk, a.get('name')]
+    if a.get('through'):
+        ident.append(('through', a['through']))
+    if a.get('polymorphic'):
+        ident.append(('polymorphic', True))
+    return tuple(ident)
 
 def _check_config_associations(assocs, path, where):
     if not isinstance(assocs, list):
@@ -5940,6 +6197,12 @@ def main():
                    help='Merge association semantics parsed from application code '
                         '(Rails project/app/models dir, schema.prisma, or Django project). '
                         'Repeatable to merge several frameworks; later ones win on ties')
+    p.add_argument('--adapter', metavar='PATH', action='append', default=argparse.SUPPRESS,
+                   help='Load a Python plugin file that registers a custom database '
+                        'adapter (subclass DBAdapter + @register_adapter) and/or a '
+                        'framework overlay (subclass FrameworkOverlay + @register_overlay). '
+                        'The new URL scheme / --models project kind then works like the '
+                        'built-ins. Repeatable; also settable as config `adapters`')
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
@@ -5977,6 +6240,15 @@ def main():
     args = p.parse_args()
 
     config = load_config(args)
+    # Load any custom DB adapters (--adapter / config `adapters`) before the URL
+    # is classified, so their schemes are registered in time. Config entries
+    # first, then CLI ones — a later entry overriding a scheme wins (§ plugins).
+    cfg_adapters = config.get('adapters') or []
+    if isinstance(cfg_adapters, str):
+        cfg_adapters = [cfg_adapters]
+    adapter_paths = list(cfg_adapters) + list(getattr(args, 'adapter', []) or [])
+    if adapter_paths:
+        load_adapter_plugins(adapter_paths)
     url = args.database or assemble_config_url(config)
     # DB is optional now (§10): a schema can also come from --models and/or
     # config.tables. Only a NON-EMPTY url with an unrecognized scheme is an
@@ -5984,16 +6256,14 @@ def main():
     engine_name = None
     if url:
         scheme = url.split('://', 1)[0]
-        if scheme == 'mysql':
-            engine_name = 'MySQL'
-        elif scheme in ('postgres', 'postgresql'):
-            engine_name = 'PostgreSQL'
-        else:
+        adapter_cls = db_adapter_for(scheme)
+        if adapter_cls is None:
             sys.exit('Error: a database URL is required (mysql:// or postgres://) — pass it '
                      'as the CLI argument, or set `database` (and optionally engine/host/user/'
                      'port) in the config file, e.g. mysql://readonly@127.0.0.1:3306/myapp or '
                      'postgres://readonly@127.0.0.1:5432/myapp. Or run with no database at '
                      'all by supplying --models and/or a config file with a `tables:` section')
+        engine_name = adapter_cls.label or adapter_cls.name or scheme
 
     if hasattr(args, 'table_map'):
         tm = {}

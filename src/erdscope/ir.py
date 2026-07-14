@@ -61,7 +61,3 @@ SQL_TYPES = {
     'boolean': 'boolean', 'jsonb': 'jsonb', 'json': 'json', 'uuid': 'uuid',
     'bytea': 'binary', 'blob': 'binary', 'longblob': 'binary', 'inet': 'inet',
 }
-
-# ---------------------------------------------------------------------------
-# MySQL adapter (information_schema via PyMySQL or the mysql CLI)
-# ---------------------------------------------------------------------------
