@@ -9,3 +9,12 @@ COLLAB_*.md
 dist/
 build/
 *.egg-info/
+
+# OpenWiki (under evaluation — drop these entries if/when it's adopted)
+/openwiki/
+/AGENTS.md
+/CLAUDE.md
+/.github/workflows/openwiki-update.yml
+
+# stray large tool-call dump (scratch, not source)
+/large_tool_results/
