@@ -258,6 +258,45 @@ pip install playwright && playwright install chromium
 python3 -m unittest tests.test_e2e -v
 ```
 
+## Performance
+
+Measured against synthetic SQLite schemas (`benchmarks/gen_schema.py`, ~2 FK edges per
+table) at three sizes:
+
+| Tables | Edges | CLI gen (median) | HTML size | Initial paint (median) | Re-layout (median) | Python RSS | JS heap |
+|---|---|---|---|---|---|---|---|
+| 100   | 190   | 0.05 s | 292 KB  | 91 ms  | 37 ms  | 37 MB | 2.0 MB |
+| 300   | 592   | 0.06 s | 533 KB  | 206 ms | 131 ms | 42 MB | 1.9 MB |
+| 1,000 | 2,015 | 0.11 s | 1.35 MB | 1.18 s | 1.04 s | 59 MB | 3.2 MB |
+
+Notes: measured in a sandboxed Linux environment against headless Chromium
+(Playwright), not dedicated hardware — treat these as relative/order-of-magnitude
+numbers rather than absolute guarantees for your machine. "CLI gen" and the browser
+timings are each the median of 3 runs; Python RSS/JS heap are single best-effort
+samples. Generation itself (`erd.py sqlite:///... -o out.html`) stays fast at every
+size tested — SQLite parsing isn't the bottleneck.
+
+**Recommendation:** the constraint at scale is the browser-side interactive
+re-layout, not generation. Linear interpolation between the 300- and 1,000-table
+measurements above puts the 1-second crossing at roughly 970 tables; we round that
+down to **~900 tables** as a deliberately conservative rule of thumb, since these
+are single-environment numbers (initial paint itself stays comfortably under 3
+seconds through 1,000 tables). Past that rough threshold, narrow the diagram with
+`--only`/`--exclude` instead of
+rendering the whole schema at once — see the [manual's Large
+schemas section](https://orapli.github.io/erdscope/manual.html#large-schemas) for
+details.
+
+Reproduce or re-run at other sizes with:
+
+```bash
+python3 benchmarks/gen_schema.py --tables 300 --out /tmp/bench_300.db
+python3 benchmarks/run_bench.py --tables 100,300,1000   # generates, benchmarks, prints JSON + a summary table
+```
+
+`run_bench.py` is a manual script (not part of the `unittest` suite) — see its
+docstring for the full methodology and the Playwright venv it expects.
+
 ## Extending
 
 Everything downstream (UI, layouts, exports) consumes the intermediate representation

@@ -21,3 +21,9 @@ build/
 
 # stray large tool-call dump (scratch, not source)
 /large_tool_results/
+
+# benchmarks/: generated schemas/output/results, never the scripts themselves
+# (run_bench.py normally generates everything in a temp dir and cleans up
+# after itself, but --keep/--work-dir can point it at benchmarks/ directly)
+benchmarks/*.db
+benchmarks/bench_*.json

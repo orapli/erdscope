@@ -729,6 +729,24 @@ several things can legitimately stop that traversal short — worth checking in 
 <li>If you pulled the table in with a node's <code>⊕</code> button, it deliberately doesn't become a new Auto-expand root — it won't cascade further on its own.</li>
 <li>The table may simply be outside the diagram entirely, if it was excluded at generation time via <code>--only</code>/<code>--exclude</code>.</li>
 </ul>
+
+<h3 id="large-schemas">Large schemas</h3>
+<p>Generation itself stays fast at every size that's been benchmarked — SQLite/MySQL/PostgreSQL
+parsing isn't the bottleneck. What does slow down as a schema grows is the browser-side viewer:
+initial paint and the interactive re-layout (the <code>↺</code> "re-layout now" button, and
+anything else that repacks the diagram) both do more work per table and per edge. Measured
+against synthetic schemas (~2 FK edges/table; see <a
+href="https://github.com/orapli/erdscope/tree/main/benchmarks"><code>benchmarks/</code></a> in the
+repo for the scripts and full methodology), re-layout crosses the 1-second mark at roughly 970
+tables by linear interpolation; treat <strong>~900 tables</strong> as a deliberately conservative
+practical ceiling — initial paint itself stays comfortably under 3 seconds through at
+least 1,000 tables.</p>
+<p>Past that rough size, don't render the whole schema at once — narrow it down instead:</p>
+<ul>
+<li><code>--only 'user*,order*'</code> / <code>--exclude '*_logs,*_archive'</code> at generation time (see <a href="#cli-reference">CLI reference</a>) keep only the tables you actually need in the output HTML, which is what actually shrinks the browser-side node/edge count.</li>
+<li>Generate several smaller, focused diagrams (one per subsystem/domain) instead of one diagram for the entire database.</li>
+<li>Once loaded, <a href="#viewer-focus">Focus</a> a table with limited depth to work with a subset interactively — but note this only helps <em>navigation</em>; the full table/edge set was still parsed and laid out once at load and after every <code>↺</code>, so it doesn't avoid the up-front cost the way <code>--only</code>/<code>--exclude</code> does.</li>
+</ul>
 </section>
 
 <section id="extending">
