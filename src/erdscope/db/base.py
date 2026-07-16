@@ -123,6 +123,18 @@ def _unescape_tsv_field(s, escapes):
     return ''.join(out)
 
 def _unescape_mysql_field(s):
+    # mysql --batch prints a SQL NULL as the bare, unescaped word `NULL`
+    # (the \N escape is the SELECT ... INTO OUTFILE / mysqldump spelling,
+    # not the batch client's; _unescape_tsv_field above still accepts it
+    # harmlessly). Map the bare form to '' so the CLI fallback agrees with
+    # the PyMySQL path (which maps None -> ''); without this, a NULL column
+    # default surfaces as the literal string 'NULL' in the IR whenever the
+    # CLI fallback is used. Deliberate, accepted ambiguity: in --batch
+    # output an actual SQL NULL and a field whose text is the 4-letter word
+    # NULL are byte-identical, so no unescaper can tell them apart — we
+    # side with the (overwhelmingly more common) SQL NULL reading.
+    if s == 'NULL':
+        return ''
     return _unescape_tsv_field(s, _MYSQL_TSV_ESCAPES)
 
 def _unescape_copy_field(s):
