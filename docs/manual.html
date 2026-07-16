@@ -254,6 +254,14 @@ generate or view diagrams.</p>
 
 <section id="quickstart">
 <h2>Quickstart <a class="anchor-link" href="#quickstart">#</a></h2>
+<p>No database of your own yet? <code>erdscope demo</code> builds a small sample e-commerce
+SQLite database in a temp directory, generates the diagram, and opens it in your browser
+— nothing to download or set up:</p>
+<pre><code>erdscope demo</code></pre>
+<p>It runs the normal pipeline underneath, so every other flag on this page still applies
+(<code>erdscope demo --excel defs.xlsx</code>, <code>erdscope demo --only 'order*'</code>, ...);
+add <code>--no-open</code> to skip launching the browser. See the <a href="#cli-reference">CLI
+reference</a> below for the full list.</p>
 <pre><code>erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 
 # enrich with association semantics parsed from application code (optional)
@@ -299,10 +307,11 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <h2>CLI reference <a class="anchor-link" href="#cli-reference">#</a></h2>
 <p>This table is verified against <code>erd.py</code>'s <code>argparse</code> definitions — run
 <code>erdscope --help</code> yourself any time to confirm it against the copy you're running.</p>
-<pre><code>erdscope [mysql://user@host/db | postgres://user@host/db | sqlite:///file.db] [options]</code></pre>
+<pre><code>erdscope [mysql://user@host/db | postgres://user@host/db | sqlite:///file.db | demo] [options]</code></pre>
 <table>
 <tr><th>Argument</th><th>Description</th></tr>
 <tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there — see <a href="#config-file">Config file</a>).</td></tr>
+<tr><td><code>demo</code></td><td>Positional. Generate from a bundled sample e-commerce database instead of a real one — builds a throwaway SQLite copy in a temp directory, runs the normal pipeline, and opens the result in a browser. Every other option in this table still applies. Config auto-discovery is force-disabled and an explicit <code>--config</code> is ignored with a warning, so the demo always looks the same regardless of the cwd. Default output is <code>erd_demo.html</code> (not <code>erd.html</code>), so it never clobbers a real run's output</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
 <tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, or a Django project — source auto-detected</td></tr>
 <tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
@@ -315,6 +324,7 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <tr><td><code>--table-map 'Widget=crm_widgets'</code></td><td>Rails only: override a model's table when static analysis can't determine it. Repeatable; comma-separated lists accepted — see <a href="#faq-table-map">Troubleshooting</a></td></tr>
 <tr><td><code>--config PATH</code></td><td>Load defaults from a config file. Auto-discovered as <code>.erdscope.json</code>/<code>.yml</code>/<code>.yaml</code> in the current directory if not given</td></tr>
 <tr><td><code>--no-config</code></td><td>Skip config auto-discovery even if <code>.erdscope.*</code> exists in the cwd</td></tr>
+<tr><td><code>--no-open</code></td><td>Skip automatically opening a browser after generating. Only relevant to <code>demo</code> (which opens one by default); accepted but has no effect on a normal run</td></tr>
 </table>
 </section>
 

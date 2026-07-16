@@ -12,7 +12,9 @@ def main():
                         'also be assembled from `engine`/`host`/`port`/`user`/`database` in '
                         'the config file (no password field there — use MYSQL_PWD/PGPASSWORD, '
                         '~/.my.cnf/~/.pgpass, or the interactive prompt). A read-only '
-                        'account is recommended')
+                        'account is recommended. Or pass the literal word "demo" to try '
+                        'erdscope instantly against a bundled sample database — no database '
+                        'of your own needed')
     # SUPPRESS on every config-mirrorable flag so we can tell "explicitly
     # passed on the CLI" (attribute present) from "left to the config file /
     # built-in default" (attribute absent) — see the merge loop below.
@@ -62,8 +64,22 @@ def main():
                         'directory if not given')
     p.add_argument('--no-config', action='store_true',
                    help='Skip config auto-discovery even if .erdscope.* exists in the cwd')
+    p.add_argument('--no-open', action='store_true',
+                   help='Skip automatically opening a browser after generating. Only '
+                        'relevant to `erdscope demo` (which opens one by default); '
+                        'accepted but has no effect on a normal run')
     args = p.parse_args()
 
+    if args.database == 'demo':
+        run_demo(args)
+        return
+
+    _run_pipeline(args)
+
+def _run_pipeline(args):
+    """The actual generate pipeline, shared by a normal run and `erdscope
+    demo` (run_demo, in demo.py, rewrites args.database to a temp sqlite URL
+    and forces config off, then calls straight in here)."""
     config = load_config(args)
     # Load any custom DB adapters (--adapter / config `adapters`) before the URL
     # is classified, so their schemes are registered in time. Config entries
