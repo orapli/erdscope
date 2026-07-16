@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-16
+
+### Fixed
+
+- Viewer: the table list's relation-count badge and 🚫 ban button now stay pinned to
+  the row's right edge regardless of table name length or whether a logical name is
+  present (previously they drifted, sitting right after the name when no logical
+  name filled the row). Long table names wrap instead of being truncated with an
+  ellipsis.
+
 ## [0.4.0] - 2026-07-16
 
 ### Added
