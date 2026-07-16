@@ -18,6 +18,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config auto-discovery is force-disabled and an explicit `--config` is ignored with a
   warning, so the demo is deterministic regardless of the cwd. New `--no-open` flag
   skips the automatic browser launch (a no-op outside `demo`)
+- CI: a `db-integration` job runs `tests/test_db_integration.py` against real MySQL 8.4
+  and PostgreSQL 16 service containers, in parallel with the existing `test` job.
+  Verifies table/comment/index/FK extraction (including 1:1 promotion from a unique FK,
+  composite primary keys/indexes, and PostgreSQL expression indexes) and, for each
+  engine, asserts the PyMySQL/psycopg driver path and the dependency-free mysql/psql
+  CLI fallback path produce byte-identical output — the regression test for the NULL
+  default bug below. Skips cleanly (no database required) unless `ERDSCOPE_IT_MYSQL_URL`
+  / `ERDSCOPE_IT_POSTGRES_URL` are set, so it's safe inside a plain `unittest discover`
+
+### Fixed
+
+- MySQL CLI fallback (no PyMySQL installed): a column with no default was getting a
+  literal `default: 'NULL'` (the four-character string) instead of no default at all.
+  `mysql --batch` prints SQL NULL as the bare, unescaped word `NULL` (the `\N`
+  escape is the `SELECT ... INTO OUTFILE` / `mysqldump` spelling, not the batch
+  client's) — which `_unescape_mysql_field()` didn't recognize, so it passed
+  straight through as data.
+  Only the CLI fallback path was affected; PyMySQL already mapped `None` to `''`. Fixed
+  by also mapping the bare `NULL` literal to `''` in `_unescape_mysql_field()` (accepted
+  trade-off, documented in code: a column whose comment/default text is genuinely the
+  word "NULL" is now indistinguishable from an actual SQL NULL on this path)
 
 ### Changed
 
