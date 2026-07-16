@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning, so the demo is deterministic regardless of the cwd. New `--no-open` flag
   skips the automatic browser launch (a no-op outside `demo`)
 
+### Changed
+
+- Project metadata and module docstring updated to reflect SQLite support and the
+  three-source (DB / code / config) model
+
 ## [0.3.0] - 2026-07-14
 
 ### Added

@@ -1,8 +1,8 @@
 def main():
     p = argparse.ArgumentParser(
-        description='Generate an interactive ER diagram from a live database, '
-                    'optionally enriched with association semantics parsed from '
-                    'application code (Rails / Prisma / Django)')
+        description='Generate an interactive ER diagram (and optional Excel table definitions) '
+                    'from a MySQL / PostgreSQL / SQLite database, application code '
+                    '(Rails / Prisma / Django), and/or a config schema — any one source is enough')
     p.add_argument('database',
                    metavar='mysql://user@host/db | postgres://user@host/db | sqlite:///file.db',
                    nargs='?',
