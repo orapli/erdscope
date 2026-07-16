@@ -307,7 +307,7 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <pre><code>erdscope [mysql://user@host/db | postgres://user@host/db | sqlite:///file.db | demo] [options]</code></pre>
 <table>
 <tr><th>引数</th><th>説明</th></tr>
-<tr><td><code>mysql://…</code>、<code>postgres://…</code>、または <code>sqlite:///…</code></td><td>位置引数。データベース接続 URL。<code>postgres://</code> は任意の <code>?schema=name</code>（デフォルト <code>public</code>）を受け付けます。<code>postgresql://</code> という表記も使えます。<code>sqlite:///path/to/app.db</code> は標準ライブラリの <code>sqlite3</code> でローカルファイルを読みます（サーバー不要・インストール不要）。MySQL/PostgreSQL は設定ファイルの <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> から組み立てることもできます（パスワード用のフィールドはありません — <a href="#config-file">設定ファイル</a>参照）。</td></tr>
+<tr><td><code>mysql://…</code>、<code>postgres://…</code>、または <code>sqlite:///…</code></td><td>位置引数。データベース接続 URL。<code>postgres://</code> は任意の <code>?schema=name</code>（デフォルト <code>public</code>）を受け付けます。<code>postgresql://</code> という表記も使えます。<code>sqlite:///path/to/app.db</code> は標準ライブラリの <code>sqlite3</code> でローカルファイルを読みます（サーバー不要・インストール不要）。MySQL/PostgreSQL/SQLite は設定ファイルの <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> から組み立てることもできます（パスワード用のフィールドはありません。<code>engine: sqlite</code> の場合 <code>database</code> はファイルパスで <code>host</code>/<code>port</code>/<code>user</code> は指定できません — <a href="#config-file">設定ファイル</a>参照）。</td></tr>
 <tr><td><code>demo</code></td><td>位置引数。実際のデータベースの代わりに、同梱のサンプル e コマースデータベースから生成します — 一時ディレクトリに使い捨ての SQLite コピーを作成し、通常のパイプラインを実行して、結果をブラウザで開きます。この表の他のオプションもすべて併用できます。設定ファイルの自動検出は強制的に無効化され、明示的な <code>--config</code> 指定も警告付きで無視されるため、カレントディレクトリの状態に関わらずデモは常に同じ結果になります。デフォルトの出力先は（<code>erd.html</code> ではなく）<code>erd_demo.html</code> なので、通常実行の出力を上書きしません</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>出力 HTML ファイル（デフォルト: <code>erd.html</code>）</td></tr>
 <tr><td><code>--models PATH</code></td><td>アプリケーションコードから解析した関連セマンティクスをマージ: Rails プロジェクト（または <code>app/models</code> ディレクトリ）、<code>schema.prisma</code>、または Django プロジェクト — ソースは自動判別されます</td></tr>
@@ -332,10 +332,16 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <code>.erdscope.json</code>（PyYAML がインストールされていれば <code>.erdscope.yml</code>/<code>.yaml</code>も可）
 を置くと自動的に読み込まれます — <code>--config</code> は不要です。ほとんどのキーは上記の CLI オプション
 に対応します（snake_case）。<code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
-（DB 接続情報 — <code>engine</code> はデフォルトの <code>"mysql"</code> か <code>"postgres"</code> を指定し、
-<code>"postgres"</code> にするとデフォルトポートも 5432 に切り替わります）と <code>relations</code>
-（手動 FK 宣言）は設定ファイル専用で、対応する CLI オプションはありません。
+（DB 接続情報 — <code>engine</code> はデフォルトの <code>"mysql"</code>、<code>"postgres"</code>
+（デフォルトポートも 5432 に切り替わります）、または <code>"sqlite"</code> を指定します）と
+<code>relations</code>（手動 FK 宣言）は設定ファイル専用で、対応する CLI オプションはありません。
+<code>engine: "sqlite"</code> の場合、<code>database</code> はデータベース名ではなくローカルファイルパスで、
+<code>host</code>/<code>port</code>/<code>user</code> は指定できません:
 </p>
+<pre><code>{
+  "engine": "sqlite",
+  "database": "db/app.db"
+}</code></pre>
 <pre><code>{
   "host": "127.0.0.1",
   "port": 3306,

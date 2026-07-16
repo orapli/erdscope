@@ -1386,6 +1386,28 @@ class TestMainConfigIntegration(unittest.TestCase):
         erd.main()
         self.assertEqual(seen, ['mysql://cli-wins@example/db'])
 
+    def test_sqlite_engine_assembled_from_config_end_to_end(self):
+        # engine: sqlite in the config, no CLI URL at all — real sqlite3
+        # file read through the whole pipeline (no stubbing parse_mysql,
+        # since it must never be called on this path)
+        import sqlite3
+        dbpath = os.path.join(self.tmp.name, 'app.db')
+        conn = sqlite3.connect(dbpath)
+        conn.executescript("""
+            CREATE TABLE widgets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL);
+        """)
+        conn.commit()
+        conn.close()
+        Path('.erdscope.json').write_text(json.dumps({
+            'engine': 'sqlite', 'database': dbpath,
+        }))
+        sys.argv = ['erd.py']
+        erd.main()
+        data = self._load_output()
+        self.assertIn('widgets', data['tables'])
+
     def test_missing_connection_info_exits_with_clear_message(self):
         # Step 8/9: DB is no longer required — with no url AND no --models AND
         # no config.tables there's simply no schema source, which is the error
@@ -1493,6 +1515,69 @@ class TestAssembleConfigUrl(unittest.TestCase):
     def test_non_integral_float_port_rejected(self):
         with self.assertRaises(SystemExit):
             erd.assemble_config_url({'host': 'h', 'database': 'shop', 'port': 3306.9})
+
+
+class TestAssembleConfigUrlSqlite(unittest.TestCase):
+    """`engine: sqlite` builds a sqlite:// URL by pasting `database` (a file
+    path, not a database name) straight after `sqlite:///` — the slash count
+    round-trips exactly with sqlite_path_from_url()'s "strip one leading
+    slash" rule. mysql/postgres validation (the \\w+ database charset, the
+    host/port/user handling) must stay untouched by this branch."""
+    def test_relative_path_assembles_three_slash_url(self):
+        url = erd.assemble_config_url({'engine': 'sqlite', 'database': 'path/to/app.db'})
+        self.assertEqual(url, 'sqlite:///path/to/app.db')
+
+    def test_absolute_path_assembles_four_slash_url(self):
+        url = erd.assemble_config_url({'engine': 'sqlite', 'database': '/abs/app.db'})
+        self.assertEqual(url, 'sqlite:////abs/app.db')
+
+    def test_round_trips_through_sqlite_path_from_url_relative(self):
+        url = erd.assemble_config_url({'engine': 'sqlite', 'database': 'rel/app.db'})
+        self.assertEqual(erd.sqlite_path_from_url(url), 'rel/app.db')
+
+    def test_round_trips_through_sqlite_path_from_url_absolute(self):
+        url = erd.assemble_config_url({'engine': 'sqlite', 'database': '/abs/app.db'})
+        self.assertEqual(erd.sqlite_path_from_url(url), '/abs/app.db')
+
+    def test_no_database_key_returns_none(self):
+        self.assertIsNone(erd.assemble_config_url({'engine': 'sqlite'}))
+
+    def test_host_present_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'engine': 'sqlite', 'database': 'app.db', 'host': 'h'})
+        self.assertIn('host', str(cm.exception))
+        self.assertIn('sqlite', str(cm.exception))
+
+    def test_port_present_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'engine': 'sqlite', 'database': 'app.db', 'port': 5432})
+        self.assertIn('port', str(cm.exception))
+
+    def test_user_present_exits(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'engine': 'sqlite', 'database': 'app.db', 'user': 'ro'})
+        self.assertIn('user', str(cm.exception))
+
+    def test_database_with_question_mark_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            erd.assemble_config_url({'engine': 'sqlite', 'database': 'app.db?x=1'})
+        self.assertIn('database', str(cm.exception))
+
+    def test_database_with_hash_rejected(self):
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'engine': 'sqlite', 'database': 'app.db#frag'})
+
+    def test_database_with_parent_dir_reference_allowed(self):
+        # config is a locally-trusted file, so ../ traversal in `database` is
+        # not a security boundary crossing here — it's just a relative path
+        url = erd.assemble_config_url({'engine': 'sqlite', 'database': '../shared/app.db'})
+        self.assertEqual(url, 'sqlite:///../shared/app.db')
+
+    def test_mysql_database_with_slash_still_rejected(self):
+        # regression: the new sqlite branch must not have loosened the
+        # existing \w+ validation used for mysql/postgres `database`
+        with self.assertRaises(SystemExit):
+            erd.assemble_config_url({'engine': 'mysql', 'database': 'a/b.db'})
 
 
 class TestPostgresQueryRows(unittest.TestCase):
