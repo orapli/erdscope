@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-erdscope — interactive ER diagrams (and Excel table definitions) from a live database
+erdscope — interactive ER diagrams (and Excel table definitions) from a
+MySQL / PostgreSQL / SQLite database, application code, or a config schema
 Usage:
     python3 erd.py mysql://readonly@host:3306/dbname [-o erd.html]
     python3 erd.py postgres://readonly@host:5432/dbname[?schema=name]
-                   [--models /path/to/app] [--excel defs.xlsx]
+    python3 erd.py sqlite:///path/to/app.db [--excel defs.xlsx]
+    python3 erd.py --models /path/to/app     # code only — no database needed
+    python3 erd.py demo                      # bundled sample, no DB of your own
 
-The database is the required source of truth; --models optionally overlays
-association semantics parsed from application code (Rails / Prisma / Django,
-auto-detected).
+Any one of three sources is enough: a database, application code
+(--models: Rails / Prisma / Django, auto-detected), or a config `tables:`
+schema. They merge as layered providers — database -> code -> config.
 
 Intermediate representation (IR) — everything downstream (HTML/JS, exports)
 consumes this shape:
@@ -27,14 +30,11 @@ consumes this shape:
       }
     }
 
-Refactor contracts (REFACTOR_PLAN.md §4/§5/§9) — being introduced incrementally.
-The types below are the TARGET shape the providers and merge step are moving
-toward. NOTE: as of this step the parsers still return the plain `tables` IR
-above (not ProviderResult), the pipeline still carries the legacy boolean
-provenance flags on each association, and the serialized DATA_JSON is unchanged.
-`make_provider_result`, `provenance_of`, and `legacy_flags_for` (below the
-imports) are the pure scaffolding/seam for the later steps that wire this in;
-they are not yet used by the main path.
+Provider / provenance contracts — live in the pipeline. Parsers return
+ProviderResult; the merge step folds layered providers (db -> framework ->
+config); association provenance is a representative `provenance` string plus
+a `sources` set, converted back to the legacy boolean flags only at
+serialization time, so the DATA_JSON output stays byte-identical.
 
     # A per-table "fragment": every field optional. An absent key means "this
     # provider didn't supply it — keep the lower layer's value"; an explicit
@@ -61,7 +61,7 @@ they are not yet used by the main path.
     Warning        = {"code": str, "message": str, "table"?: str}
     ProviderResult = {"source": Source, "tables": IR, "warnings": list[Warning]}
 
-    # Association provenance (§9). Internally the target is a representative
+    # Association provenance (§9). Internally it is a representative
     # `provenance` string plus a `sources` set; on the way to HTML/Excel it is
     # converted back to the legacy booleans the viewer/Excel already read, so
     # the serialized output is byte-identical. The representative precedence at
@@ -78,14 +78,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
-# Provider / provenance contracts (REFACTOR_PLAN.md §5/§9)
+# Provider / provenance contracts
 # ---------------------------------------------------------------------------
-# Pure scaffolding + conversion seam for the staged refactor. These are the
-# contract in code form; they have no side effects and are NOT yet used by the
-# main pipeline (which still returns plain IR and carries the legacy boolean
-# provenance flags). Later steps (§15 Step 4-6, 9-10) route parsers and merge
-# through them. Kept small and dependency-free — no dataclasses, just dicts —
-# so the single-file, zero-dependency shape is preserved.
+# Parsers and merge route through these (providers.py / merge.py); serialization
+# converts provenance back to legacy flags in cli.py. No side effects; dicts
+# only — the single-file, zero-dependency shape is preserved.
 
 # Representative provenance -> the legacy boolean flag(s) the HTML/Excel
 # serializers already read. 'declared' carries no flag (bare = code-declared).
@@ -6449,9 +6446,9 @@ def run_demo(args):
             pass  # best-effort convenience only — never fail the run over it
 def main():
     p = argparse.ArgumentParser(
-        description='Generate an interactive ER diagram from a live database, '
-                    'optionally enriched with association semantics parsed from '
-                    'application code (Rails / Prisma / Django)')
+        description='Generate an interactive ER diagram (and optional Excel table definitions) '
+                    'from a MySQL / PostgreSQL / SQLite database, application code '
+                    '(Rails / Prisma / Django), and/or a config schema — any one source is enough')
     p.add_argument('database',
                    metavar='mysql://user@host/db | postgres://user@host/db | sqlite:///file.db',
                    nargs='?',
