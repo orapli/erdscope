@@ -6190,19 +6190,48 @@ def _check_config_associations(assocs, path, where):
 _SAFE_HOST_OR_USER = re.compile(r'[\w.\-]+')
 
 def assemble_config_url(config):
-    """Build a mysql:// or postgres:// URL (per the config's `engine`, default
-    mysql) from the config's host/port/user/database fields, or None if
+    """Build a mysql://, postgres://, or sqlite:// URL (per the config's
+    `engine`, default mysql) from the config's connection fields, or None if
     `database` wasn't given (no connection info in the config at all).
-    Each part is validated against a safe charset before being pasted
-    into the URL string — host/user containing `/`, `@`, or `:` would
-    silently shift what urlparse reads as the host/port/path when the
-    assembled string is re-parsed downstream (verified empirically: a host
-    of "x@evil" produces a URL whose username becomes "x" and whose actual
-    host becomes "evil"), and there is no decoding step anywhere downstream
-    to undo percent-encoding, so quoting isn't a fix either."""
+
+    For mysql/postgres, each of host/port/user/database is validated against
+    a safe charset before being pasted into the URL string — host/user
+    containing `/`, `@`, or `:` would silently shift what urlparse reads as
+    the host/port/path when the assembled string is re-parsed downstream
+    (verified empirically: a host of "x@evil" produces a URL whose username
+    becomes "x" and whose actual host becomes "evil"), and there is no
+    decoding step anywhere downstream to undo percent-encoding, so quoting
+    isn't a fix either.
+
+    For sqlite, `database` is a local file path, not a database name —
+    host/port/user don't apply (rejected outright if present) and `database`
+    is pasted as-is after `sqlite:///`, which round-trips exactly with
+    sqlite_path_from_url()'s "strip one leading slash" rule: a relative path
+    `rel.db` becomes `sqlite:///rel.db`, an absolute path `/abs/app.db`
+    becomes `sqlite:////abs/app.db` (four slashes)."""
     engine = config.get('engine', 'mysql')
-    if engine not in ('mysql', 'postgres', 'postgresql'):
-        sys.exit(f'Error: config `engine` must be "mysql" or "postgres", got {engine!r}')
+    if engine not in ('mysql', 'postgres', 'postgresql', 'sqlite'):
+        sys.exit(f'Error: config `engine` must be "mysql", "postgres", or "sqlite", '
+                 f'got {engine!r}')
+    if engine == 'sqlite':
+        for k in ('host', 'port', 'user'):
+            if k in config:
+                sys.exit(f'Error: config {k!r} does not apply when engine is "sqlite" '
+                         f'(it reads a local file)')
+        db = config.get('database')
+        if db is None:  # absent, or explicitly blank (e.g. a bare `database:` in YAML)
+            return None
+        db = str(db)
+        if not db:
+            sys.exit('Error: config `database` must not be blank when engine is "sqlite"')
+        if '?' in db or '#' in db:
+            sys.exit(f'Error: config `database` {db!r} must not contain "?" or "#" — '
+                     f'those would be misread as a URL query/fragment when the sqlite:// '
+                     f'URL is assembled')
+        if any(ord(ch) < 0x20 or ch == '\x7f' for ch in db):
+            sys.exit(f'Error: config `database` {db!r} contains control characters, '
+                     f'which are not valid in a file path')
+        return 'sqlite:///' + db
     db = config.get('database')
     if db is None:  # absent, or explicitly blank (e.g. a bare `database:` in YAML)
         return None

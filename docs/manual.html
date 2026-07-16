@@ -310,7 +310,7 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <pre><code>erdscope [mysql://user@host/db | postgres://user@host/db | sqlite:///file.db | demo] [options]</code></pre>
 <table>
 <tr><th>Argument</th><th>Description</th></tr>
-<tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there — see <a href="#config-file">Config file</a>).</td></tr>
+<tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL/SQLite can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there; for <code>engine: sqlite</code>, <code>database</code> is a file path and <code>host</code>/<code>port</code>/<code>user</code> don't apply — see <a href="#config-file">Config file</a>).</td></tr>
 <tr><td><code>demo</code></td><td>Positional. Generate from a bundled sample e-commerce database instead of a real one — builds a throwaway SQLite copy in a temp directory, runs the normal pipeline, and opens the result in a browser. Every other option in this table still applies. Config auto-discovery is force-disabled and an explicit <code>--config</code> is ignored with a warning, so the demo always looks the same regardless of the cwd. Default output is <code>erd_demo.html</code> (not <code>erd.html</code>), so it never clobbers a real run's output</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
 <tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, or a Django project — source auto-detected</td></tr>
@@ -335,10 +335,16 @@ Once the flag list gets long, put it in a file instead. <code>.erdscope.json</co
 <code>.erdscope.yml</code>/<code>.yaml</code>, if PyYAML is installed) next to where you run the
 tool is picked up automatically — no <code>--config</code> needed. Most keys mirror a CLI option
 above (snake_case); <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
-(the DB connection — <code>engine</code> is <code>"mysql"</code>, the default, or <code>"postgres"</code>,
-which also flips the default port to 5432) and <code>relations</code> (manual FK declarations) are
-config-only, with no CLI equivalent.
+(the DB connection — <code>engine</code> is <code>"mysql"</code>, the default, <code>"postgres"</code>
+(also flips the default port to 5432), or <code>"sqlite"</code>) and <code>relations</code> (manual FK
+declarations) are config-only, with no CLI equivalent. For <code>engine: "sqlite"</code>,
+<code>database</code> is a local file path (not a database name) and <code>host</code>/<code>port</code>/<code>user</code>
+must be omitted:
 </p>
+<pre><code>{
+  "engine": "sqlite",
+  "database": "db/app.db"
+}</code></pre>
 <pre><code>{
   "host": "127.0.0.1",
   "port": 3306,

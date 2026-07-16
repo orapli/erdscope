@@ -136,7 +136,8 @@ Once the flag list above gets long, put it in a config file instead — `.erdsco
 Most keys mirror a CLI option (an explicit flag always wins over the config); the DB
 connection is config-only as `engine`/`host`/`port`/`user`/`database` — deliberately with
 no password field — and `relations` manually declares relations no FK, code, or inference
-can find. See the [Config file chapter of the manual](https://orapli.github.io/erdscope/manual.html#config-file) for the full key
+can find. `engine` can also be `"sqlite"`, in which case `database` is a local file path
+(not a database name) and `host`/`port`/`user` don't apply. See the [Config file chapter of the manual](https://orapli.github.io/erdscope/manual.html#config-file) for the full key
 list and semantics, and [`erdscope.example.yml`](erdscope.example.yml) for a fully
 annotated sample based on the live demo's schema.
 

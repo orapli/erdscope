@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI fallback path produce byte-identical output — the regression test for the NULL
   default bug below. Skips cleanly (no database required) unless `ERDSCOPE_IT_MYSQL_URL`
   / `ERDSCOPE_IT_POSTGRES_URL` are set, so it's safe inside a plain `unittest discover`
+- Config file: `engine: "sqlite"` is now accepted alongside `"mysql"`/`"postgres"`.
+  `database` is then a local file path (relative or absolute), not a database name,
+  assembled into a `sqlite:///` URL that round-trips exactly with the CLI's
+  `sqlite:///` handling. `host`/`port`/`user` don't apply to a local file and are
+  rejected with a clear error rather than silently ignored; paths containing `?`,
+  `#`, or control characters are rejected up front because the path is pasted into
+  a URL that is re-parsed downstream
 
 ### Fixed
 
