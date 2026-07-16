@@ -9,6 +9,8 @@ zero-dependency Python CLI.
 
 ```bash
 pip install erdscope
+erdscope demo   # no database of your own? try it right now — opens a sample diagram
+
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
 erdscope sqlite:///path/to/app.db -o erd.html
@@ -53,6 +55,18 @@ curl -O https://raw.githubusercontent.com/orapli/erdscope/main/erd.py
 python3 erd.py ...   # identical to the erdscope command below
 ```
 
+No database of your own to point it at yet? `erdscope demo` builds a small sample
+e-commerce SQLite database in a temp directory, generates the diagram, and opens it in
+your browser — nothing to download or set up:
+
+```bash
+erdscope demo
+```
+
+It's a normal run under the hood, so every other flag still applies
+(`erdscope demo --excel defs.xlsx`, `erdscope demo --only 'order*'`, ...); add
+`--no-open` to skip launching the browser.
+
 ```bash
 erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
 
@@ -80,9 +94,10 @@ erdscope --config schema.yml -o erd.html
 erdscope --models /path/to/rails/app --models /path/to/schema.prisma -o erd.html
 ```
 
-Want to try it right now with no database of your own? A ready-to-run SQLite
-sample ships in [`examples/`](examples/) — `python3 erd.py
-sqlite:///examples/demo_shop.db -o shop.html`. See [examples/README.md](examples/README.md).
+Cloned the repository instead of installing from PyPI? A ready-to-run SQLite sample
+(the same schema `erdscope demo` uses) also ships committed in
+[`examples/`](examples/) — `python3 erd.py sqlite:///examples/demo_shop.db -o shop.html`.
+See [examples/README.md](examples/README.md).
 
 Behind a bastion? Open an SSH tunnel first and point at localhost:
 
@@ -100,7 +115,8 @@ itself is made.
 
 | Option | Description |
 |---|---|
-| `-o FILE` | Output HTML path (default: `erd.html`) |
+| `demo` | Positional value: generate from a bundled sample database instead of a real one — no database of your own needed. Every other flag below still applies |
+| `-o FILE` | Output HTML path (default: `erd.html`; `erd_demo.html` for `demo`, so it never overwrites a real run's output) |
 | `--models PATH` | Merge associations parsed from code: a Rails project (or `app/models` dir), a `schema.prisma`, or a Django project — auto-detected. **Repeatable** — multiple sources merge in the order given (later wins). Usable with no database URL |
 | `--excel FILE.xlsx` | Also write a table-definition workbook: an overview sheet plus one sheet per table (columns, defaults, keys, comments, indexes, associations) |
 | `--excel-template FILE.xlsx` | Override the workbook's colors/fonts/borders from a template `.xlsx` — see `excel-template.xlsx` and its `Styles` sheet for the 5-cell contract (default: built-in styling) |
@@ -111,6 +127,7 @@ itself is made.
 | `--table-map 'Widget=crm_widgets'` | Rails only: override a model's table when static analysis can't determine it (e.g. `table_name` set inside a concern that lives in a gem, not the app). Repeatable; comma-separated lists accepted |
 | `--config PATH` | Load defaults from a config file instead of repeating flags — see below. Auto-discovered as `.erdscope.json`/`.yml`/`.yaml` in the current directory if not given |
 | `--no-config` | Skip config auto-discovery even if `.erdscope.*` exists in the cwd |
+| `--no-open` | Skip automatically opening a browser after generating. Only relevant to `demo` (which opens one by default); accepted but has no effect on a normal run |
 
 ## Config file
 

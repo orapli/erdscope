@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `erdscope demo`: try erdscope instantly with no database of your own. Builds the
+  sample e-commerce database (the same schema as `examples/demo_shop.db`) in a temp
+  directory, runs it through the normal pipeline, and opens the result in a browser.
+  Fixes the pip-installed quickstart: `pyproject.toml` ships this project as a single
+  `erd.py` module, so `examples/demo_shop.db` was never actually reachable after
+  `pip install erdscope`. Every other flag still applies (`--only`, `--excel`, ...);
+  config auto-discovery is force-disabled and an explicit `--config` is ignored with a
+  warning, so the demo is deterministic regardless of the cwd. New `--no-open` flag
+  skips the automatic browser launch (a no-op outside `demo`)
+
 ## [0.3.0] - 2026-07-14
 
 ### Added

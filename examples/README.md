@@ -3,6 +3,11 @@
 A ready-to-run sample so you can try erdscope in one command — no database
 server to set up.
 
+If you `pip install`ed erdscope rather than cloning this repository, `erdscope demo`
+is the fastest path — it builds this same sample database in a temp directory and
+opens the diagram for you, no files to fetch. Everything below is for working with
+the committed copy directly (e.g. after cloning the repo).
+
 ## `demo_shop.db` — a sample SQLite database
 
 `demo_shop.db` is a small e-commerce schema (the same one as the [hosted
