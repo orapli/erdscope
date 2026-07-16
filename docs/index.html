@@ -88,9 +88,10 @@ body.dark .srch-tgl.active{color:#93c5fd;background:#1e3a5f;border-color:#3b82f6
 .table-item.focused label{background:#eff6ff;color:#1d4ed8;font-weight:600}
 .table-item label input[type=checkbox]{accent-color:#3b82f6;flex-shrink:0}
 .tname{flex:0 1 auto;min-width:0;font-size:11px;font-family:'SF Mono','Fira Code',monospace;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  white-space:normal;overflow-wrap:anywhere}
 .tlogical{flex:1;min-width:0;font-size:10px;color:#94a3b8;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tail{margin-left:auto;display:flex;align-items:center;gap:4px;flex-shrink:0}
 .rel-badge{font-size:10px;background:#f1f5f9;color:#94a3b8;padding:1px 4px;border-radius:3px;flex-shrink:0}
 .col-hit{font-size:9px;background:#ecfeff;color:#0e7490;padding:1px 4px;border-radius:3px;flex-shrink:0;
   font-family:'SF Mono','Fira Code',monospace}
@@ -2242,8 +2243,12 @@ function renderTableList(){
       if(lg){const lgEl=document.createElement('span');lgEl.className='tlogical';lgEl.textContent=lg;lbl.appendChild(lgEl);}
       const hit=colHit(name);
       if(hit){const hb2=document.createElement('span');hb2.className='col-hit';hb2.textContent='⌕ '+hit;lbl.appendChild(hb2);}
+      // Relation count + ban button live in a `.tail` wrapper pinned to the
+      // row's right edge (margin-left:auto) so their position doesn't drift
+      // with the table name's length or whether a logical name is present.
+      const tail=document.createElement('span'); tail.className='tail';
       const ac=(t?.associations||[]).length;
-      if(ac>0){const b=document.createElement('span');b.className='rel-badge';b.textContent=ac;lbl.appendChild(b);}
+      if(ac>0){const b=document.createElement('span');b.className='rel-badge';b.textContent=ac;tail.appendChild(b);}
       const hb=document.createElement('button');
       hb.className='hide-btn'; hb.type='button'; hb.textContent='🚫';
       hb.title=isHidden?'Unban':'Ban completely (never shown, even by auto-expand)';
@@ -2251,7 +2256,8 @@ function renderTableList(){
         e.stopPropagation(); e.preventDefault();
         toggleBan(name);
       });
-      lbl.appendChild(hb);
+      tail.appendChild(hb);
+      lbl.appendChild(tail);
       item.appendChild(lbl);
       list.appendChild(item);
     });
