@@ -190,10 +190,24 @@ class TestUnescapeMysqlField(unittest.TestCase):
     def test_plain_string_unchanged(self):
         self.assertEqual(erd._unescape_mysql_field('plain text'), 'plain text')
 
-    def test_literal_string_null_is_not_the_marker(self):
-        # only the exact two-char field \N means SQL NULL — a real comment
-        # whose text happens to be the word NULL must survive as data
-        self.assertEqual(erd._unescape_mysql_field('NULL'), 'NULL')
+    def test_bare_null_literal_is_treated_as_sql_null(self):
+        # mysql --batch prints an actual SQL NULL as the bare unescaped
+        # word `NULL` (\N is the INTO OUTFILE / mysqldump spelling, not
+        # the batch client's). Both forms must map to '' (matching the PyMySQL
+        # path's None -> ''), or a NULL default surfaces as the literal
+        # string 'NULL' in the IR only via the CLI fallback (the bug this
+        # guards against). Accepted trade-off: a column whose comment/
+        # default text is genuinely the 4-letter word NULL is read back
+        # the same way, i.e. as empty — see the comment on
+        # _unescape_mysql_field.
+        self.assertEqual(erd._unescape_mysql_field('NULL'), '')
+
+    def test_copy_field_literal_string_null_is_not_the_marker(self):
+        # the postgres COPY-format unescaper is unaffected by the mysql
+        # bare-NULL quirk above: only the exact two-char \N means SQL NULL
+        # there, so a real comment whose text happens to be the word NULL
+        # must survive as data.
+        self.assertEqual(erd._unescape_copy_field('NULL'), 'NULL')
 
     def test_mysql_cli_fallback_survives_tab_and_newline_in_a_field(self):
         # integration-level: mysql_query_rows must not pass --raw (which

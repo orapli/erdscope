@@ -48,3 +48,59 @@ jobs:
 
       - name: Screenshot script smoke test
         run: python3 docs/gen_shots.py
+
+  # Runs against real MySQL/PostgreSQL service containers, independently of
+  # (and in parallel with) the `test` job above. tests/test_db_integration.py
+  # skips itself cleanly (unittest.skipUnless) whenever the ERDSCOPE_IT_*_URL
+  # env vars below aren't set, which is also why it's harmless for `test`'s
+  # zero-optional-dependency `unittest discover` pass to pick the file up too.
+  db-integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -uroot -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Python DB drivers + openpyxl
+        run: pip install pymysql "psycopg[binary]" openpyxl
+
+      - name: Ensure mysql/psql CLI clients are available (CLI-fallback path)
+        run: |
+          need_update=0
+          command -v mysql >/dev/null || need_update=1
+          command -v psql >/dev/null || need_update=1
+          if [ "$need_update" = 1 ]; then
+            sudo apt-get update
+          fi
+          command -v mysql >/dev/null || sudo apt-get install -y mysql-client
+          command -v psql >/dev/null || sudo apt-get install -y postgresql-client
+
+      - name: MySQL/PostgreSQL integration tests
+        env:
+          ERDSCOPE_IT_MYSQL_URL: mysql://root:root@127.0.0.1:3306/erdscope_it
+          ERDSCOPE_IT_POSTGRES_URL: postgres://postgres:pg@127.0.0.1:5432/erdscope_it
+        run: python3 -m unittest tests.test_db_integration -v
