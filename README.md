@@ -214,6 +214,12 @@ sources:
 (The optional top-level `version: 1` is a config-format marker — currently the only
 supported value, with no other effect; it's for future config-format changes to key off.)
 
+A typed source that parses **nothing** — say, a Prisma project accidentally declared as
+`rails.models` — is a hard error naming the source id and the layout the type expected,
+never a silently empty diagram. If an empty result is genuinely intended (a scaffolded
+but still-empty `app/models`, for example), opt in per source with `allow_empty: true`;
+a `rails.project` entry passes the flag down to both of its expanded halves.
+
 A **`rails.project`** entry is a macro for a whole Rails app root: it expands to both the
 `rails.schema` (`<root>/db/schema.rb`) and `rails.models` (`<root>/app/models`) halves,
 whichever exist —
@@ -258,6 +264,24 @@ Test-only, and only if you run that particular suite:
 | [openpyxl](https://pypi.org/project/openpyxl/) | Roundtrip-verifying `--excel` output in the unit tests (`tests/test_erd.py`); that one test skips itself if it's missing |
 | [Playwright](https://playwright.dev/python/) | The browser E2E suite (`tests/test_e2e.py`) — see [Tests](#tests) below |
 
+## Verified versions
+
+The input formats erdscope parses change rarely, so exact versions matter less than
+they might seem — newer releases are expected to keep working, though constructs
+beyond the tested ones may be ignored rather than parsed. For the record, this is what
+each input is actually verified against:
+
+| Input | Verified against |
+|---|---|
+| MySQL | **8.4** — real-server integration tests in CI (`information_schema`); developed against 8.x |
+| PostgreSQL | **16** — real-server integration tests in CI (`pg_catalog`/`information_schema`) |
+| SQLite | the `sqlite3` module bundled with CPython (any supported 3.x) |
+| Rails `schema.rb` | the format Rails **7.x / 8.x** writes (`ActiveRecord::Schema[7.x]`, and the classic un-versioned header) |
+| Rails models | the association DSL as of Rails **7.x** — `has_many`/`has_one`/`belongs_to`/`has_and_belongs_to_many`, `through:`, `polymorphic:`, STI, concerns, custom base classes; also exercised against Mastodon's real codebase. Dynamically computed definitions (and `structure.sql`) are out of scope |
+| Prisma | the schema language as of Prisma **5 / 6** — `@map`/`@@map`, enums, named relations, implicit and explicit m2m, self-relations, composite `@@id`/`@@unique`, `@@schema` |
+| Django | models as of Django **4.2 / 5.x** — FK / OneToOne / M2M (incl. `through=`), abstract bases, `db_table`/`db_column`, `GenericForeignKey` (kept as a polymorphic marker); a swappable `AUTH_USER_MODEL` FK keeps its column and skips the edge |
+| Python | 3.9+ (`requires-python`); CI runs the latest CPython 3.x |
+
 ## What you get
 
 Feature highlights — each link goes to the relevant [manual](https://orapli.github.io/erdscope/manual.html) chapter:
@@ -290,7 +314,11 @@ python3 -m unittest discover -s tests -v
 ```
 
 The IR builders and the Excel writer are covered by pure unit tests; the overlay
-parsers have minimal fixtures under `tests/fixture_*`. No database is required to
+parsers have fixtures under `tests/fixture_*` — basic plus advanced constructs per
+framework — and every input provider is additionally held to one shared contract
+(`tests/test_provider_contract.py`): typed dispatch, standalone HTML/Excel generation,
+merging over a DB layer, 1:N / 1:1 / M:N / self-reference, association provenance, and
+empty-input diagnostics, all over the same small domain. No database is required to
 run the tests.
 
 `tests/test_e2e.py` drives the generated HTML's client-side JS (grid layout,

@@ -34,6 +34,8 @@ max_rows: 15
 # rails.project is a macro for a whole Rails app root that expands to both
 # the rails.schema (db/schema.rb) and rails.models (app/models) halves.
 # Authority order: Config > live DB > rails.schema > models.
+# A typed source that parses NOTHING is a hard error (never a silently empty
+# diagram); add `allow_empty: true` to a source to accept an empty result.
 #
 # The optional top-level `version: 1` is a config-format marker — currently
 # the only supported value, with no other effect; it's for future
