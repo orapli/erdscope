@@ -9,6 +9,8 @@ COLLAB_*.md
 # internal design/working docs (kept local, like HANDOFF.md above)
 PRODUCT_REVIEW.md
 REFACTOR_PLAN.md
+DESIGN_ROADMAP.md
+NOTES_PHASE1_SPEC.md
 dist/
 build/
 *.egg-info/
