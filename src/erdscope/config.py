@@ -102,7 +102,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -157,6 +157,35 @@ def _check_config_types(config, path):
                  '({table, column, references, ...})')
     if 'tables' in config:
         _check_config_tables(config['tables'], path)
+    if 'sources' in config:
+        _check_config_sources(config['sources'], path)
+
+# ---------------------------------------------------------------------------
+# `sources:` — typed code-source declarations (D5). Purely syntactic here:
+# shape, required fields, allow-listed keys, Config-internal duplicate `id`.
+# Whether `type` names a REGISTERED source type is a dispatch-time (sources.py
+# run_input_specs) concern, not a load-time one — an --adapter plugin loaded
+# later in the pipeline can still register its own overlay/type in time.
+# ---------------------------------------------------------------------------
+_CONFIG_SOURCE_KEYS = {'id', 'type', 'path'}
+
+def _check_config_sources(sources, path):
+    if not isinstance(sources, list):
+        sys.exit(f'Error: {path} `sources` must be a list of objects '
+                 '({id, type, path})')
+    seen = set()
+    for i, s in enumerate(sources):
+        sw = f'sources[{i}]'
+        if not isinstance(s, dict):
+            sys.exit(f'Error: {path} `{sw}` must be an object')
+        _reject_unknown_keys(s, _CONFIG_SOURCE_KEYS, path, sw)
+        for key in ('id', 'type', 'path'):
+            val = s.get(key)
+            if not isinstance(val, str) or not val:
+                sys.exit(f'Error: {path} `{sw}` needs a non-empty string `{key}`')
+        if s['id'] in seen:
+            sys.exit(f'Error: {path} `sources` has a duplicate id {s["id"]!r}')
+        seen.add(s['id'])
 
 # ---------------------------------------------------------------------------
 # `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)
@@ -421,13 +450,18 @@ def assemble_config_url(config):
 # CLI
 # ---------------------------------------------------------------------------
 def _framework_project_name(mroot):
-    """A meaningful project name for a --models path (§10 title fallback).
-    Walk from a Rails app/models dir up to the project root, from a
-    prisma/schema.prisma up to the project, and from a schema file up to its
-    directory, then use the basename."""
+    """A meaningful project name for the first normalized InputSpec's path (§10
+    title fallback / D6.3). Walk from a Rails app/models dir up to the project
+    root, from a prisma/schema.prisma up to the project, from a Rails
+    db/schema.rb up to ITS project root (file -> parent `db` -> its parent),
+    and from any other schema file up to its directory, then use the
+    basename."""
     p = mroot
     if p.is_file():                                    # e.g. .../schema.prisma
-        p = p.parent
+        if p.name == 'schema.rb' and p.parent.name == 'db':  # .../<proj>/db/schema.rb
+            p = p.parent.parent
+        else:
+            p = p.parent
     if p.name == 'models' and p.parent.name == 'app':  # Rails app/models
         p = p.parent.parent
     elif p.name == 'prisma':                           # .../<proj>/prisma

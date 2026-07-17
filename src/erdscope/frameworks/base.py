@@ -88,6 +88,16 @@ def framework_overlay_for(root):
             return overlay
     return None
 
+def framework_overlays_matching(root):
+    """Every registered overlay (in priority order) that recognises `root`, not
+    just the first. Used only to report ambiguity when an untyped --models/
+    config `models` path matches more than one framework (sources.py); the
+    winner is always overlays_matching(root)[0], i.e. framework_overlay_for's
+    pick — this function changes nothing about detection, only what gets
+    reported about it."""
+    return [cls for cls in sorted(FRAMEWORK_OVERLAYS, key=lambda c: (c.priority, c.name))
+            if cls().detect(root)]
+
 def detect_code_source(root):
     """Classify a --models path: the `name` of the overlay that recognises it
     (a Rails app/models dir, a Prisma schema, or a Django project), or None."""

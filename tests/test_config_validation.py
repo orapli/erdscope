@@ -456,6 +456,70 @@ class TestConfigModelsKey(unittest.TestCase):
         self.assertIn('models', str(cm.exception))
 
 
+class TestConfigSourcesKey(unittest.TestCase):
+    """D5: config `sources` — a typed code-source list. Purely syntactic here
+    (shape/required-keys/duplicate-id); whether `type` names a REGISTERED
+    source type is a dispatch-time concern (sources.py), not load time."""
+
+    def test_valid_sources_list_accepted(self):
+        cfg = _load({'sources': [
+            {'id': 'app', 'type': 'rails.models', 'path': '/proj/app/models'},
+            {'id': 'schema', 'type': 'rails.schema', 'path': '/proj/db/schema.rb'}]})
+        self.assertEqual(len(cfg['sources']), 2)
+
+    def test_unregistered_type_still_loads_clean(self):
+        # a plugin type an --adapter file registers later; unknown at load
+        # time is fine (only dispatch checks registration)
+        cfg = _load({'sources': [{'id': 'x', 'type': 'totally.unknown', 'path': '/a'}]})
+        self.assertEqual(cfg['sources'][0]['type'], 'totally.unknown')
+
+    def test_sources_must_be_a_list(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': {'id': 'x'}})
+        self.assertIn('sources', str(cm.exception))
+
+    def test_source_entry_must_be_an_object(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': ['not-an-object']})
+        self.assertIn('sources[0]', str(cm.exception))
+
+    def test_source_missing_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': [{'type': 'rails.models', 'path': '/a'}]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_source_missing_type_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': [{'id': 'x', 'path': '/a'}]})
+        self.assertIn('type', str(cm.exception))
+
+    def test_source_missing_path_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': [{'id': 'x', 'type': 'rails.models'}]})
+        self.assertIn('path', str(cm.exception))
+
+    def test_source_empty_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': [{'id': '', 'type': 'rails.models', 'path': '/a'}]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_source_unknown_key_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': [{'id': 'x', 'type': 'rails.models', 'path': '/a',
+                                'bogus': 1}]})
+        self.assertIn('bogus', str(cm.exception))
+
+    def test_duplicate_source_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': [{'id': 'x', 'type': 'rails.models', 'path': '/a'},
+                               {'id': 'x', 'type': 'rails.schema', 'path': '/b'}]})
+        self.assertIn('duplicate', str(cm.exception))
+        self.assertIn('x', str(cm.exception))
+
+    def test_empty_sources_list_is_syntactically_fine(self):
+        self.assertEqual(_load({'sources': []})['sources'], [])
+
+
 class TestConfigOwnerFkAliasMerge(unittest.TestCase):
     def test_owner_fk_aliases_survive_into_merged_ir(self):
         # P1-e: two aliased owner_fk associations on the same column both reach

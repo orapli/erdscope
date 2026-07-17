@@ -1213,6 +1213,16 @@ def framework_overlay_for(root):
             return overlay
     return None
 
+def framework_overlays_matching(root):
+    """Every registered overlay (in priority order) that recognises `root`, not
+    just the first. Used only to report ambiguity when an untyped --models/
+    config `models` path matches more than one framework (sources.py); the
+    winner is always overlays_matching(root)[0], i.e. framework_overlay_for's
+    pick — this function changes nothing about detection, only what gets
+    reported about it."""
+    return [cls for cls in sorted(FRAMEWORK_OVERLAYS, key=lambda c: (c.priority, c.name))
+            if cls().detect(root)]
+
 def detect_code_source(root):
     """Classify a --models path: the `name` of the overlay that recognises it
     (a Rails app/models dir, a Prisma schema, or a Django project), or None."""
@@ -1765,6 +1775,122 @@ class RailsOverlay(FrameworkOverlay):
     def build(self, root, table_map):
         mdir = root / 'app' / 'models' if (root / 'app' / 'models').is_dir() else root
         return rails_provider(mdir, table_map)
+# ---------------------------------------------------------------------------
+# Input sources — InputSpec normalization + source-type registry/dispatch.
+#
+# Every code-source input (legacy --models, config `models`, and the typed
+# config `sources` list) normalizes to a common, ordered list of InputSpec
+# dicts, which then run through a small source-type registry to produce the
+# ProviderResult layers merge_ir folds. A typed source (config `sources[].type`)
+# skips detection entirely and calls the named type's builder directly; an
+# untyped source (legacy --models / config `models`) keeps today's
+# auto-detection behavior, with ambiguity/ note-worthy detections reported to
+# stderr instead of resolved silently.
+#
+# InputSpec = {'id': str, 'type': str|None, 'path': Path}   # type None = auto-detect
+# ---------------------------------------------------------------------------
+
+# Static source-type registry: type name -> builder fn(spec, table_map) ->
+# ProviderResult. The '<overlay.name>.models' types (rails.models,
+# prisma.models, django.models, and any --adapter overlay's own) are NOT
+# listed here — they're derived dynamically from FRAMEWORK_OVERLAYS in
+# _source_type_builder/known_source_type_names so a newly-registered overlay
+# gets a usable `sources[].type` for free, with no registry edit.
+SOURCE_TYPES = {}
+
+
+def _models_type_builder(overlay_cls):
+    def build(spec, table_map):
+        return overlay_cls().build(spec['path'], table_map)
+    return build
+
+
+def _source_type_builder(type_name):
+    """Resolve a sources[].type name to its builder fn(spec, table_map) ->
+    ProviderResult, or None if the name isn't (yet) registered."""
+    if type_name in SOURCE_TYPES:
+        return SOURCE_TYPES[type_name]
+    for cls in FRAMEWORK_OVERLAYS:
+        if f'{cls.name}.models' == type_name:
+            return _models_type_builder(cls)
+    return None
+
+
+def known_source_type_names():
+    """Every currently valid sources[].type value, sorted — the static
+    registry plus one '<overlay.name>.models' entry per registered
+    FrameworkOverlay. Used only to build "unknown type" error messages."""
+    dynamic = {f'{cls.name}.models' for cls in FRAMEWORK_OVERLAYS}
+    return sorted(set(SOURCE_TYPES) | dynamic)
+
+
+def normalize_input_specs(models_list, config_sources):
+    """Build the deterministic, ordered InputSpec list merge_ir's layers come
+    from (D4): config `sources` first, in declared order, then each legacy
+    --models / config `models` entry (id `models[<i>]`, type None — auto-
+    detected at dispatch), preserving their given order. Later entries win
+    same-kind merge ties (existing merge rule); CLI --models sorting after
+    config `sources` is consistent with "CLI wins over config"."""
+    specs = []
+    for s in config_sources:
+        specs.append({'id': s['id'], 'type': s['type'],
+                      'path': Path(s['path']).expanduser().resolve()})
+    for i, m in enumerate(models_list):
+        specs.append({'id': f'models[{i}]', 'type': None,
+                      'path': Path(m).expanduser().resolve()})
+    return specs
+
+
+def run_input_specs(specs, table_map):
+    """Dispatch every InputSpec (in order) to its ProviderResult, printing a
+    per-source progress line and forwarding every warning the provider
+    returns to stderr (D4 — the first real consumer of ProviderResult
+    warnings)."""
+    results = []
+    for spec in specs:
+        result = (_run_typed_spec(spec, table_map) if spec['type'] is not None
+                  else _run_untyped_spec(spec, table_map))
+        for w in result['warnings']:
+            print(f'Warning: {w}', file=sys.stderr)
+        results.append(result)
+    return results
+
+
+def _run_typed_spec(spec, table_map):
+    sid, stype, path = spec['id'], spec['type'], spec['path']
+    builder = _source_type_builder(stype)
+    if builder is None:
+        sys.exit(f"Error: source {sid!r}: unknown type {stype!r} "
+                 f"(known types: {', '.join(known_source_type_names())})")
+    if not path.exists():
+        sys.exit(f"Error: source {sid!r}: {path} does not exist")
+    result = builder(spec, table_map)
+    print(f'Merged {result["source"]["provider"]} associations from {path}', file=sys.stderr)
+    return result
+
+
+def _run_untyped_spec(spec, table_map):
+    """Legacy --models / config `models` auto-detection (today's behavior),
+    plus ambiguity reporting (D4b/c): when more than one FrameworkOverlay
+    matches, the winner is unchanged (framework_overlay_for's own priority
+    order) but now a stderr note names the runner-up(s) and points at
+    `sources[].type` as the way to pin it down explicitly."""
+    sid, path = spec['id'], spec['path']
+    if not path.exists():
+        sys.exit(f'Error: {path} does not exist')
+    matches = framework_overlays_matching(path)
+    if not matches:
+        sys.exit(f'Error: could not detect the code kind at {path} (expected a Rails '
+                 'app/models dir, a schema.prisma, a Django project, or a db/schema.rb '
+                 'file — declare `sources[].type` in the config to be explicit)')
+    winner = matches[0]
+    if len(matches) > 1:
+        names = ', '.join(c.name for c in matches)
+        print(f'Note: {path} matched multiple frameworks ({names}); using {winner.name}. '
+              f'Declare sources[].type in the config to override.', file=sys.stderr)
+    result = winner().build(path, table_map)
+    print(f'Merged {result["source"]["provider"]} associations from {path}', file=sys.stderr)
+    return result
 # ---------------------------------------------------------------------------
 # Provider dispatchers (DB) + config layer construction/validation.
 #
@@ -5955,7 +6081,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -6010,6 +6136,35 @@ def _check_config_types(config, path):
                  '({table, column, references, ...})')
     if 'tables' in config:
         _check_config_tables(config['tables'], path)
+    if 'sources' in config:
+        _check_config_sources(config['sources'], path)
+
+# ---------------------------------------------------------------------------
+# `sources:` — typed code-source declarations (D5). Purely syntactic here:
+# shape, required fields, allow-listed keys, Config-internal duplicate `id`.
+# Whether `type` names a REGISTERED source type is a dispatch-time (sources.py
+# run_input_specs) concern, not a load-time one — an --adapter plugin loaded
+# later in the pipeline can still register its own overlay/type in time.
+# ---------------------------------------------------------------------------
+_CONFIG_SOURCE_KEYS = {'id', 'type', 'path'}
+
+def _check_config_sources(sources, path):
+    if not isinstance(sources, list):
+        sys.exit(f'Error: {path} `sources` must be a list of objects '
+                 '({id, type, path})')
+    seen = set()
+    for i, s in enumerate(sources):
+        sw = f'sources[{i}]'
+        if not isinstance(s, dict):
+            sys.exit(f'Error: {path} `{sw}` must be an object')
+        _reject_unknown_keys(s, _CONFIG_SOURCE_KEYS, path, sw)
+        for key in ('id', 'type', 'path'):
+            val = s.get(key)
+            if not isinstance(val, str) or not val:
+                sys.exit(f'Error: {path} `{sw}` needs a non-empty string `{key}`')
+        if s['id'] in seen:
+            sys.exit(f'Error: {path} `sources` has a duplicate id {s["id"]!r}')
+        seen.add(s['id'])
 
 # ---------------------------------------------------------------------------
 # `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)
@@ -6274,13 +6429,18 @@ def assemble_config_url(config):
 # CLI
 # ---------------------------------------------------------------------------
 def _framework_project_name(mroot):
-    """A meaningful project name for a --models path (§10 title fallback).
-    Walk from a Rails app/models dir up to the project root, from a
-    prisma/schema.prisma up to the project, and from a schema file up to its
-    directory, then use the basename."""
+    """A meaningful project name for the first normalized InputSpec's path (§10
+    title fallback / D6.3). Walk from a Rails app/models dir up to the project
+    root, from a prisma/schema.prisma up to the project, from a Rails
+    db/schema.rb up to ITS project root (file -> parent `db` -> its parent),
+    and from any other schema file up to its directory, then use the
+    basename."""
     p = mroot
     if p.is_file():                                    # e.g. .../schema.prisma
-        p = p.parent
+        if p.name == 'schema.rb' and p.parent.name == 'db':  # .../<proj>/db/schema.rb
+            p = p.parent.parent
+        else:
+            p = p.parent
     if p.name == 'models' and p.parent.name == 'app':  # Rails app/models
         p = p.parent.parent
     elif p.name == 'prisma':                           # .../<proj>/prisma
@@ -6628,13 +6788,16 @@ def _run_pipeline(args):
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
     cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
+    config_sources = config.get('sources') or []  # shape already validated by load_config()
+
     # ── valid-input check (§10): at least one SCHEMA source (DB / Framework /
-    #    config.tables). relations alone is not a source — it needs a base. ──
-    if not (url or models_list or config_tables):
+    #    config.tables / config.sources). relations alone is not a source — it
+    #    needs a base. ──
+    if not (url or models_list or config_tables or config_sources):
         sys.exit('Error: no schema input. Provide at least one of: a database URL '
                  '(mysql:// or postgres://) as the argument or config `database`; '
-                 '--models pointing at a Rails/Prisma/Django project; or a config file '
-                 'with a `tables:` section.')
+                 '--models pointing at a Rails/Prisma/Django project; a config `sources` '
+                 'entry; or a config file with a `tables:` section.')
 
     # ── collect provider layers, low→high spec priority, then merge (§3) ──
     layers = []
@@ -6645,16 +6808,16 @@ def _run_pipeline(args):
         print(f'Fetched {len(db_result["tables"])} tables from {engine_name}', file=sys.stderr)
         layers.append(db_result)
 
-    fw_root = None
-    for m in models_list:  # each --models / config `models` entry, in order
-        mroot = Path(m).expanduser().resolve()
-        if not mroot.exists():
-            sys.exit(f'Error: {mroot} does not exist')
-        fw = framework_provider(mroot, args.table_map)
-        layers.append(fw)
-        if fw_root is None:
-            fw_root = mroot  # the first framework drives the title fallback (§10)
-        print(f'Merged {fw["source"]["provider"]} associations from {mroot}', file=sys.stderr)
+    # Code-source inputs (framework `--models`/config `models`, and config
+    # `sources` — rails.schema, `<overlay>.models`, the rails.project macro)
+    # normalize to one deterministic InputSpec order — config `sources`
+    # (declared order, macros expanded) then legacy `models` entries (D3/D4) —
+    # then dispatch through the source-type registry. Cross-kind priority still
+    # comes from _PHYSICAL_RANK/_LOGICAL_RANK, not list order, so a schema
+    # layer listed before a framework layer still resolves ties correctly.
+    specs = normalize_input_specs(models_list, config_sources)
+    layers += run_input_specs(specs, args.table_map)
+    fw_root = specs[0]['path'] if specs else None  # first spec drives the title fallback (§10)
 
     # config.tables join as a top-priority config layer (add/override/drop/
     # replace — §6.2/§7). Its DROP ops are semantic-validated against the merged
