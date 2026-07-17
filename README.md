@@ -20,9 +20,10 @@ erdscope sqlite:///path/to/app.db -o erd.html
 
 - **Database** (MySQL / PostgreSQL / SQLite) — the source of truth for tables, columns,
   comments, indexes, and real foreign keys.
-- **Application code** (`--models`: Rails / Prisma / Django) — adds association semantics
-  the database cannot express (`has_many :through`, polymorphic, ...), and can stand on
-  its own when there is no DB to point at.
+- **Application code** (`--models`: Rails / Prisma / Django, or a Rails `db/schema.rb` —
+  see [Typed input sources](#typed-input-sources-sources) below) — adds association
+  semantics the database cannot express (`has_many :through`, polymorphic, ...), and can
+  stand on its own when there is no DB to point at.
 - **Config file** (`tables:`) — declare or patch a schema by hand: add tables, columns,
   indexes, and associations, or override and delete what the DB or code got wrong.
 
@@ -191,6 +192,43 @@ something that actually exists once all sources are merged) — typos never pass
 The full `tables:` schema, the `drop`/`replace` operations, and the precedence rules are
 documented in the [manual](https://orapli.github.io/erdscope/manual.html#config-file).
 
+### Typed input sources (`sources:`)
+
+`--models`/config `models` auto-detect what kind of project a path is. The config-only
+**`sources:`** list is the typed alternative: each entry names its own `type`, so nothing
+needs detecting and several inputs can be declared explicitly and unambiguously —
+including **`rails.schema`**, which statically parses a Rails `db/schema.rb` file
+(columns, indexes, real foreign keys) with **no live database and no Ruby execution**:
+
+```yaml
+sources:
+  - id: schema
+    type: rails.schema
+    path: db/schema.rb
+  - id: app
+    type: rails.models         # every registered overlay gets its own <name>.models type
+    path: app/models
+```
+
+A **`rails.project`** entry is a macro for a whole Rails app root: it expands to both the
+`rails.schema` (`<root>/db/schema.rb`) and `rails.models` (`<root>/app/models`) halves,
+whichever exist —
+
+```yaml
+sources:
+  - id: app
+    type: rails.project
+    path: ../myapp
+```
+
+is equivalent to declaring both `rails.schema` and `rails.models` entries above. A
+`schema.rb`-derived foreign key merges as a **schema FK** (a teal badge in the viewer,
+distinct from a live `DB FK`), and the merge authority order extends to
+**Config > live DB > rails.schema > models** (physical facts) — a `schema.rb` dump is
+closer to the real database than code is, but a live DB read still wins when both are
+present. See the [Input sources chapter of the manual](https://orapli.github.io/erdscope/manual.html#input-sources)
+for the full `sources[]` reference.
+
 ## Dependencies
 
 `erd.py` runs with **zero required dependencies** — everything below is optional, and
@@ -224,7 +262,8 @@ Feature highlights — each link goes to the relevant [manual](https://orapli.gi
   column comments, indexes, and real FK constraints, read from the database catalog
   (`information_schema` on MySQL, `pg_catalog` on PostgreSQL)
 - **Code semantics on top** — `--models` merges Rails / Prisma / Django associations;
-  declared, DB-FK, and inferred edges stay [visually distinct](https://orapli.github.io/erdscope/manual.html#viewer-edges)
+  declared, DB-FK, schema FK (a statically-parsed `rails.schema` foreign key), and
+  inferred edges stay [visually distinct](https://orapli.github.io/erdscope/manual.html#viewer-edges)
 - **[Interactive exploration](https://orapli.github.io/erdscope/manual.html#viewer-guide)** — focus with depth and dependency
   direction, two-level hiding, table *and column* search (with regex/case toggles), a
   non-filtering Highlight search that survives into exports, named views, share links

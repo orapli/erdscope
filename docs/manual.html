@@ -19,6 +19,7 @@
   --accent:#2563eb; --accent-soft:#dbeafe; --accent-fg:#1e3a5f;
   --amber-soft:#fef9c3; --amber-fg:#854d0e;
   --purple-soft:#ede9fe; --purple-fg:#5b21b6;
+  --teal-soft:#ccfbf1; --teal-fg:#0f766e;
   --code-bg:#f1f5f9; --code-fg:#334155;
   --shadow: 0 1px 3px rgba(15,23,42,.08);
   --mono: 'SF Mono','Fira Code',ui-monospace,Menlo,Consolas,monospace;
@@ -31,6 +32,7 @@
   --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
   --amber-soft:#3f2d05; --amber-fg:#fcd34d;
   --purple-soft:#2e1065; --purple-fg:#d8b4fe;
+  --teal-soft:#134e4a; --teal-fg:#5eead4;
   --code-bg:#141f36; --code-fg:#cbd5e1;
   --shadow: 0 1px 3px rgba(0,0,0,.4);
 }
@@ -42,6 +44,7 @@
     --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
     --amber-soft:#3f2d05; --amber-fg:#fcd34d;
     --purple-soft:#2e1065; --purple-fg:#d8b4fe;
+  --teal-soft:#134e4a; --teal-fg:#5eead4;
     --code-bg:#141f36; --code-fg:#cbd5e1;
     --shadow: 0 1px 3px rgba(0,0,0,.4);
   }
@@ -82,6 +85,7 @@ h2:hover .anchor-link, h3:hover .anchor-link{opacity:1}
 .badge-inf{background:var(--amber-soft); color:var(--amber-fg)}
 .badge-dbfk{background:var(--accent-soft); color:var(--accent-fg)}
 .badge-manual{background:var(--purple-soft); color:var(--purple-fg)}
+.badge-schemafk{background:var(--teal-soft); color:var(--teal-fg)}
 .btn-example{display:inline-block; background:var(--bg-inset); border:1px solid var(--border-strong); border-radius:6px; padding:2px 9px; font-size:12.5px; font-family:var(--mono); color:var(--fg)}
 .shot{max-width:100%; border-radius:10px; border:1px solid var(--border); box-shadow:var(--shadow); display:block; margin:1.4em 0 .4em}
 .cap{font-size:12.5px; color:var(--fg-muted); margin:0 0 1.4em}
@@ -313,7 +317,7 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL/SQLite can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there; for <code>engine: sqlite</code>, <code>database</code> is a file path and <code>host</code>/<code>port</code>/<code>user</code> don't apply — see <a href="#config-file">Config file</a>).</td></tr>
 <tr><td><code>demo</code></td><td>Positional. Generate from a bundled sample e-commerce database instead of a real one — builds a throwaway SQLite copy in a temp directory, runs the normal pipeline, and opens the result in a browser. Every other option in this table still applies. Config auto-discovery is force-disabled and an explicit <code>--config</code> is ignored with a warning, so the demo always looks the same regardless of the cwd. Default output is <code>erd_demo.html</code> (not <code>erd.html</code>), so it never clobbers a real run's output</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
-<tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, or a Django project — source auto-detected</td></tr>
+<tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, a Django project, or a Rails <code>db/schema.rb</code> file — source auto-detected. For an unambiguous, typed alternative see config <a href="#input-sources"><code>sources:</code></a></td></tr>
 <tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
@@ -336,8 +340,10 @@ Once the flag list gets long, put it in a file instead. <code>.erdscope.json</co
 tool is picked up automatically — no <code>--config</code> needed. Most keys mirror a CLI option
 above (snake_case); <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code>
 (the DB connection — <code>engine</code> is <code>"mysql"</code>, the default, <code>"postgres"</code>
-(also flips the default port to 5432), or <code>"sqlite"</code>) and <code>relations</code> (manual FK
-declarations) are config-only, with no CLI equivalent. For <code>engine: "sqlite"</code>,
+(also flips the default port to 5432), or <code>"sqlite"</code>), <code>relations</code> (manual FK
+declarations), and <a href="#input-sources"><code>sources</code></a> (typed input declarations,
+including <code>rails.schema</code>) are config-only, with no CLI equivalent. For
+<code>engine: "sqlite"</code>,
 <code>database</code> is a local file path (not a database name) and <code>host</code>/<code>port</code>/<code>user</code>
 must be omitted:
 </p>
@@ -373,6 +379,66 @@ prompt.</p>
 <p>See
 <a href="https://github.com/orapli/erdscope/blob/main/erdscope.example.yml"><code>erdscope.example.yml</code></a>
 for a fully annotated sample (based on the live demo's schema) with every key explained.</p>
+
+<h3 id="input-sources">Typed input sources (<code>sources:</code>)</h3>
+<p>
+<code>--models</code>/config <code>models</code> auto-detect what kind of project a path is (a Rails
+<code>app/models</code> dir, a <code>schema.prisma</code>, a Django project — or, since a path can
+also be a <code>db/schema.rb</code> <em>file</em>, a static Rails schema dump). The config-only
+<code>sources:</code> key is the typed alternative: a list of <code>{ id, type, path }</code>
+objects, each naming its own <code>type</code> so nothing needs detecting. It's independent of
+<code>models</code> — both apply if both are given, in the order <code>sources</code> (declared
+order) then <code>models</code> (later wins ties, same as today).
+</p>
+<pre><code>sources:
+  - id: schema
+    type: rails.schema
+    path: db/schema.rb
+  - id: app
+    type: rails.models
+    path: app/models</code></pre>
+<p>
+Every registered framework overlay gets a <code>&lt;name&gt;.models</code> type for free
+(<code>rails.models</code>, <code>prisma.models</code>, <code>django.models</code>, and any
+<code>--adapter</code>-registered overlay's own) — it calls that overlay's parser directly, the
+same as auto-detection would, just without the detection step. <code>type</code> isn't checked
+against the registry until the source actually runs, so a type an <code>--adapter</code> plugin
+registers is valid even though it doesn't exist yet when the config loads.
+</p>
+<p>
+<strong><code>rails.schema</code></strong> is new: it statically parses a Rails
+<code>db/schema.rb</code> file — the generated, canonical dump of a Rails app's database schema —
+into columns, indexes, primary keys, and foreign keys, entirely by text analysis.
+<strong>It never executes Ruby</strong>, so it works with no Rails runtime, no gems installed, and
+no live database — only the checked-in <code>schema.rb</code> file itself. Anything the parser
+can't recognize (a dynamic default, an unsupported column type, an unrecognized statement) is
+reported as a warning on stderr, never silently dropped; a foreign key it finds becomes an
+association carrying the <strong>schema FK</strong> provenance — see
+<a href="#viewer-edges">Edge types</a>.
+</p>
+<p>
+<strong><code>rails.project</code></strong> is a macro for a whole Rails app root: it expands to
+both the <code>rails.schema</code> (<code>&lt;path&gt;/db/schema.rb</code>) and
+<code>rails.models</code> (<code>&lt;path&gt;/app/models</code>) halves, whichever exist (a
+project with only one of the two still works, with a note on stderr naming what was skipped; a
+root with neither is a hard error):
+</p>
+<pre><code>sources:
+  - id: app
+    type: rails.project
+    path: ../myapp</code></pre>
+<p>
+<strong>Authority order</strong> extends with the new <code>schema</code> layer: physical facts
+(column types, indexes, primary keys) follow
+<strong>Config &gt; live DB &gt; rails.schema &gt; models</strong> — a <code>schema.rb</code> dump
+reflects the real database more closely than parsed code does, but a live DB read still wins when
+both are present. Associations/comments (logical names) follow
+<strong>Config &gt; models &gt; rails.schema &gt; DB</strong> — a declared association still beats
+a machine-derived one, but a parsed <code>schema.rb</code> foreign key beats a bare DB FK's
+machine-derived name. A <code>schema.rb</code>-derived foreign key that a model's
+<code>belongs_to</code> also declares merges into one edge (the model's name wins, provenance
+becomes <code>declared</code>) — the same reconciliation a live DB FK already gets.
+</p>
 
 <h3>Manual relations</h3>
 <p>
@@ -571,7 +637,7 @@ automatically, so you can paste it straight into a PR description or chat.</p>
 <p>Three kinds of relation feed the diagram, but they render as <strong>two</strong> distinct line
 styles on the canvas, plus badges in the Details pane:</p>
 <ul>
-<li><strong>Solid line</strong> — the default: a declared association (from <code>--models</code>) or a real DB FK constraint. On the canvas these two look the same; the Details pane's association list distinguishes them with a <span class="badge badge-dbfk">DB FK</span> badge for constraint-backed edges, or no badge for a plain declared association.</li>
+<li><strong>Solid line</strong> — the default: a declared association (from <code>--models</code>), a real DB FK constraint, or a foreign key statically parsed from a Rails <code>db/schema.rb</code> (<a href="#input-sources"><code>sources[].type: rails.schema</code></a>). On the canvas these all look the same; the Details pane's association list distinguishes them with a <span class="badge badge-dbfk">DB FK</span> badge for constraint-backed edges, a <span class="badge badge-schemafk">schema FK</span> badge for a <code>schema.rb</code>-derived edge, or no badge for a plain declared association.</li>
 <li><strong>Dashed line</strong> — a many-to-many relation (only reachable via a join table / <code>has_and_belongs_to_many</code> / <code>through</code>, no direct <code>belongs_to</code>/<code>has_one</code>).</li>
 <li><strong>Faint dotted line</strong> — a name-based guess from <code>--infer-fk</code>, shown only when every association backing that edge is inferred. Marked with a <span class="badge badge-inf">inferred</span> badge in the Details pane. The column-list "FK" badge is <em>never</em> granted by inference alone — only a real association earns it.</li>
 </ul>
