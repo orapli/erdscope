@@ -59,6 +59,9 @@ class FrameworkOverlay(abc.ABC):
         e.g. 'sequelize';
       * set `priority` if detection ordering matters (lower runs first; the
         first overlay whose detect() is true wins);
+      * set `expects` to a short human description of the input layout the
+        overlay parses — it is quoted in the "found nothing to parse" error
+        a typed `sources[].type` run raises when build() returns no tables;
       * implement detect(root) -> bool over a --models path (a directory, or a
         single schema file);
       * implement build(root, table_map) -> ProviderResult (table_map is the
@@ -67,6 +70,7 @@ class FrameworkOverlay(abc.ABC):
     """
     name = ''
     priority = 100
+    expects = ''  # human description of the expected input layout (see above)
 
     @abc.abstractmethod
     def detect(self, root):

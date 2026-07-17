@@ -1,0 +1,79 @@
+// Advanced Prisma constructs fixture: composite @@id / @@unique, an explicit
+// m2m join model, named relations (two relations between the same pair),
+// a 1:N self-relation, an implicit m2m self-relation, multi-schema
+// (`schemas` + @@schema), and a second datasource block (invalid in real
+// Prisma, but the parser must not trip over it).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "auth"]
+}
+
+datasource legacy {
+  provider = "mysql"
+  url      = env("LEGACY_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  handle    String   @unique
+  posts     Post[]   @relation("Written")
+  reviewed  Post[]   @relation("Reviewed")
+  follows   Follow[] @relation("Follower")
+  followers Follow[] @relation("Followee")
+
+  @@schema("auth")
+}
+
+// explicit many-to-many: a join model with two FK-holding relations and a
+// composite primary key over both FK columns
+model Follow {
+  followerId Int  @map("follower_id")
+  followeeId Int  @map("followee_id")
+  follower   User @relation("Follower", fields: [followerId], references: [id])
+  followee   User @relation("Followee", fields: [followeeId], references: [id])
+
+  @@id([followerId, followeeId])
+  @@schema("public")
+}
+
+model Post {
+  id         Int    @id @default(autoincrement())
+  title      String
+  authorId   Int
+  reviewerId Int?
+  author     User   @relation("Written", fields: [authorId], references: [id])
+  reviewer   User?  @relation("Reviewed", fields: [reviewerId], references: [id])
+  // 1:N self-relation: one Post has many replies
+  parentId   Int?
+  parent     Post?  @relation("Thread", fields: [parentId], references: [id])
+  replies    Post[] @relation("Thread")
+  // block-level single-field unique — same 1:1 signal as an inline @unique
+  deviceId   Int
+  device     Device @relation(fields: [deviceId], references: [id])
+
+  @@unique([deviceId])
+  @@unique([authorId, title])
+  @@schema("public")
+}
+
+model Device {
+  id   Int    @id @default(autoincrement())
+  name String
+  post Post?
+
+  @@map("devices")
+}
+
+// implicit many-to-many self-relation: both sides are list fields of the
+// same named relation
+model Tag {
+  id      Int   @id
+  label   String
+  related Tag[] @relation("Related")
+  relants Tag[] @relation("Related")
+}

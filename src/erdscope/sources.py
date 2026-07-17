@@ -10,14 +10,17 @@
 # auto-detection behavior, with ambiguity/ note-worthy detections reported to
 # stderr instead of resolved silently.
 #
-# InputSpec = {'id': str, 'type': str|None, 'path': Path, 'given': str}
+# InputSpec = {'id': str, 'type': str|None, 'path': Path, 'given': str,
+#              'allow_empty': bool}
 #   type None = auto-detect. `path` is always resolved (expanduser+resolve) —
 #   the one filesystem operations use. `given` is the ORIGINAL path string
 #   (relative, unresolved, exactly as the user typed/configured it) — the one
 #   every user-facing message (warnings, progress lines, Note lines, error
 #   messages naming the source) displays, so a relative `./app/models` in the
 #   config still reads that way on stderr instead of some long absolute path
-#   the user never wrote.
+#   the user never wrote. `allow_empty` (config sources[].allow_empty,
+#   default false) opts a TYPED source out of the empty-result hard error —
+#   see _run_typed_spec; untyped sources never read it.
 # ---------------------------------------------------------------------------
 
 # Static source-type registry: type name -> builder fn(spec, table_map) ->
@@ -96,16 +99,19 @@ def _expand_rails_project(spec):
     if not has_schema and not has_models:
         sys.exit(f"Error: source {sid!r}: rails.project found neither {given_schema} "
                  f"nor {given_models} under {given_root}")
+    allow_empty = spec.get('allow_empty', False)
     expanded = []
     if has_schema:
         expanded.append({'id': f'{sid}:schema', 'type': 'rails.schema',
-                         'path': schema_path, 'given': given_schema})
+                         'path': schema_path, 'given': given_schema,
+                         'allow_empty': allow_empty})
     else:
         print(f"Note: source {sid!r}: rails.project found no {given_schema} — "
               "skipping its rails.schema half", file=sys.stderr)
     if has_models:
         expanded.append({'id': f'{sid}:models', 'type': 'rails.models',
-                         'path': models_path, 'given': given_models})
+                         'path': models_path, 'given': given_models,
+                         'allow_empty': allow_empty})
     else:
         print(f"Note: source {sid!r}: rails.project found no {given_models} — "
               "skipping its rails.models half", file=sys.stderr)
@@ -126,14 +132,16 @@ def normalize_input_specs(models_list, config_sources):
     specs = []
     for s in config_sources:
         spec = {'id': s['id'], 'type': s['type'], 'given': s['path'],
-               'path': Path(s['path']).expanduser().resolve()}
+                'path': Path(s['path']).expanduser().resolve(),
+                'allow_empty': bool(s.get('allow_empty'))}
         if spec['type'] == 'rails.project':
             specs.extend(_expand_rails_project(spec))
         else:
             specs.append(spec)
     for i, m in enumerate(models_list):
         specs.append({'id': f'models[{i}]', 'type': None, 'given': m,
-                      'path': Path(m).expanduser().resolve()})
+                      'path': Path(m).expanduser().resolve(),
+                      'allow_empty': False})
     return specs
 
 
@@ -164,9 +172,32 @@ def _run_typed_spec(spec, table_map):
         sys.exit(f"Error: source {sid!r}: {stype} expects {_FILE_SOURCE_TYPES[stype]}, "
                  f"got {given}")
     result = builder(spec, table_map)
+    # A typed source that parses NOTHING is almost always a path/type mismatch
+    # (e.g. a Prisma project declared as rails.models): the path exists, the
+    # named parser runs, finds nothing it recognises, and — without this check
+    # — the run would "succeed" with a silently empty layer. Same philosophy
+    # as `relations`: being silently ignored is the worst failure mode, so
+    # fail loud and name the layout the type wanted. `allow_empty: true` on
+    # the source is the explicit opt-in for a genuinely empty input.
+    if not result['tables'] and not spec.get('allow_empty'):
+        sys.exit(f"Error: source {sid!r}: {stype} found nothing to parse at {given} "
+                 f"(expected {_source_type_expects(stype)}). If an empty result is "
+                 "intended, set `allow_empty: true` on this source.")
     print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
           file=sys.stderr)
     return result
+
+
+def _source_type_expects(type_name):
+    """Human description of the input layout a sources[].type wants, for the
+    empty-result error above: the static registry's types describe themselves
+    here; a '<overlay>.models' type quotes the overlay's own `expects`."""
+    if type_name == 'rails.schema':
+        return 'a db/schema.rb with create_table blocks'
+    for cls in FRAMEWORK_OVERLAYS:
+        if f'{cls.name}.models' == type_name:
+            return cls.expects or f'input the {cls.name} overlay can parse'
+    return f'input the {type_name} parser can parse'
 
 
 def _progress_noun(result):

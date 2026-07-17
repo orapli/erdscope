@@ -789,20 +789,85 @@ class TestSourceDispatch(_NoDBDriver):
     now with ambiguity reporting when more than one framework matches."""
 
     def test_typed_models_source_skips_detection(self):
-        # FIXTURE_PRISMA would auto-detect as prisma (it has a schema.prisma);
-        # a typed rails.models source dispatches straight to RailsOverlay
-        # instead — no detection step runs at all, so Prisma's models never
-        # get parsed (the fixture has no app/models dir, so the rails result
-        # is just empty — that emptiness IS the proof detection was skipped).
+        # a directory with BOTH Rails-parseable models and a schema.prisma:
+        # auto-detection would consider prisma too, but a typed rails.models
+        # source dispatches straight to RailsOverlay — Prisma's Post model
+        # (which detection WOULD have offered) never gets parsed.
+        proj = Path(self._p('mixed_rails'))
+        (proj / 'app' / 'models').mkdir(parents=True)
+        (proj / 'app' / 'models' / 'widget.rb').write_text(
+            'class Widget < ApplicationRecord\n  belongs_to :gadget\nend\n')
+        (proj / 'schema.prisma').write_text(
+            'model Post {\n  id Int @id\n  title String\n}\n')
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'x', 'type': 'rails.models', 'path': str(proj)}]}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '-o', out)
+        data = self._data(out)['tables']
+        self.assertIn('widgets', data)
+        self.assertNotIn('Post', data)
+
+    def test_typed_source_finding_nothing_is_an_error(self):
+        # a path/type mismatch (a Prisma project declared as rails.models)
+        # parses nothing — that must be a hard error naming the source id and
+        # the layout the type expected, not a silently empty "success"
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
             {'id': 'x', 'type': 'rails.models', 'path': str(FIXTURE_PRISMA)}]}))
+        with self.assertRaises(SystemExit) as cm:
+            self._run('--config', cfg, '-o', self._p('out.html'))
+        msg = str(cm.exception)
+        self.assertIn("source 'x'", msg)
+        self.assertIn('found nothing to parse', msg)
+        self.assertIn('app/models', msg)       # the expected layout, quoted
+        self.assertIn('allow_empty', msg)      # and the explicit opt-out
+
+    def test_typed_source_allow_empty_accepts_an_empty_result(self):
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'x', 'type': 'rails.models', 'path': str(FIXTURE_PRISMA),
+             'allow_empty': True}]}))
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
-        # RailsOverlay.build found no app/models under FIXTURE_PRISMA and no
-        # *.rb files at its root -> an empty fragment; Prisma's Post model
-        # (which detection WOULD have found) never gets parsed
         self.assertEqual(self._data(out)['tables'], {})
+
+    def test_empty_schema_rb_typed_source_is_an_error(self):
+        empty = self._p('schema.rb')
+        Path(empty).write_text('# no create_table here\n')
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 's', 'type': 'rails.schema', 'path': empty}]}))
+        with self.assertRaises(SystemExit) as cm:
+            self._run('--config', cfg, '-o', self._p('out.html'))
+        msg = str(cm.exception)
+        self.assertIn("source 's'", msg)
+        self.assertIn('create_table', msg)
+
+    def test_rails_project_propagates_allow_empty_to_its_halves(self):
+        # rails.project with a schema.rb but an app/models dir holding no
+        # models: the expanded rails.models half is empty. Without allow_empty
+        # that fails naming the half's id; with it, the run succeeds on the
+        # schema half alone.
+        proj = Path(self._p('railsapp'))
+        (proj / 'db').mkdir(parents=True)
+        (proj / 'app' / 'models').mkdir(parents=True)
+        (proj / 'db' / 'schema.rb').write_text(
+            'ActiveRecord::Schema.define(version: 1) do\n'
+            '  create_table "users" do |t|\n    t.string "name"\n  end\n'
+            'end\n')
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'p', 'type': 'rails.project', 'path': str(proj)}]}))
+        with self.assertRaises(SystemExit) as cm:
+            self._run('--config', cfg, '-o', self._p('out.html'))
+        self.assertIn("source 'p:models'", str(cm.exception))
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'p', 'type': 'rails.project', 'path': str(proj),
+             'allow_empty': True}]}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '-o', out)
+        self.assertIn('users', self._data(out)['tables'])
 
     def test_typed_source_type_overrides_would_be_detection(self):
         # a directory with BOTH a schema.prisma and Rails-parseable models:

@@ -1203,6 +1203,9 @@ class FrameworkOverlay(abc.ABC):
         e.g. 'sequelize';
       * set `priority` if detection ordering matters (lower runs first; the
         first overlay whose detect() is true wins);
+      * set `expects` to a short human description of the input layout the
+        overlay parses — it is quoted in the "found nothing to parse" error
+        a typed `sources[].type` run raises when build() returns no tables;
       * implement detect(root) -> bool over a --models path (a directory, or a
         single schema file);
       * implement build(root, table_map) -> ProviderResult (table_map is the
@@ -1211,6 +1214,7 @@ class FrameworkOverlay(abc.ABC):
     """
     name = ''
     priority = 100
+    expects = ''  # human description of the expected input layout (see above)
 
     @abc.abstractmethod
     def detect(self, root):
@@ -1329,8 +1333,12 @@ def parse_django(root):
         elif p.parent.name == 'models':
             files.append((p.parent.parent.name, p))
 
-    # pass 1: collect every class definition
-    classes = {}  # class name -> {app, bases, fields, meta}
+    # pass 1: collect every class definition. Keyed by (app, class name) —
+    # two apps may each define a model with the same class name (e.g. a Tag
+    # in both blog and shop), and a name-only dict silently dropped all but
+    # the last one parsed. by_name indexes the keys for base/reference
+    # resolution, which still happens by bare class name.
+    classes = {}  # (app, class name) -> {bases, fields, meta}
     for app, path in files:
         try:
             tree = ast.parse(path.read_text(encoding='utf-8', errors='replace'))
@@ -1355,63 +1363,88 @@ def parse_django(root):
                     fn = stmt.value.func
                     ftype = fn.attr if isinstance(fn, ast.Attribute) else \
                             fn.id if isinstance(fn, ast.Name) else None
-                    if ftype and (ftype in DJANGO_TYPES or ftype in DJANGO_REL_FIELDS):
+                    if ftype and (ftype in DJANGO_TYPES or ftype in DJANGO_REL_FIELDS
+                                  or ftype == 'GenericForeignKey'):
                         fields.append({
                             'name': stmt.targets[0].id, 'ftype': ftype,
                             'args': stmt.value.args,
                             'kw': {k.arg: k.value for k in stmt.value.keywords if k.arg},
                         })
-            classes[node.name] = {'app': app, 'bases': bases,
-                                  'fields': fields, 'meta': meta}
+            classes[(app, node.name)] = {'bases': bases, 'fields': fields, 'meta': meta}
+
+    by_name = {}  # class name -> [every (app, name) key defining it]
+    for key in classes:
+        by_name.setdefault(key[1], []).append(key)
+
+    def base_key(key, base_name):
+        # a base is referenced by bare name — prefer the same app's
+        # definition, else the first app defining it
+        cands = by_name.get(base_name, ())
+        for k in cands:
+            if k[0] == key[0]:
+                return k
+        return cands[0] if cands else None
 
     # a class is a model if models.Model is among its ancestors (transitively)
-    model_names, changed = set(), True
+    model_keys, changed = set(), True
     while changed:
         changed = False
-        for name, c in classes.items():
-            if name not in model_names and (
+        for key, c in classes.items():
+            if key not in model_keys and (
                     'Model' in c['bases']
-                    or any(b in model_names for b in c['bases'])):
-                model_names.add(name)
+                    or any(base_key(key, b) in model_keys for b in c['bases'])):
+                model_keys.add(key)
                 changed = True
 
     def const(v):
         return v.value if isinstance(v, ast.Constant) else None
 
-    def merged_fields(name, seen=None):
+    def merged_fields(key, seen=None):
         # inherit fields from abstract base classes
         seen = seen or set()
-        if name not in classes or name in seen:
+        if key not in classes or key in seen:
             return []
-        seen.add(name)
+        seen.add(key)
         out = []
-        for b in classes[name]['bases']:
-            if b in model_names:
-                out.extend(merged_fields(b, seen))
-        out.extend(classes[name]['fields'])
+        for b in classes[key]['bases']:
+            bk = base_key(key, b)
+            if bk in model_keys:
+                out.extend(merged_fields(bk, seen))
+        out.extend(classes[key]['fields'])
         return out
 
-    concrete = [n for n in model_names if n in classes
-                and not classes[n]['meta'].get('abstract')
-                and not classes[n]['meta'].get('proxy')]
-    table_of = {n: classes[n]['meta'].get('db_table')
-                or f"{classes[n]['app']}_{n.lower()}" for n in concrete}
+    concrete = [k for k in model_keys
+                if not classes[k]['meta'].get('abstract')
+                and not classes[k]['meta'].get('proxy')]
+    table_of = {k: classes[k]['meta'].get('db_table')
+                or f'{k[0]}_{k[1].lower()}' for k in concrete}
 
-    def resolve(node, own):
-        # ForeignKey(Author) / ForeignKey('Author') / ForeignKey('blog.Author') / 'self'
-        if isinstance(node, ast.Name) and node.id in table_of:
-            return table_of[node.id]
-        if isinstance(node, ast.Attribute) and node.attr in table_of:
-            return table_of[node.attr]
+    def class_key(name, own_key):
+        # bare class reference: the same app's model if it has one, else the
+        # single other app defining it; ambiguous (several other apps) -> None
+        cands = [k for k in by_name.get(name, ()) if k in table_of]
+        for k in cands:
+            if k[0] == own_key[0]:
+                return k
+        return cands[0] if len(cands) == 1 else None
+
+    def resolve(node, own_key):
+        # ForeignKey(Author) / ForeignKey('Author') / ForeignKey('blog.Author')
+        # / 'self'. Unresolvable references (settings.AUTH_USER_MODEL, an
+        # external app's ContentType, ...) return None — the caller keeps the
+        # FK column but skips the edge.
+        if isinstance(node, ast.Name) or isinstance(node, ast.Attribute):
+            k = class_key(node.id if isinstance(node, ast.Name) else node.attr, own_key)
+            return table_of[k] if k else None
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             s = node.value
             if s == 'self':
-                return table_of.get(own)
-            cls = s.split('.')[-1]
-            if cls in table_of:
-                return table_of[cls]
-            app = s.split('.')[0].lower() if '.' in s else classes[own]['app']
-            return f'{app}_{cls.lower()}'
+                return table_of.get(own_key)
+            if '.' in s:
+                app, cls = s.split('.', 1)
+                return table_of.get((app, cls), f'{app.lower()}_{cls.lower()}')
+            k = class_key(s, own_key)
+            return table_of[k] if k else f'{own_key[0]}_{s.lower()}'
         return None
 
     tables = {}
@@ -1420,25 +1453,40 @@ def parse_django(root):
         cols, assocs, pk = [], [], None
         for f in merged_fields(n):
             fname, ftype, kw = f['name'], f['ftype'], f['kw']
+            if ftype == 'GenericForeignKey':
+                # the Django spelling of a polymorphic belongs_to; like the
+                # Rails one it never draws an edge (there is no single
+                # target), it only surfaces in the details pane. The
+                # content_type FK / object_id columns are ordinary fields the
+                # model declares itself.
+                assocs.append({'type': 'belongs_to', 'name': fname,
+                               'target': pluralize(to_snake(fname)),
+                               'polymorphic': True})
+                continue
             if ftype in DJANGO_REL_FIELDS:
                 tnode = kw.get('to') or (f['args'][0] if f['args'] else None)
                 target = resolve(tnode, n) if tnode is not None else None
-                if not target:
-                    continue
                 if ftype == 'ManyToManyField':
+                    if not target:
+                        continue
                     a = {'type': 'has_and_belongs_to_many', 'name': fname, 'target': target}
                     thr = resolve(kw['through'], n) if 'through' in kw else None
                     if thr:
                         a['through'] = thr
                     assocs.append(a)
                 else:
+                    # the FK column is real even when the target class can't
+                    # be resolved statically (a swappable AUTH_USER_MODEL,
+                    # contenttypes' ContentType, ...) — keep the column,
+                    # skip only the edge
                     col = const(kw.get('db_column')) or f'{fname}_id'
                     cols.append({'name': col, 'type': 'bigint',
                                  'nullable': bool(const(kw.get('null'))), 'primary': False})
-                    # OneToOneField: the declaring side holds the FK, but we emit
-                    # has_one so the edge renders as 1:1
-                    assocs.append({'type': 'has_one' if ftype == 'OneToOneField' else 'belongs_to',
-                                   'name': fname, 'target': target, 'foreign_key': col})
+                    if target:
+                        # OneToOneField: the declaring side holds the FK, but
+                        # we emit has_one so the edge renders as 1:1
+                        assocs.append({'type': 'has_one' if ftype == 'OneToOneField' else 'belongs_to',
+                                       'name': fname, 'target': target, 'foreign_key': col})
                 continue
             col = const(kw.get('db_column')) or fname
             primary = bool(const(kw.get('primary_key')))
@@ -1468,6 +1516,8 @@ class DjangoOverlay(FrameworkOverlay):
     """A Django project: a directory containing manage.py. Retains columns."""
     name = 'django'
     priority = 2
+    expects = ('a Django project whose models.py files declare at least one '
+               'concrete model')
 
     def detect(self, root):
         return root.is_dir() and (root / 'manage.py').exists()
@@ -1495,9 +1545,35 @@ def parse_prisma(schema_path):
         mm = re.search(r'@@map\("([^"]+)"\)', blocks[model])
         return mm.group(1) if mm else model
 
-    def is_list_of(model, other):
-        # does `model` declare an `xxx Other[]` field? (implicit m2m check)
-        return re.search(r'\w+\s+%s\[\]' % re.escape(other), blocks[model]) is not None
+    def relation_name(rest):
+        # @relation("Name", ...) — the disambiguator Prisma requires when two
+        # relations link the same pair of models (and for self-relations)
+        m = re.search(r'@relation\(\s*"([^"]+)"', rest)
+        return m.group(1) if m else None
+
+    # every list field in every model: model -> [(field, target model, relation
+    # name)]. Implicit m2m pairing below matches on (target, relation name) —
+    # NOT merely "the other model declares some list of us", which misread a
+    # self-relation's own back-reference (`replies Post[]` next to `parent
+    # Post?`) and any mixed named relations as many-to-many.
+    list_fields = {}
+    for model, block in blocks.items():
+        entries = []
+        for line in block.splitlines():
+            lm = re.match(r'\s*(\w+)\s+(\w+)\[\]\s*(.*)', line)
+            if lm and lm.group(2) in blocks:
+                entries.append((lm.group(1), lm.group(2), relation_name(lm.group(3))))
+        list_fields[model] = entries
+
+    def paired_list_field(model, fname, other, rel):
+        # does `other` declare a list field back at `model` in the SAME
+        # relation (matching @relation name, both possibly unnamed)? The field
+        # itself is excluded so a self-relation's one list field never pairs
+        # with itself.
+        for f, t, r in list_fields.get(other, ()):
+            if t == model and r == rel and not (other == model and f == fname):
+                return True
+        return False
 
     tables = {}
     for model, block in blocks.items():
@@ -1509,6 +1585,7 @@ def parse_prisma(schema_path):
         # pass 1: scalar/enum columns only — relation fields need unique_cols
         # fully populated first (a relation's `fields: [...]` FK column can be
         # declared on any line in the block, not necessarily before it)
+        field_col = {}  # field name -> column name (differs under @map)
         for line in lines:
             fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
             if not fm:
@@ -1520,6 +1597,7 @@ def parse_prisma(schema_path):
             cm = re.search(r'@map\("([^"]+)"\)', rest)
             if cm:
                 col = cm.group(1)
+            field_col[fname] = col
             primary = '@id' in rest
             if primary:
                 pk = col
@@ -1532,6 +1610,26 @@ def parse_prisma(schema_path):
                 'primary': primary,
             })
 
+        # block-level attributes (the @@ lines pass 1 skips), read from the
+        # raw block: @@id([a, b]) is a composite PK (primary_key becomes the
+        # IR's list form, same as the DB adapters emit); a single-field
+        # @@unique([x]) is the same 1:1 signal as an inline @unique, while a
+        # multi-field one is a composite constraint and deliberately not one
+        mid = re.search(r'@@id\([^)]*?\[([^\]]+)\]', block)
+        if mid:
+            pk_cols = [field_col.get(f.strip(), f.strip())
+                       for f in mid.group(1).split(',') if f.strip()]
+            for c in cols:
+                if c['name'] in pk_cols:
+                    c['primary'] = True
+                    c['nullable'] = False
+            if pk_cols:
+                pk = pk_cols if len(pk_cols) > 1 else pk_cols[0]
+        for mu in re.finditer(r'@@unique\([^)]*?\[([^\]]+)\]', block):
+            ufields = [f.strip() for f in mu.group(1).split(',') if f.strip()]
+            if len(ufields) == 1:
+                unique_cols.add(field_col.get(ufields[0], ufields[0]))
+
         # pass 2: relation fields
         for line in lines:
             fm = re.match(r'(\w+)\s+(\w+)(\[\])?(\?)?\s*(.*)', line)
@@ -1543,14 +1641,19 @@ def parse_prisma(schema_path):
             target = table_of(ftype)
             fields = re.search(r'fields:\s*\[\s*(\w+)', rest)
             if is_list:
-                # the other side lists this model too -> implicit many-to-many
-                if is_list_of(ftype, model):
+                # the SAME relation has a list field on the other side too ->
+                # implicit many-to-many (see paired_list_field for why the
+                # pairing must match @relation names, not just field types)
+                if paired_list_field(model, fname, ftype, relation_name(rest)):
                     assocs.append({'type': 'has_and_belongs_to_many',
                                    'name': fname, 'target': target})
                 else:
                     assocs.append({'type': 'has_many', 'name': fname, 'target': target})
             elif fields:  # the side holding the FK
-                fk_col = fields.group(1)
+                # `fields:` names the scalar FIELD; the column differs when
+                # that field carries @map — resolve so foreign_key (and the
+                # unique_cols lookup below) name the real column
+                fk_col = field_col.get(fields.group(1), fields.group(1))
                 # @unique on the scalar FK field means each value can only
                 # appear once — a real 1:1, not the default many:1 a bare FK
                 # column implies. Same has_one convention parse_django uses.
@@ -1579,12 +1682,19 @@ class PrismaOverlay(FrameworkOverlay):
     prisma/schema.prisma (or schema.prisma at the root). Retains columns."""
     name = 'prisma'
     priority = 3
+    expects = ('a schema.prisma file (or a project containing '
+               'prisma/schema.prisma) declaring at least one model')
 
     def _schema(self, root):
         if root.is_file():
             return root
-        return next(c for c in (root / 'prisma' / 'schema.prisma', root / 'schema.prisma')
-                    if c.exists())
+        found = next((c for c in (root / 'prisma' / 'schema.prisma', root / 'schema.prisma')
+                      if c.exists()), None)
+        if found is None:
+            # reachable via a typed prisma.models source, which skips detect()
+            # — a raw StopIteration traceback is not an error message
+            sys.exit(f'Error: no prisma/schema.prisma or schema.prisma found under {root}')
+        return found
 
     def detect(self, root):
         if root.is_file():
@@ -1786,6 +1896,8 @@ class RailsOverlay(FrameworkOverlay):
     files). Contributes associations only — no columns."""
     name = 'rails'
     priority = 1
+    expects = ('a Rails app/models directory (or a directory of *.rb model '
+               'files) declaring at least one model')
 
     def detect(self, root):
         return root.is_dir() and (
@@ -2352,14 +2464,17 @@ def rails_schema_provider(path, given=None):
 # auto-detection behavior, with ambiguity/ note-worthy detections reported to
 # stderr instead of resolved silently.
 #
-# InputSpec = {'id': str, 'type': str|None, 'path': Path, 'given': str}
+# InputSpec = {'id': str, 'type': str|None, 'path': Path, 'given': str,
+#              'allow_empty': bool}
 #   type None = auto-detect. `path` is always resolved (expanduser+resolve) —
 #   the one filesystem operations use. `given` is the ORIGINAL path string
 #   (relative, unresolved, exactly as the user typed/configured it) — the one
 #   every user-facing message (warnings, progress lines, Note lines, error
 #   messages naming the source) displays, so a relative `./app/models` in the
 #   config still reads that way on stderr instead of some long absolute path
-#   the user never wrote.
+#   the user never wrote. `allow_empty` (config sources[].allow_empty,
+#   default false) opts a TYPED source out of the empty-result hard error —
+#   see _run_typed_spec; untyped sources never read it.
 # ---------------------------------------------------------------------------
 
 # Static source-type registry: type name -> builder fn(spec, table_map) ->
@@ -2438,16 +2553,19 @@ def _expand_rails_project(spec):
     if not has_schema and not has_models:
         sys.exit(f"Error: source {sid!r}: rails.project found neither {given_schema} "
                  f"nor {given_models} under {given_root}")
+    allow_empty = spec.get('allow_empty', False)
     expanded = []
     if has_schema:
         expanded.append({'id': f'{sid}:schema', 'type': 'rails.schema',
-                         'path': schema_path, 'given': given_schema})
+                         'path': schema_path, 'given': given_schema,
+                         'allow_empty': allow_empty})
     else:
         print(f"Note: source {sid!r}: rails.project found no {given_schema} — "
               "skipping its rails.schema half", file=sys.stderr)
     if has_models:
         expanded.append({'id': f'{sid}:models', 'type': 'rails.models',
-                         'path': models_path, 'given': given_models})
+                         'path': models_path, 'given': given_models,
+                         'allow_empty': allow_empty})
     else:
         print(f"Note: source {sid!r}: rails.project found no {given_models} — "
               "skipping its rails.models half", file=sys.stderr)
@@ -2468,14 +2586,16 @@ def normalize_input_specs(models_list, config_sources):
     specs = []
     for s in config_sources:
         spec = {'id': s['id'], 'type': s['type'], 'given': s['path'],
-               'path': Path(s['path']).expanduser().resolve()}
+                'path': Path(s['path']).expanduser().resolve(),
+                'allow_empty': bool(s.get('allow_empty'))}
         if spec['type'] == 'rails.project':
             specs.extend(_expand_rails_project(spec))
         else:
             specs.append(spec)
     for i, m in enumerate(models_list):
         specs.append({'id': f'models[{i}]', 'type': None, 'given': m,
-                      'path': Path(m).expanduser().resolve()})
+                      'path': Path(m).expanduser().resolve(),
+                      'allow_empty': False})
     return specs
 
 
@@ -2506,9 +2626,32 @@ def _run_typed_spec(spec, table_map):
         sys.exit(f"Error: source {sid!r}: {stype} expects {_FILE_SOURCE_TYPES[stype]}, "
                  f"got {given}")
     result = builder(spec, table_map)
+    # A typed source that parses NOTHING is almost always a path/type mismatch
+    # (e.g. a Prisma project declared as rails.models): the path exists, the
+    # named parser runs, finds nothing it recognises, and — without this check
+    # — the run would "succeed" with a silently empty layer. Same philosophy
+    # as `relations`: being silently ignored is the worst failure mode, so
+    # fail loud and name the layout the type wanted. `allow_empty: true` on
+    # the source is the explicit opt-in for a genuinely empty input.
+    if not result['tables'] and not spec.get('allow_empty'):
+        sys.exit(f"Error: source {sid!r}: {stype} found nothing to parse at {given} "
+                 f"(expected {_source_type_expects(stype)}). If an empty result is "
+                 "intended, set `allow_empty: true` on this source.")
     print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
           file=sys.stderr)
     return result
+
+
+def _source_type_expects(type_name):
+    """Human description of the input layout a sources[].type wants, for the
+    empty-result error above: the static registry's types describe themselves
+    here; a '<overlay>.models' type quotes the overlay's own `expects`."""
+    if type_name == 'rails.schema':
+        return 'a db/schema.rb with create_table blocks'
+    for cls in FRAMEWORK_OVERLAYS:
+        if f'{cls.name}.models' == type_name:
+            return cls.expects or f'input the {cls.name} overlay can parse'
+    return f'input the {type_name} parser can parse'
 
 
 def _progress_noun(result):
@@ -6816,7 +6959,7 @@ def _check_config_types(config, path):
 # run_input_specs) concern, not a load-time one — an --adapter plugin loaded
 # later in the pipeline can still register its own overlay/type in time.
 # ---------------------------------------------------------------------------
-_CONFIG_SOURCE_KEYS = {'id', 'type', 'path'}
+_CONFIG_SOURCE_KEYS = {'id', 'type', 'path', 'allow_empty'}
 
 def _check_config_sources(sources, path):
     if not isinstance(sources, list):
@@ -6832,6 +6975,7 @@ def _check_config_sources(sources, path):
             val = s.get(key)
             if not isinstance(val, str) or not val:
                 sys.exit(f'Error: {path} `{sw}` needs a non-empty string `{key}`')
+        _check_bool(s.get('allow_empty'), 'allow_empty' in s, path, f'{sw}.allow_empty')
         if s['id'] in seen:
             sys.exit(f'Error: {path} `sources` has a duplicate id {s["id"]!r}')
         seen.add(s['id'])
