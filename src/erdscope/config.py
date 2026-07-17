@@ -102,7 +102,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -122,6 +122,15 @@ def _check_config_types(config, path):
               isinstance(val, expected))
         if not ok:
             sys.exit(f'Error: {path} `{key}` must be a {expected.__name__}, got {val!r}')
+    # version: purely a documented marker for the config *shape* users are
+    # shown (e.g. in erdscope.example.yml) — no runtime behavior hangs off it
+    # yet, so the only valid value is the literal int 1. Same bool-vs-int
+    # discipline as above: `version: true` must not slip through as 1.
+    if 'version' in config:
+        v = config['version']
+        if not (isinstance(v, int) and not isinstance(v, bool) and v == 1):
+            sys.exit(f'Error: {path} `version` must be 1 (the only supported '
+                     f'config version), got {v!r}')
     # models: a single path (str) or a list of paths (str) — multiple frameworks
     if 'models' in config:
         m = config['models']

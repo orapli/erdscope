@@ -388,13 +388,18 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <code>models</code> とは独立していて、両方指定すればどちらも適用されます（順序は <code>sources</code>
 （宣言順）→<code>models</code>、後のものが同順位の対立で優先されるのは今までと同じです）。
 </p>
-<pre><code>sources:
+<pre><code>version: 1
+sources:
   - id: schema
     type: rails.schema
     path: db/schema.rb
   - id: app
     type: rails.models
     path: app/models</code></pre>
+<p>
+任意のトップレベルキー <code>version: 1</code> は、設定ファイルの形式マーカーです — 現時点で有効な値は
+これだけで、他に実行時の効果はありません。将来の設定形式の変更に備えたものです。
+</p>
 <p>
 登録済みのフレームワークオーバーレイはすべて、<code>&lt;name&gt;.models</code> という型を自動的に持ちます
 （<code>rails.models</code>、<code>prisma.models</code>、<code>django.models</code>、および

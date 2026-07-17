@@ -456,6 +456,34 @@ class TestConfigModelsKey(unittest.TestCase):
         self.assertIn('models', str(cm.exception))
 
 
+class TestConfigVersionKey(unittest.TestCase):
+    """`version:` is a purely documented marker (no runtime behavior) — the
+    only accepted value is the literal int 1."""
+
+    def test_version_1_accepted(self):
+        self.assertEqual(_load({'version': 1})['version'], 1)
+
+    def test_version_2_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'version': 2})
+        msg = str(cm.exception)
+        self.assertIn('version', msg)
+        self.assertIn('must be 1', msg)
+
+    def test_version_as_string_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'version': '1'})
+        self.assertIn('version', str(cm.exception))
+
+    def test_version_as_bool_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'version': True})
+        self.assertIn('version', str(cm.exception))
+
+    def test_absent_version_is_fine(self):
+        self.assertNotIn('version', _load({'title': 'x'}))
+
+
 class TestConfigSourcesKey(unittest.TestCase):
     """D5: config `sources` — a typed code-source list. Purely syntactic here
     (shape/required-keys/duplicate-id); whether `type` names a REGISTERED

@@ -784,6 +784,28 @@ class TestRailsProjectMacro(unittest.TestCase):
     def test_known_source_type_names_includes_the_macro(self):
         self.assertIn('rails.project', erd.known_source_type_names())
 
+    def test_expanded_given_paths_join_onto_the_relative_root_string(self):
+        # the P3 fix: `given` must be built from the user's own root spelling
+        # (here a relative '.'), not from the resolved absolute `path`
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / 'db').mkdir()
+            (root / 'db' / 'schema.rb').write_text(
+                'create_table "widgets", force: :cascade do |t|\nend\n')
+            (root / 'app' / 'models').mkdir(parents=True)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(d)
+                specs = erd.normalize_input_specs(
+                    [], [{'id': 'app', 'type': 'rails.project', 'path': '.'}])
+            finally:
+                os.chdir(old_cwd)
+        self.assertEqual(specs[0]['given'], './db/schema.rb')
+        self.assertEqual(specs[1]['given'], './app/models')
+        # the resolved `path` is still the real, absolute filesystem target
+        self.assertTrue(specs[0]['path'].is_absolute())
+        self.assertTrue(specs[1]['path'].is_absolute())
+
 
 class TestRailsProjectMacroEndToEnd(_NoDBDriver):
     def test_project_macro_merges_schema_and_model_layers(self):
@@ -800,6 +822,78 @@ class TestRailsProjectMacroEndToEnd(_NoDBDriver):
         # that aren't in the (deliberately small) fixture schema.rb — e.g.
         # webhooks only exists via app/models, proving that half ran too
         self.assertIn('webhooks', data)
+
+
+# ---------------------------------------------------------------------------
+# P3 fix: user-facing messages display the GIVEN path string, not the
+# resolved absolute Path normalize_input_specs computes for filesystem work.
+# ---------------------------------------------------------------------------
+class TestGivenPathInMessages(_NoDBDriver):
+    def test_relative_config_source_path_shown_verbatim_in_progress_line(self):
+        (Path(self.tmp.name) / 'db').mkdir()
+        (Path(self.tmp.name) / 'db' / 'schema.rb').write_text(
+            'create_table "widgets", force: :cascade do |t|\nend\n')
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'schema', 'type': 'rails.schema', 'path': 'db/schema.rb'}]}))
+        out = self._p('out.html')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self._run('--config', cfg, '-o', out)
+        merged_line = next(l for l in err.getvalue().splitlines() if l.startswith('Merged'))
+        self.assertEqual(merged_line, 'Merged rails.schema tables from db/schema.rb')
+
+    def test_relative_config_source_path_shown_in_parser_warnings(self):
+        (Path(self.tmp.name) / 'db').mkdir()
+        (Path(self.tmp.name) / 'db' / 'schema.rb').write_text(
+            'create_table "widgets", force: :cascade do |t|\n  t.geometry "loc"\nend\n')
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'schema', 'type': 'rails.schema', 'path': 'db/schema.rb'}]}))
+        out = self._p('out.html')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self._run('--config', cfg, '-o', out)
+        self.assertIn('Warning: db/schema.rb:2: unsupported column type', err.getvalue())
+
+    def test_relative_untyped_models_path_shown_verbatim(self):
+        (Path(self.tmp.name) / 'app' / 'models').mkdir(parents=True)
+        (Path(self.tmp.name) / 'app' / 'models' / 'widget.rb').write_text(
+            'class Widget < ApplicationRecord\nend\n')
+        out = self._p('out.html')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self._run('--models', 'app/models', '--no-config', '-o', out)
+        merged_line = next(l for l in err.getvalue().splitlines() if l.startswith('Merged'))
+        self.assertEqual(merged_line, 'Merged rails associations from app/models')
+
+    def test_relative_schema_rb_auto_detect_note_shown_verbatim(self):
+        (Path(self.tmp.name) / 'db').mkdir()
+        (Path(self.tmp.name) / 'db' / 'schema.rb').write_text(
+            'create_table "widgets", force: :cascade do |t|\nend\n')
+        out = self._p('out.html')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self._run('--models', 'db/schema.rb', '--no-config', '-o', out)
+        self.assertIn('Note: db/schema.rb auto-detected as rails.schema', err.getvalue())
+
+    def test_rails_schema_path_error_shows_given_path(self):
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'schema', 'type': 'rails.schema', 'path': 'app'}]}))
+        (Path(self.tmp.name) / 'app').mkdir()
+        with self.assertRaises(SystemExit) as cm:
+            self._run('--config', cfg, '-o', self._p('out.html'))
+        msg = str(cm.exception)
+        self.assertIn('got app', msg)
+        self.assertNotIn(str(Path(self.tmp.name).resolve()), msg)
+
+    def test_rails_schema_location_field_uses_given_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'schema.rb'
+            p.write_text('create_table "widgets", force: :cascade do |t|\nend\n')
+            result = erd.rails_schema_provider(p, given='db/schema.rb')
+        self.assertEqual(result['source']['location'], 'db/schema.rb')
 
 
 if __name__ == '__main__':

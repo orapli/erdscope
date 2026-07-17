@@ -390,13 +390,19 @@ objects, each naming its own <code>type</code> so nothing needs detecting. It's 
 <code>models</code> — both apply if both are given, in the order <code>sources</code> (declared
 order) then <code>models</code> (later wins ties, same as today).
 </p>
-<pre><code>sources:
+<pre><code>version: 1
+sources:
   - id: schema
     type: rails.schema
     path: db/schema.rb
   - id: app
     type: rails.models
     path: app/models</code></pre>
+<p>
+The optional top-level <code>version: 1</code> is a config-format marker — currently the
+only supported value, with no other runtime effect; it exists for future config-format
+changes to key off.
+</p>
 <p>
 Every registered framework overlay gets a <code>&lt;name&gt;.models</code> type for free
 (<code>rails.models</code>, <code>prisma.models</code>, <code>django.models</code>, and any

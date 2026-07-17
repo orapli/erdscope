@@ -487,18 +487,26 @@ def _resolve_pending_fks(tables, pending_fks, warn):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-def rails_schema_provider(path):
+def rails_schema_provider(path, given=None):
     """ProviderResult (kind='schema', provider='rails.schema') for a Rails
     db/schema.rb file: columns, primary keys, indexes, and foreign keys,
     parsed by pure text analysis — schema.rb is NEVER executed as Ruby (D7).
     A parser-derived FK becomes an association carrying `schema_fk: True`
     (D2), the schema layer's legacy-style provenance flag, mirroring how the
-    live-DB layer marks its own FKs `db_fk: True`."""
+    live-DB layer marks its own FKs `db_fk: True`.
+
+    `path` is always the resolved Path actually read from disk; `given` is
+    the (possibly relative, possibly unresolved) path string to DISPLAY in
+    warnings/location — sources.py passes the user's own spelling so a
+    warning reads e.g. `db/schema.rb:12: ...` instead of an absolute path
+    the user never typed. Defaults to `str(path)` for callers (tests, direct
+    use) that don't distinguish the two."""
+    display = given if given is not None else str(path)
     text = path.read_text(encoding='utf-8', errors='replace')
     warnings = []
 
     def warn(line_no, msg):
-        warnings.append(f'{path}:{line_no}: {msg}')
+        warnings.append(f'{display}:{line_no}: {msg}')
 
     tables = {}
     pending_fks = []
@@ -535,4 +543,4 @@ def rails_schema_provider(path):
 
     _resolve_pending_fks(tables, pending_fks, warn)
     return make_provider_result('schema', 'rails.schema', tables,
-                                location=str(path), warnings=warnings)
+                                location=display, warnings=warnings)

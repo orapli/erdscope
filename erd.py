@@ -2283,18 +2283,26 @@ def _resolve_pending_fks(tables, pending_fks, warn):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-def rails_schema_provider(path):
+def rails_schema_provider(path, given=None):
     """ProviderResult (kind='schema', provider='rails.schema') for a Rails
     db/schema.rb file: columns, primary keys, indexes, and foreign keys,
     parsed by pure text analysis — schema.rb is NEVER executed as Ruby (D7).
     A parser-derived FK becomes an association carrying `schema_fk: True`
     (D2), the schema layer's legacy-style provenance flag, mirroring how the
-    live-DB layer marks its own FKs `db_fk: True`."""
+    live-DB layer marks its own FKs `db_fk: True`.
+
+    `path` is always the resolved Path actually read from disk; `given` is
+    the (possibly relative, possibly unresolved) path string to DISPLAY in
+    warnings/location — sources.py passes the user's own spelling so a
+    warning reads e.g. `db/schema.rb:12: ...` instead of an absolute path
+    the user never typed. Defaults to `str(path)` for callers (tests, direct
+    use) that don't distinguish the two."""
+    display = given if given is not None else str(path)
     text = path.read_text(encoding='utf-8', errors='replace')
     warnings = []
 
     def warn(line_no, msg):
-        warnings.append(f'{path}:{line_no}: {msg}')
+        warnings.append(f'{display}:{line_no}: {msg}')
 
     tables = {}
     pending_fks = []
@@ -2331,7 +2339,7 @@ def rails_schema_provider(path):
 
     _resolve_pending_fks(tables, pending_fks, warn)
     return make_provider_result('schema', 'rails.schema', tables,
-                                location=str(path), warnings=warnings)
+                                location=display, warnings=warnings)
 # ---------------------------------------------------------------------------
 # Input sources — InputSpec normalization + source-type registry/dispatch.
 #
@@ -2344,7 +2352,14 @@ def rails_schema_provider(path):
 # auto-detection behavior, with ambiguity/ note-worthy detections reported to
 # stderr instead of resolved silently.
 #
-# InputSpec = {'id': str, 'type': str|None, 'path': Path}   # type None = auto-detect
+# InputSpec = {'id': str, 'type': str|None, 'path': Path, 'given': str}
+#   type None = auto-detect. `path` is always resolved (expanduser+resolve) —
+#   the one filesystem operations use. `given` is the ORIGINAL path string
+#   (relative, unresolved, exactly as the user typed/configured it) — the one
+#   every user-facing message (warnings, progress lines, Note lines, error
+#   messages naming the source) displays, so a relative `./app/models` in the
+#   config still reads that way on stderr instead of some long absolute path
+#   the user never wrote.
 # ---------------------------------------------------------------------------
 
 # Static source-type registry: type name -> builder fn(spec, table_map) ->
@@ -2354,7 +2369,7 @@ def rails_schema_provider(path):
 # _source_type_builder/known_source_type_names so a newly-registered overlay
 # gets a usable `sources[].type` for free, with no registry edit.
 def _rails_schema_type_builder(spec, table_map):
-    return rails_schema_provider(spec['path'])
+    return rails_schema_provider(spec['path'], given=spec['given'])
 
 
 SOURCE_TYPES = {
@@ -2396,29 +2411,45 @@ def known_source_type_names():
     return sorted(set(SOURCE_TYPES) | dynamic | {'rails.project'})
 
 
+def _join_given(root_given, *parts):
+    """Join further path segments onto a user-given path STRING for display
+    only — never resolved/normalized, so a relative rails.project root like
+    `./railsapp` still reads `./railsapp/db/schema.rb` in the expanded
+    rails.schema half's own messages, not whatever normalize_input_specs's
+    early .resolve() turned the root into."""
+    root = root_given.rstrip('/')
+    return '/'.join((root, *parts)) if root else '/'.join(parts)
+
+
 def _expand_rails_project(spec):
     """D4 macro expansion: a `rails.project` source's path is a Rails project
     root, expanded (in place, before dispatch ever sees it) into a
     'rails.schema' spec for root/db/schema.rb and/or a 'rails.models' spec
     for root/app/models — whichever exist. Neither existing is a hard error;
     exactly one existing proceeds with a stderr note naming what was
-    skipped (both existing is the common case and stays silent)."""
-    sid, root = spec['id'], spec['path']
+    skipped (both existing is the common case and stays silent). Messages
+    name the paths via the user-given root string (`spec['given']`), not the
+    resolved `spec['path']` — see the InputSpec shape note above."""
+    sid, root, given_root = spec['id'], spec['path'], spec['given']
     schema_path, models_path = root / 'db' / 'schema.rb', root / 'app' / 'models'
+    given_schema = _join_given(given_root, 'db', 'schema.rb')
+    given_models = _join_given(given_root, 'app', 'models')
     has_schema, has_models = schema_path.is_file(), models_path.is_dir()
     if not has_schema and not has_models:
-        sys.exit(f"Error: source {sid!r}: rails.project found neither {schema_path} "
-                 f"nor {models_path} under {root}")
+        sys.exit(f"Error: source {sid!r}: rails.project found neither {given_schema} "
+                 f"nor {given_models} under {given_root}")
     expanded = []
     if has_schema:
-        expanded.append({'id': f'{sid}:schema', 'type': 'rails.schema', 'path': schema_path})
+        expanded.append({'id': f'{sid}:schema', 'type': 'rails.schema',
+                         'path': schema_path, 'given': given_schema})
     else:
-        print(f"Note: source {sid!r}: rails.project found no {schema_path} — "
+        print(f"Note: source {sid!r}: rails.project found no {given_schema} — "
               "skipping its rails.schema half", file=sys.stderr)
     if has_models:
-        expanded.append({'id': f'{sid}:models', 'type': 'rails.models', 'path': models_path})
+        expanded.append({'id': f'{sid}:models', 'type': 'rails.models',
+                         'path': models_path, 'given': given_models})
     else:
-        print(f"Note: source {sid!r}: rails.project found no {models_path} — "
+        print(f"Note: source {sid!r}: rails.project found no {given_models} — "
               "skipping its rails.models half", file=sys.stderr)
     return expanded
 
@@ -2432,17 +2463,18 @@ def normalize_input_specs(models_list, config_sources):
     type None — auto-detected at dispatch), preserving their given order.
     Later entries win same-kind merge ties (existing merge rule); CLI
     --models sorting after config `sources` is consistent with "CLI wins
-    over config"."""
+    over config". Each spec keeps the user's original path STRING alongside
+    the resolved Path (see the InputSpec shape note above)."""
     specs = []
     for s in config_sources:
-        spec = {'id': s['id'], 'type': s['type'],
+        spec = {'id': s['id'], 'type': s['type'], 'given': s['path'],
                'path': Path(s['path']).expanduser().resolve()}
         if spec['type'] == 'rails.project':
             specs.extend(_expand_rails_project(spec))
         else:
             specs.append(spec)
     for i, m in enumerate(models_list):
-        specs.append({'id': f'models[{i}]', 'type': None,
+        specs.append({'id': f'models[{i}]', 'type': None, 'given': m,
                       'path': Path(m).expanduser().resolve()})
     return specs
 
@@ -2463,18 +2495,18 @@ def run_input_specs(specs, table_map):
 
 
 def _run_typed_spec(spec, table_map):
-    sid, stype, path = spec['id'], spec['type'], spec['path']
+    sid, stype, path, given = spec['id'], spec['type'], spec['path'], spec['given']
     builder = _source_type_builder(stype)
     if builder is None:
         sys.exit(f"Error: source {sid!r}: unknown type {stype!r} "
                  f"(known types: {', '.join(known_source_type_names())})")
     if not path.exists():
-        sys.exit(f"Error: source {sid!r}: {path} does not exist")
+        sys.exit(f"Error: source {sid!r}: {given} does not exist")
     if stype in _FILE_SOURCE_TYPES and not path.is_file():
         sys.exit(f"Error: source {sid!r}: {stype} expects {_FILE_SOURCE_TYPES[stype]}, "
-                 f"got {path}")
+                 f"got {given}")
     result = builder(spec, table_map)
-    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {path}',
+    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
           file=sys.stderr)
     return result
 
@@ -2493,28 +2525,28 @@ def _run_untyped_spec(spec, table_map):
     matches, the winner is unchanged (framework_overlay_for's own priority
     order) but now a stderr note names the runner-up(s) and points at
     `sources[].type` as the way to pin it down explicitly."""
-    sid, path = spec['id'], spec['path']
+    sid, path, given = spec['id'], spec['path'], spec['given']
     if not path.exists():
-        sys.exit(f'Error: {path} does not exist')
+        sys.exit(f'Error: {given} does not exist')
     if path.is_file() and path.name == 'schema.rb':
-        print(f'Note: {path} auto-detected as rails.schema (declare it in config '
+        print(f'Note: {given} auto-detected as rails.schema (declare it in config '
               'sources to make this explicit)', file=sys.stderr)
-        result = rails_schema_provider(path)
-        print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {path}',
+        result = rails_schema_provider(path, given=given)
+        print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
               file=sys.stderr)
         return result
     matches = framework_overlays_matching(path)
     if not matches:
-        sys.exit(f'Error: could not detect the code kind at {path} (expected a Rails '
+        sys.exit(f'Error: could not detect the code kind at {given} (expected a Rails '
                  'app/models dir, a schema.prisma, a Django project, or a db/schema.rb '
                  'file — declare `sources[].type` in the config to be explicit)')
     winner = matches[0]
     if len(matches) > 1:
         names = ', '.join(c.name for c in matches)
-        print(f'Note: {path} matched multiple frameworks ({names}); using {winner.name}. '
+        print(f'Note: {given} matched multiple frameworks ({names}); using {winner.name}. '
               f'Declare sources[].type in the config to override.', file=sys.stderr)
     result = winner().build(path, table_map)
-    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {path}',
+    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
           file=sys.stderr)
     return result
 # ---------------------------------------------------------------------------
@@ -6710,7 +6742,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -6730,6 +6762,15 @@ def _check_config_types(config, path):
               isinstance(val, expected))
         if not ok:
             sys.exit(f'Error: {path} `{key}` must be a {expected.__name__}, got {val!r}')
+    # version: purely a documented marker for the config *shape* users are
+    # shown (e.g. in erdscope.example.yml) — no runtime behavior hangs off it
+    # yet, so the only valid value is the literal int 1. Same bool-vs-int
+    # discipline as above: `version: true` must not slip through as 1.
+    if 'version' in config:
+        v = config['version']
+        if not (isinstance(v, int) and not isinstance(v, bool) and v == 1):
+            sys.exit(f'Error: {path} `version` must be 1 (the only supported '
+                     f'config version), got {v!r}')
     # models: a single path (str) or a list of paths (str) — multiple frameworks
     if 'models' in config:
         m = config['models']

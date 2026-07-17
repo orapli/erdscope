@@ -201,6 +201,7 @@ including **`rails.schema`**, which statically parses a Rails `db/schema.rb` fil
 (columns, indexes, real foreign keys) with **no live database and no Ruby execution**:
 
 ```yaml
+version: 1
 sources:
   - id: schema
     type: rails.schema
@@ -209,6 +210,9 @@ sources:
     type: rails.models         # every registered overlay gets its own <name>.models type
     path: app/models
 ```
+
+(The optional top-level `version: 1` is a config-format marker — currently the only
+supported value, with no other effect; it's for future config-format changes to key off.)
 
 A **`rails.project`** entry is a macro for a whole Rails app root: it expands to both the
 `rails.schema` (`<root>/db/schema.rb`) and `rails.models` (`<root>/app/models`) halves,
