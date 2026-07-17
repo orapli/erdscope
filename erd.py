@@ -2387,23 +2387,60 @@ def _source_type_builder(type_name):
 
 def known_source_type_names():
     """Every currently valid sources[].type value, sorted — the static
-    registry plus one '<overlay.name>.models' entry per registered
-    FrameworkOverlay. Used only to build "unknown type" error messages."""
+    registry, one '<overlay.name>.models' entry per registered
+    FrameworkOverlay, and the 'rails.project' macro (D4 — it never reaches
+    the dispatch registry itself, since normalize_input_specs expands it
+    away first, but it's still a name a user can legitimately declare). Used
+    only to build "unknown type" error messages."""
     dynamic = {f'{cls.name}.models' for cls in FRAMEWORK_OVERLAYS}
-    return sorted(set(SOURCE_TYPES) | dynamic)
+    return sorted(set(SOURCE_TYPES) | dynamic | {'rails.project'})
+
+
+def _expand_rails_project(spec):
+    """D4 macro expansion: a `rails.project` source's path is a Rails project
+    root, expanded (in place, before dispatch ever sees it) into a
+    'rails.schema' spec for root/db/schema.rb and/or a 'rails.models' spec
+    for root/app/models — whichever exist. Neither existing is a hard error;
+    exactly one existing proceeds with a stderr note naming what was
+    skipped (both existing is the common case and stays silent)."""
+    sid, root = spec['id'], spec['path']
+    schema_path, models_path = root / 'db' / 'schema.rb', root / 'app' / 'models'
+    has_schema, has_models = schema_path.is_file(), models_path.is_dir()
+    if not has_schema and not has_models:
+        sys.exit(f"Error: source {sid!r}: rails.project found neither {schema_path} "
+                 f"nor {models_path} under {root}")
+    expanded = []
+    if has_schema:
+        expanded.append({'id': f'{sid}:schema', 'type': 'rails.schema', 'path': schema_path})
+    else:
+        print(f"Note: source {sid!r}: rails.project found no {schema_path} — "
+              "skipping its rails.schema half", file=sys.stderr)
+    if has_models:
+        expanded.append({'id': f'{sid}:models', 'type': 'rails.models', 'path': models_path})
+    else:
+        print(f"Note: source {sid!r}: rails.project found no {models_path} — "
+              "skipping its rails.models half", file=sys.stderr)
+    return expanded
 
 
 def normalize_input_specs(models_list, config_sources):
     """Build the deterministic, ordered InputSpec list merge_ir's layers come
-    from (D4): config `sources` first, in declared order, then each legacy
-    --models / config `models` entry (id `models[<i>]`, type None — auto-
-    detected at dispatch), preserving their given order. Later entries win
-    same-kind merge ties (existing merge rule); CLI --models sorting after
-    config `sources` is consistent with "CLI wins over config"."""
+    from (D4): config `sources` first, in declared order (a `rails.project`
+    entry expands in place to its rails.schema/rails.models pair — see
+    _expand_rails_project — so it never reaches dispatch as its own type),
+    then each legacy --models / config `models` entry (id `models[<i>]`,
+    type None — auto-detected at dispatch), preserving their given order.
+    Later entries win same-kind merge ties (existing merge rule); CLI
+    --models sorting after config `sources` is consistent with "CLI wins
+    over config"."""
     specs = []
     for s in config_sources:
-        specs.append({'id': s['id'], 'type': s['type'],
-                      'path': Path(s['path']).expanduser().resolve()})
+        spec = {'id': s['id'], 'type': s['type'],
+               'path': Path(s['path']).expanduser().resolve()}
+        if spec['type'] == 'rails.project':
+            specs.extend(_expand_rails_project(spec))
+        else:
+            specs.append(spec)
     for i, m in enumerate(models_list):
         specs.append({'id': f'models[{i}]', 'type': None,
                       'path': Path(m).expanduser().resolve()})

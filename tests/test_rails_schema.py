@@ -725,5 +725,82 @@ class TestRailsSchemaEndToEnd(_NoDBDriver):
         self.assertIn('users', data)  # RailsOverlay still finds app/models, ignores db/
 
 
+# ---------------------------------------------------------------------------
+# rails.project macro (D3/D4/D8.2) — normalize_input_specs expands it away
+# before dispatch ever sees it; unit-test the expansion directly, then prove
+# an expanded project runs schema+models together through the real CLI.
+# ---------------------------------------------------------------------------
+class TestRailsProjectMacro(unittest.TestCase):
+    def test_both_present_expands_to_schema_then_models_no_note(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            specs = erd.normalize_input_specs(
+                [], [{'id': 'app', 'type': 'rails.project', 'path': str(FIXTURE_RAILS)}])
+        self.assertEqual([(s['id'], s['type']) for s in specs],
+                         [('app:schema', 'rails.schema'), ('app:models', 'rails.models')])
+        self.assertEqual(specs[0]['path'], FIXTURE_RAILS.resolve() / 'db' / 'schema.rb')
+        self.assertEqual(specs[1]['path'], FIXTURE_RAILS.resolve() / 'app' / 'models')
+        self.assertEqual(err.getvalue(), '')  # both present -> silent, no skip note
+
+    def test_schema_only_present_notes_the_skipped_models_half(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / 'db').mkdir()
+            (root / 'db' / 'schema.rb').write_text(
+                'create_table "widgets", force: :cascade do |t|\nend\n')
+            err = io.StringIO()
+            with redirect_stderr(err):
+                specs = erd.normalize_input_specs(
+                    [], [{'id': 'app', 'type': 'rails.project', 'path': str(root)}])
+        self.assertEqual([s['type'] for s in specs], ['rails.schema'])
+        self.assertIn('rails.project', err.getvalue())
+        self.assertIn('rails.models half', err.getvalue())
+
+    def test_models_only_present_notes_the_skipped_schema_half(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / 'app' / 'models').mkdir(parents=True)
+            (root / 'app' / 'models' / 'widget.rb').write_text(
+                'class Widget < ApplicationRecord\nend\n')
+            err = io.StringIO()
+            with redirect_stderr(err):
+                specs = erd.normalize_input_specs(
+                    [], [{'id': 'app', 'type': 'rails.project', 'path': str(root)}])
+        self.assertEqual([s['type'] for s in specs], ['rails.models'])
+        self.assertIn('rails.schema half', err.getvalue())
+
+    def test_neither_present_is_a_hard_error_naming_both_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with self.assertRaises(SystemExit) as cm:
+                erd.normalize_input_specs(
+                    [], [{'id': 'app', 'type': 'rails.project', 'path': str(root)}])
+        msg = str(cm.exception)
+        self.assertIn('db', msg)
+        self.assertIn('schema.rb', msg)
+        self.assertIn('app', msg)
+        self.assertIn('models', msg)
+
+    def test_known_source_type_names_includes_the_macro(self):
+        self.assertIn('rails.project', erd.known_source_type_names())
+
+
+class TestRailsProjectMacroEndToEnd(_NoDBDriver):
+    def test_project_macro_merges_schema_and_model_layers(self):
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'app', 'type': 'rails.project', 'path': str(FIXTURE_RAILS)}]}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '-o', out)
+        data = self._data(out)['tables']
+        # rails.schema half: real columns, no schema_missing
+        self.assertFalse(data['users'].get('schema_missing'))
+        self.assertIn('email', {c['name'] for c in data['users']['columns']})
+        # rails.models half: fixture_app's Rails models declare associations
+        # that aren't in the (deliberately small) fixture schema.rb — e.g.
+        # webhooks only exists via app/models, proving that half ran too
+        self.assertIn('webhooks', data)
+
+
 if __name__ == '__main__':
     unittest.main()
