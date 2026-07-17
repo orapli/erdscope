@@ -26,7 +26,7 @@ consumes this shape:
         "associations": [{"type": has_many|belongs_to|has_one|has_and_belongs_to_many,
                           "name", "target",
                           "through"?, "foreign_key"?, "polymorphic"?,
-                          "db_fk"?, "inferred"?, "manual"?}],
+                          "db_fk"?, "inferred"?, "manual"?, "schema_fk"?}],
       }
     }
 
@@ -55,8 +55,9 @@ serialization time, so the DATA_JSON output stays byte-identical.
     IR = dict[table_name, TableFragment]
 
     # Each parser is (moving toward) "parse only, no merging" and returns:
-    Source         = {"kind": "db"|"framework"|"config",
-                      "provider": "mysql"|"postgres"|"rails"|"prisma"|"django"|"config",
+    Source         = {"kind": "db"|"framework"|"config"|"schema",
+                      "provider": "mysql"|"postgres"|"rails"|"prisma"|"django"|"config"
+                                 |"rails.schema",
                       "location"?: str}            # url (no password) / dir / config path
     Warning        = {"code": str, "message": str, "table"?: str}
     ProviderResult = {"source": Source, "tables": IR, "warnings": list[Warning]}
@@ -86,7 +87,8 @@ from urllib.parse import urlparse
 
 # Representative provenance -> the legacy boolean flag(s) the HTML/Excel
 # serializers already read. 'declared' carries no flag (bare = code-declared).
-_PROVENANCE_TO_FLAG = {'db_fk': 'db_fk', 'manual': 'manual', 'inferred': 'inferred'}
+_PROVENANCE_TO_FLAG = {'db_fk': 'db_fk', 'manual': 'manual', 'inferred': 'inferred',
+                       'schema_fk': 'schema_fk'}
 
 
 def make_provider_result(kind, provider, tables, location=None, warnings=None):
@@ -105,12 +107,15 @@ def make_provider_result(kind, provider, tables, location=None, warnings=None):
 def provenance_of(assoc):
     """Representative provenance (§9.1) for an association dict, derived from
     the legacy boolean flags it currently carries. Precedence when several
-    coexist: manual > db_fk > inferred; a bare association (no flag) is
-    'declared'. This is the read half of the legacy<->provenance seam."""
+    coexist: manual > db_fk > schema_fk > inferred; a bare association (no
+    flag) is 'declared'. This is the read half of the legacy<->provenance
+    seam."""
     if assoc.get('manual'):
         return 'manual'
     if assoc.get('db_fk'):
         return 'db_fk'
+    if assoc.get('schema_fk'):
+        return 'schema_fk'
     if assoc.get('inferred'):
         return 'inferred'
     return 'declared'
@@ -693,16 +698,24 @@ class SQLiteAdapter(DBAdapter):
 # (key present — §4: an absent key never participates), pick the value
 # maximizing (rank, spec_order); spec_order is the index in `layers`, so a
 # later layer wins ties (e.g. multiple frameworks -> last one wins).
-_PHYSICAL_RANK = {'config': 3, 'db': 2, 'framework': 1}   # DB is the physical truth
-_LOGICAL_RANK = {'config': 3, 'framework': 2, 'db': 1}    # code owns logical names
+# DB is the physical truth; a static rails.schema parse sits below a live DB
+# read but above framework code (a schema.rb dump is closer to the real
+# database than an association declaration is). Framework code owns logical
+# names, so schema.rb ranks below it there but still above the DB (an
+# association's declared name beats a machine-derived one, which in turn beats
+# a raw DB-FK-derived name).
+_PHYSICAL_RANK = {'config': 4, 'db': 3, 'schema': 2, 'framework': 1}
+_LOGICAL_RANK = {'config': 4, 'framework': 3, 'schema': 2, 'db': 1}
 # Column attributes split by authority kind (§7.2). Everything not physical
 # (i.e. `comment`) is logical.
 _PHYSICAL_COL_ATTRS = ('type', 'sql_type', 'nullable', 'primary', 'default', 'extra')
 # Deterministic column-attribute emit order (str-set iteration is hash-seed
 # dependent, so never iterate a set for output order).
 _COL_ATTR_ORDER = ('type', 'sql_type', 'nullable', 'primary', 'default', 'extra', 'comment')
-# Representative-provenance precedence (§9.1): manual > declared > db_fk > inferred.
-_PROV_PRECEDENCE = {'manual': 3, 'declared': 2, 'db_fk': 1, 'inferred': 0}
+# Representative-provenance precedence (§9.1): manual > declared > db_fk >
+# schema_fk > inferred — a live DB FK is more authoritative than the same edge
+# parsed statically out of schema.rb.
+_PROV_PRECEDENCE = {'manual': 4, 'declared': 3, 'db_fk': 2, 'schema_fk': 1, 'inferred': 0}
 
 def _pick_by_authority(contribs):
     """contribs: list of (rank, spec_order, value). Return the value with the
@@ -1088,13 +1101,19 @@ def merge_ir(layers):
     return result
 
 def reconcile_db_fks(tables):
-    """Phase B (§8.5) — edge-level DB-FK reconciliation: an explicit (non-db_fk,
-    non-inferred) association covering an undirected {source, target} pair drops
-    the DB FK for that pair when the explicit side names no column or the same
-    column; a dropped has_one DB FK upgrades a lone covering belongs_to to
-    has_one in place. belongs_to alone doesn't assert cardinality in Rails, so
-    dropping a 1:1 DB FK outright would silently discard the DB's 1:1 signal.
-    Mutates `tables` in place and returns the number of DB FKs removed."""
+    """Phase B (§8.5) — edge-level DB/schema-FK reconciliation: an explicit
+    (non-db_fk, non-schema_fk, non-inferred) association covering an
+    undirected {source, target} pair drops the DB/schema FK for that pair when
+    the explicit side names no column or the same column; a dropped has_one
+    DB/schema FK upgrades a lone covering belongs_to to has_one in place.
+    belongs_to alone doesn't assert cardinality in Rails, so dropping a 1:1
+    DB/schema FK outright would silently discard its 1:1 signal. A
+    'schema_fk' association (rails.schema's static parse of a foreign-key
+    definition) is treated exactly like 'db_fk' here — same covered-by-
+    explicit drop, same has_one upgrade — since it is the same kind of
+    machine-derived, un-named edge; only its representative-provenance rank
+    (§9.1, below db_fk) tells them apart at the field-authority level. Mutates
+    `tables` in place and returns the number of DB/schema FKs removed."""
     explicit_by_pair = {}
     for name, t in tables.items():
         for a in t['associations']:
@@ -1104,7 +1123,7 @@ def reconcile_db_fks(tables):
     for name, t in tables.items():
         kept = []
         for a in t['associations']:
-            if _assoc_provenance(a) == 'db_fk':
+            if _assoc_provenance(a) in ('db_fk', 'schema_fk'):
                 candidates = explicit_by_pair.get(frozenset((name, a['target'])), [])
                 covering = [(n, ea) for n, ea in candidates
                             if not ea.get('foreign_key') or ea['foreign_key'] == a.get('foreign_key')]
@@ -1212,6 +1231,16 @@ def framework_overlay_for(root):
         if overlay.detect(root):
             return overlay
     return None
+
+def framework_overlays_matching(root):
+    """Every registered overlay (in priority order) that recognises `root`, not
+    just the first. Used only to report ambiguity when an untyped --models/
+    config `models` path matches more than one framework (sources.py); the
+    winner is always overlays_matching(root)[0], i.e. framework_overlay_for's
+    pick — this function changes nothing about detection, only what gets
+    reported about it."""
+    return [cls for cls in sorted(FRAMEWORK_OVERLAYS, key=lambda c: (c.priority, c.name))
+            if cls().detect(root)]
 
 def detect_code_source(root):
     """Classify a --models path: the `name` of the overlay that recognises it
@@ -1766,6 +1795,761 @@ class RailsOverlay(FrameworkOverlay):
         mdir = root / 'app' / 'models' if (root / 'app' / 'models').is_dir() else root
         return rails_provider(mdir, table_map)
 # ---------------------------------------------------------------------------
+# Rails db/schema.rb parser — static text analysis, NO Ruby execution (D7).
+#
+# schema.rb is Rails' generated, canonical dump of the live database as Ruby
+# DSL calls (create_table/t.<type>/add_foreign_key/...). It is always
+# machine-generated in a narrow, predictable shape (one statement per
+# physical line), so a line-oriented state machine — outside / inside a
+# `create_table ... do |t|` block — plus a small Ruby-literal parser for each
+# statement's argument list is enough to read it faithfully without ever
+# `eval`-ing Ruby. Anything the parser can't identify or parse as a literal
+# is a warning, never a silent drop (§ "NEVER silently drop an unrecognized
+# construct").
+# ---------------------------------------------------------------------------
+_SCHEMA_COLUMN_TYPES = {
+    'string', 'text', 'integer', 'bigint', 'float', 'decimal', 'numeric',
+    'datetime', 'timestamp', 'time', 'date', 'boolean', 'binary', 'blob',
+    'json', 'jsonb', 'uuid', 'inet',
+}
+_COLUMN_RECOGNIZED_OPTS = {'null', 'default', 'comment', 'limit', 'precision', 'scale'}
+_CREATE_TABLE_IGNORED_OPTS = {'force', 'charset', 'collation', 'options', 'if_not_exists'}
+_CREATE_TABLE_RECOGNIZED_OPTS = {'id', 'primary_key', 'comment'} | _CREATE_TABLE_IGNORED_OPTS
+_REFERENCE_RECOGNIZED_OPTS = {'type', 'null', 'polymorphic', 'index', 'foreign_key'}
+_INDEX_RECOGNIZED_OPTS = {'name', 'unique'}
+_ADD_FK_IGNORED_OPTS = {'primary_key', 'name', 'on_delete', 'on_update', 'validate', 'deferrable'}
+_ADD_FK_RECOGNIZED_OPTS = {'column'} | _ADD_FK_IGNORED_OPTS
+
+_SCHEMA_HEADER_RE = re.compile(r'^ActiveRecord::Schema(\[[^\]]*\])?\.define\(.*\)\s*do$')
+_CREATE_TABLE_RE = re.compile(r'^create_table\s+(?P<args>.+?)\s+do\s*\|\s*t\s*\|$')
+_T_CALL_RE = re.compile(r'^t\.(?P<method>\w+)\b\s*(?P<args>.*)$')
+_ADD_INDEX_RE = re.compile(r'^add_index\s+(?P<args>.+)$')
+_ADD_FK_RE = re.compile(r'^add_foreign_key\s+(?P<args>.+)$')
+_IGNORED_TOP_LEVEL_RE = re.compile(r'^(enable_extension|create_schema)\b')
+_OPT_KEY_RE = re.compile(r'^([A-Za-z_]\w*):\s*(.*)$', re.S)
+
+_DYNAMIC = object()  # sentinel: this token couldn't be parsed as a Ruby literal
+
+# plural -> singular, for the FK-column-name inflector below (the inverse of
+# frameworks/base.py's IRREGULAR, which is singular -> plural)
+_IRREGULAR_SINGULAR = {plural: singular for singular, plural in IRREGULAR.items()}
+
+
+def _singularize(word):
+    """Minimal singularizer, used ONLY to compute add_foreign_key's default
+    column name (`<to_table singular>_id` — there is no general singularize
+    helper elsewhere in the codebase, pluralize() only goes one way)."""
+    if not word:
+        return word
+    if word in _IRREGULAR_SINGULAR:
+        return _IRREGULAR_SINGULAR[word]
+    if word.endswith('ies'):
+        return word[:-3] + 'y'
+    if re.search(r'(s|x|z|ch|sh)es$', word):
+        return word[:-2]
+    if word.endswith('s'):
+        return word[:-1]
+    return word
+
+
+# ---------------------------------------------------------------------------
+# Ruby literal / call-argument parsing (D7's "Ruby literal parsing helper")
+# ---------------------------------------------------------------------------
+def _strip_comment(line):
+    """Cut a line at its first `#` that is outside a quoted string — quote-
+    aware so a comment/default string containing '#' (e.g. comment: "a #tag")
+    is never truncated."""
+    quote, i, n = None, 0, len(line)
+    while i < n:
+        c = line[i]
+        if quote:
+            if c == '\\' and i + 1 < n:
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in '\'"':
+            quote = c
+            i += 1
+            continue
+        if c == '#':
+            return line[:i]
+        i += 1
+    return line
+
+
+def _split_top_level(s):
+    """Split `s` on commas at bracket/paren/brace depth 0 and outside quotes —
+    shared by call-argument lists, `[...]` arrays, and `{...}` hashes."""
+    parts, depth, cur, quote, i, n = [], 0, [], None, 0, len(s)
+    while i < n:
+        c = s[i]
+        if quote:
+            cur.append(c)
+            if c == '\\' and i + 1 < n:
+                cur.append(s[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in '\'"':
+            quote = c
+            cur.append(c)
+            i += 1
+            continue
+        if c in '([{':
+            depth += 1
+            cur.append(c)
+            i += 1
+            continue
+        if c in ')]}':
+            depth -= 1
+            cur.append(c)
+            i += 1
+            continue
+        if c == ',' and depth == 0:
+            parts.append(''.join(cur).strip())
+            cur = []
+            i += 1
+            continue
+        cur.append(c)
+        i += 1
+    tail = ''.join(cur).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _unescape_ruby_string(inner, quote):
+    """Undo Ruby string escaping for the quote character, backslash, \\n, \\t
+    — the escapes realistically found in a generated schema.rb's string
+    literals (table/column names, comments, string defaults)."""
+    out, i, n = [], 0, len(inner)
+    while i < n:
+        c = inner[i]
+        if c == '\\' and i + 1 < n:
+            nc = inner[i + 1]
+            if nc in (quote, '\\'):
+                out.append(nc)
+            elif nc == 'n':
+                out.append('\n')
+            elif nc == 't':
+                out.append('\t')
+            else:
+                out.append(nc)
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
+def _parse_ruby_value(tok):
+    """Parse one Ruby literal token: string, symbol, int, float, true/false/
+    nil, a `[...]` array of the same, or a `{...}` hash of known option
+    shapes (D7). Returns `_DYNAMIC` for anything else (a method call, a
+    lambda, an interpolated string, ...) — the caller decides what to skip."""
+    tok = tok.strip()
+    if not tok:
+        return _DYNAMIC
+    if tok in ('true', 'false'):
+        return tok == 'true'
+    if tok == 'nil':
+        return None
+    if len(tok) >= 2 and tok[0] in '\'"' and tok[-1] == tok[0]:
+        return _unescape_ruby_string(tok[1:-1], tok[0])
+    if tok.startswith(':'):
+        rest = tok[1:]
+        if len(rest) >= 2 and rest[0] in '\'"' and rest[-1] == rest[0]:
+            return _unescape_ruby_string(rest[1:-1], rest[0])
+        if re.fullmatch(r'\w+', rest):
+            return rest
+        return _DYNAMIC
+    if re.fullmatch(r'-?\d+', tok):
+        return int(tok)
+    if re.fullmatch(r'-?\d+\.\d+', tok):
+        return float(tok)
+    if tok.startswith('[') and tok.endswith(']'):
+        vals = []
+        for it in _split_top_level(tok[1:-1]):
+            v = _parse_ruby_value(it)
+            if v is _DYNAMIC:
+                return _DYNAMIC
+            vals.append(v)
+        return vals
+    if tok.startswith('{') and tok.endswith('}'):
+        out = {}
+        for it in _split_top_level(tok[1:-1]):
+            m = _OPT_KEY_RE.match(it)
+            if not m:
+                return _DYNAMIC
+            v = _parse_ruby_value(m.group(2))
+            if v is _DYNAMIC:
+                return _DYNAMIC
+            out[m.group(1)] = v
+        return out
+    return _DYNAMIC
+
+
+def _parse_call_args(args_str):
+    """Split a Ruby call's argument list into (positionals, options): a token
+    matching `identifier: value` at the top level is an option (key parsed,
+    value left as _parse_ruby_value(value) — possibly `_DYNAMIC`); everything
+    else is a positional, itself run through _parse_ruby_value."""
+    positionals, options = [], {}
+    for tok in _split_top_level(args_str):
+        # _OPT_KEY_RE anchors on a leading identifier, so a quoted string or
+        # symbol token (never starting with a letter/underscore) can't match
+        # it and always falls through to positional, even if its contents
+        # happen to contain a colon (e.g. a string default "10:30").
+        m = _OPT_KEY_RE.match(tok)
+        if m:
+            options[m.group(1)] = _parse_ruby_value(m.group(2))
+        else:
+            positionals.append(_parse_ruby_value(tok))
+    return positionals, options
+
+
+def _default_index_name(table, columns):
+    return f"index_{table}_on_{'_'.join(columns)}"
+
+
+def _format_default(value):
+    """Lossless, engine-agnostic string form of a parsed Ruby default (D7):
+    numbers via str(), strings verbatim, booleans as 'true'/'false' — NOT
+    imitating any particular DB engine's default-value spelling."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    return str(value)
+
+
+# ---------------------------------------------------------------------------
+# create_table body — column / reference / timestamps / index statements
+# ---------------------------------------------------------------------------
+def _apply_column_opts(col, opts, ctx, line_no, warn, seen_unknown_opts):
+    """Apply the recognized {null, default, comment, limit, precision, scale}
+    options onto `col` (mutated), building `sql_type` modifiers as it goes.
+    Any other option name warns (deduped per option name per file — D7)."""
+    if opts.get('null') is False:
+        col['nullable'] = False
+    if 'default' in opts:
+        val = opts['default']
+        if val is _DYNAMIC:
+            warn(line_no, f'dynamic default ({ctx}) — attribute skipped')
+        elif val is not None:
+            col['default'] = _format_default(val)
+    if 'comment' in opts and isinstance(opts['comment'], str):
+        col['comment'] = opts['comment']
+    mods = []
+    if 'limit' in opts and isinstance(opts['limit'], int):
+        mods.append(str(opts['limit']))
+    elif 'precision' in opts and isinstance(opts['precision'], int):
+        if 'scale' in opts and isinstance(opts['scale'], int):
+            mods.append(f"{opts['precision']},{opts['scale']}")
+        else:
+            mods.append(str(opts['precision']))
+    if mods:
+        col['sql_type'] = f"{col['sql_type']}({','.join(mods)})"
+    for key in opts:
+        if key not in _COLUMN_RECOGNIZED_OPTS and key not in seen_unknown_opts:
+            seen_unknown_opts.add(key)
+            warn(line_no, f'unknown option {key!r} ({ctx}) — ignored')
+
+
+def _handle_column_stmt(rails_type, args, line_no, table, warn, seen_unknown_opts):
+    positionals, opts = _parse_call_args(args)
+    if not positionals or positionals[0] is _DYNAMIC or not isinstance(positionals[0], str):
+        warn(line_no, f"unparseable column name for t.{rails_type} — column skipped")
+        return
+    name = positionals[0]
+    nullable = opts.get('null') is not False
+    col = {'name': name, 'type': SQL_TYPES.get(rails_type, rails_type),
+          'sql_type': rails_type, 'nullable': nullable}
+    _apply_column_opts(col, opts, f'{rails_type}: {name!r}', line_no, warn, seen_unknown_opts)
+    table['columns'].append(col)
+
+
+def _handle_reference_stmt(method, args, line_no, table, warn, pending_fks):
+    positionals, opts = _parse_call_args(args)
+    if not positionals or positionals[0] is _DYNAMIC or not isinstance(positionals[0], str):
+        warn(line_no, f"unparseable reference name for t.{method} — skipped")
+        return
+    name = positionals[0]
+    for key in opts:
+        if key not in _REFERENCE_RECOGNIZED_OPTS:
+            warn(line_no, f'unknown option {key!r} (t.{method}: {name!r}) — ignored')
+    rails_type = opts.get('type')
+    if not isinstance(rails_type, str):
+        rails_type = 'bigint'
+    nullable = opts.get('null') is not False
+    id_col = f'{name}_id'
+    table['columns'].append({'name': id_col, 'type': SQL_TYPES.get(rails_type, rails_type),
+                             'sql_type': rails_type, 'nullable': nullable})
+    polymorphic = opts.get('polymorphic') is True
+    index_cols = [id_col]
+    if polymorphic:
+        type_col = f'{name}_type'
+        table['columns'].append({'name': type_col, 'type': 'string',
+                                 'sql_type': 'string', 'nullable': nullable})
+        index_cols = [type_col, id_col]
+        if opts.get('foreign_key'):
+            warn(line_no, f"t.{method} {name!r} is polymorphic — "
+                          "foreign_key: is ignored (no single target table)")
+    index_opt = opts.get('index', True)
+    if index_opt is not False:
+        unique = isinstance(index_opt, dict) and index_opt.get('unique') is True
+        table['indexes'].append({'name': _default_index_name(table['_name'], index_cols),
+                                 'columns': index_cols, 'unique': unique})
+    fk_opt = opts.get('foreign_key')
+    if fk_opt and not polymorphic:
+        target = fk_opt['to_table'] if isinstance(fk_opt, dict) and 'to_table' in fk_opt \
+            else pluralize(name)
+        pending_fks.append({'table': table['_name'], 'column': id_col,
+                            'target': target, 'line': line_no})
+
+
+def _handle_timestamps_stmt(args, line_no, table, warn):
+    _, opts = _parse_call_args(args)
+    nullable = opts.get('null') is True  # default null: false — opposite of a plain column
+    for key in opts:
+        if key != 'null':
+            warn(line_no, f'unknown option {key!r} (t.timestamps) — ignored')
+    for col_name in ('created_at', 'updated_at'):
+        table['columns'].append({'name': col_name, 'type': 'datetime',
+                                 'sql_type': 'datetime', 'nullable': nullable})
+
+
+def _handle_index_stmt(args, line_no, table, warn, top_level_table_name=None):
+    """Shared by `t.index` (table param is the enclosing create_table) and
+    `add_index` (table param is None; caller resolves `top_level_table_name`
+    against the already-parsed tables and passes the fragment, or None if
+    unknown)."""
+    positionals, opts = _parse_call_args(args)
+    if not positionals or positionals[0] is _DYNAMIC:
+        warn(line_no, 'unparseable index columns — skipped')
+        return
+    cols = positionals[0] if isinstance(positionals[0], list) else [positionals[0]]
+    if not all(isinstance(c, str) for c in cols):
+        warn(line_no, 'unparseable index columns — skipped')
+        return
+    for key in opts:
+        if key not in _INDEX_RECOGNIZED_OPTS:
+            warn(line_no, f'unknown option {key!r} (index on {cols}) — ignored')
+    tname = top_level_table_name if top_level_table_name is not None else table['_name']
+    name = opts.get('name') if isinstance(opts.get('name'), str) else _default_index_name(tname, cols)
+    unique = opts.get('unique') is True
+    table['indexes'].append({'name': name, 'columns': cols, 'unique': unique})
+
+
+_TABLE_STATEMENT_HANDLERS = {
+    'timestamps': 'timestamps',
+    'index': 'index',
+    'references': 'references',
+    'belongs_to': 'references',
+}
+
+
+def _handle_table_body_line(line, line_no, table, warn, pending_fks, seen_unknown_opts):
+    """Dispatch one physical line inside a `create_table ... do |t|` block.
+    Returns True if `line` closed the table (a bare `end`)."""
+    if line == 'end':
+        return True
+    m = _T_CALL_RE.match(line)
+    if not m:
+        warn(line_no, f"unknown statement {line!r} — skipped")
+        return False
+    method, args = m.group('method'), m.group('args')
+    if args.startswith('(') and args.endswith(')'):
+        args = args[1:-1]
+    kind = _TABLE_STATEMENT_HANDLERS.get(method)
+    if method in _SCHEMA_COLUMN_TYPES:
+        _handle_column_stmt(method, args, line_no, table, warn, seen_unknown_opts)
+    elif kind == 'references':
+        _handle_reference_stmt(method, args, line_no, table, warn, pending_fks)
+    elif kind == 'timestamps':
+        _handle_timestamps_stmt(args, line_no, table, warn)
+    elif kind == 'index':
+        _handle_index_stmt(args, line_no, table, warn)
+    else:
+        warn(line_no, f"unsupported column type 't.{method}' — column skipped")
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Top-level statements — create_table header, add_index, add_foreign_key
+# ---------------------------------------------------------------------------
+def _new_table(name):
+    return {'_name': name, 'columns': [], 'indexes': [], 'primary_key': None}
+
+
+def _start_create_table(m, line_no, warn):
+    positionals, opts = _parse_call_args(m.group('args'))
+    if not positionals or positionals[0] is _DYNAMIC or not isinstance(positionals[0], str):
+        warn(line_no, 'unparseable create_table name — table skipped')
+        return None
+    name = positionals[0]
+    table = _new_table(name)
+    for key in opts:
+        if key not in _CREATE_TABLE_RECOGNIZED_OPTS:
+            warn(line_no, f'unknown option {key!r} (create_table {name!r}) — ignored')
+    if isinstance(opts.get('comment'), str):
+        table['comment'] = opts['comment']
+    pk_opt = opts.get('primary_key')
+    id_opt = opts.get('id', True)
+    if isinstance(pk_opt, list):
+        table['primary_key'] = pk_opt   # composite PK — its columns are defined in the body
+    elif id_opt is not False:
+        pk_name = pk_opt if isinstance(pk_opt, str) else 'id'
+        pk_type = id_opt if isinstance(id_opt, str) else 'bigint'
+        table['columns'].append({'name': pk_name, 'type': SQL_TYPES.get(pk_type, pk_type),
+                                 'sql_type': SQL_TYPES.get(pk_type, pk_type),
+                                 'nullable': False, 'primary': True})
+        table['primary_key'] = pk_name
+    return table
+
+
+def _handle_top_level_line(line, line_no, tables, pending_fks, warn):
+    if line == 'end' or _SCHEMA_HEADER_RE.match(line) or _IGNORED_TOP_LEVEL_RE.match(line):
+        return
+    m = _ADD_INDEX_RE.match(line)
+    if m:
+        tokens = _split_top_level(m.group('args'))
+        tname = _parse_ruby_value(tokens[0]) if tokens else _DYNAMIC
+        if not isinstance(tname, str):
+            warn(line_no, 'unparseable add_index target table — skipped')
+            return
+        if tname not in tables:
+            warn(line_no, f'add_index on unknown table {tname!r} — skipped')
+            return
+        _handle_index_stmt(', '.join(tokens[1:]), line_no, tables[tname], warn,
+                           top_level_table_name=tname)
+        return
+    m = _ADD_FK_RE.match(line)
+    if m:
+        positionals, opts = _parse_call_args(m.group('args'))
+        if (len(positionals) < 2 or positionals[0] is _DYNAMIC or positionals[1] is _DYNAMIC
+                or not isinstance(positionals[0], str) or not isinstance(positionals[1], str)):
+            warn(line_no, 'unparseable add_foreign_key arguments — skipped')
+            return
+        table_name, target = positionals[0], positionals[1]
+        for key in opts:
+            if key not in _ADD_FK_RECOGNIZED_OPTS:
+                warn(line_no, f'unknown option {key!r} (add_foreign_key {table_name!r}, '
+                              f'{target!r}) — ignored')
+        column = opts.get('column') if isinstance(opts.get('column'), str) \
+            else f'{_singularize(target)}_id'
+        pending_fks.append({'table': table_name, 'column': column, 'target': target,
+                            'line': line_no})
+        return
+    warn(line_no, f"unknown statement {line!r} — skipped")
+
+
+def _resolve_pending_fks(tables, pending_fks, warn):
+    """FK resolution pass (D7), run after the whole file is parsed: turn each
+    pending {table, column, target} into a schema_fk association on `table`,
+    or warn+skip when the table/target/column doesn't resolve. Dedups
+    (table, column, target) so a t.references foreign_key: + a redundant
+    add_foreign_key for the same edge produce exactly one association."""
+    seen = set()
+    for fk in pending_fks:
+        tname, col, target, line_no = fk['table'], fk['column'], fk['target'], fk['line']
+        if tname not in tables:
+            warn(line_no, f'add_foreign_key on unknown table {tname!r} — skipped')
+            continue
+        if target not in tables:
+            warn(line_no, f'foreign key on {tname!r} references unknown table {target!r} '
+                          '— skipped')
+            continue
+        table = tables[tname]
+        if not any(c['name'] == col for c in table['columns']):
+            warn(line_no, f'foreign key on {tname!r} names column {col!r} which does not '
+                          'exist — skipped')
+            continue
+        key = (tname, col, target)
+        if key in seen:
+            continue
+        seen.add(key)
+        assoc_type = 'has_one' if _unique_single_col(table, col) else 'belongs_to'
+        name = col[:-3] if col.endswith('_id') else col
+        table.setdefault('associations', []).append(
+            {'type': assoc_type, 'name': name, 'target': target,
+             'foreign_key': col, 'schema_fk': True})
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def rails_schema_provider(path, given=None):
+    """ProviderResult (kind='schema', provider='rails.schema') for a Rails
+    db/schema.rb file: columns, primary keys, indexes, and foreign keys,
+    parsed by pure text analysis — schema.rb is NEVER executed as Ruby (D7).
+    A parser-derived FK becomes an association carrying `schema_fk: True`
+    (D2), the schema layer's legacy-style provenance flag, mirroring how the
+    live-DB layer marks its own FKs `db_fk: True`.
+
+    `path` is always the resolved Path actually read from disk; `given` is
+    the (possibly relative, possibly unresolved) path string to DISPLAY in
+    warnings/location — sources.py passes the user's own spelling so a
+    warning reads e.g. `db/schema.rb:12: ...` instead of an absolute path
+    the user never typed. Defaults to `str(path)` for callers (tests, direct
+    use) that don't distinguish the two."""
+    display = given if given is not None else str(path)
+    text = path.read_text(encoding='utf-8', errors='replace')
+    warnings = []
+
+    def warn(line_no, msg):
+        warnings.append(f'{display}:{line_no}: {msg}')
+
+    tables = {}
+    pending_fks = []
+    seen_unknown_col_opts = set()
+    current = None  # the in-progress table dict, or None when outside a create_table block
+    lines = text.splitlines()
+
+    for line_no, raw in enumerate(lines, 1):
+        line = _strip_comment(raw).strip()
+        if not line:
+            continue
+        if current is not None:
+            closed = _handle_table_body_line(line, line_no, current, warn, pending_fks,
+                                             seen_unknown_col_opts)
+            if closed:
+                if not current.get('_discard'):
+                    tables[current['_name']] = {k: v for k, v in current.items()
+                                                if k not in ('_name', '_discard')}
+                current = None
+            continue
+        m = _CREATE_TABLE_RE.match(line)
+        if m:
+            current = _start_create_table(m, line_no, warn)
+            if current is None:
+                # unparseable create_table name — still consume the body so its
+                # lines don't get misread as top-level statements, but discard it
+                current = _new_table('')
+                current['_discard'] = True
+            continue
+        _handle_top_level_line(line, line_no, tables, pending_fks, warn)
+
+    if current is not None:
+        warn(len(lines), 'unterminated create_table block at end of file — skipped')
+
+    _resolve_pending_fks(tables, pending_fks, warn)
+    return make_provider_result('schema', 'rails.schema', tables,
+                                location=display, warnings=warnings)
+# ---------------------------------------------------------------------------
+# Input sources — InputSpec normalization + source-type registry/dispatch.
+#
+# Every code-source input (legacy --models, config `models`, and the typed
+# config `sources` list) normalizes to a common, ordered list of InputSpec
+# dicts, which then run through a small source-type registry to produce the
+# ProviderResult layers merge_ir folds. A typed source (config `sources[].type`)
+# skips detection entirely and calls the named type's builder directly; an
+# untyped source (legacy --models / config `models`) keeps today's
+# auto-detection behavior, with ambiguity/ note-worthy detections reported to
+# stderr instead of resolved silently.
+#
+# InputSpec = {'id': str, 'type': str|None, 'path': Path, 'given': str}
+#   type None = auto-detect. `path` is always resolved (expanduser+resolve) —
+#   the one filesystem operations use. `given` is the ORIGINAL path string
+#   (relative, unresolved, exactly as the user typed/configured it) — the one
+#   every user-facing message (warnings, progress lines, Note lines, error
+#   messages naming the source) displays, so a relative `./app/models` in the
+#   config still reads that way on stderr instead of some long absolute path
+#   the user never wrote.
+# ---------------------------------------------------------------------------
+
+# Static source-type registry: type name -> builder fn(spec, table_map) ->
+# ProviderResult. The '<overlay.name>.models' types (rails.models,
+# prisma.models, django.models, and any --adapter overlay's own) are NOT
+# listed here — they're derived dynamically from FRAMEWORK_OVERLAYS in
+# _source_type_builder/known_source_type_names so a newly-registered overlay
+# gets a usable `sources[].type` for free, with no registry edit.
+def _rails_schema_type_builder(spec, table_map):
+    return rails_schema_provider(spec['path'], given=spec['given'])
+
+
+SOURCE_TYPES = {
+    'rails.schema': _rails_schema_type_builder,
+}
+
+# Source types whose path must be an existing FILE, not a directory (D4) —
+# checked in _run_typed_spec before the builder runs, with a type-specific
+# message (a directory is the mistake someone makes when they meant the
+# containing project, or copy-pasted a `rails.models` path by habit).
+_FILE_SOURCE_TYPES = {'rails.schema': 'a schema.rb file'}
+
+
+def _models_type_builder(overlay_cls):
+    def build(spec, table_map):
+        return overlay_cls().build(spec['path'], table_map)
+    return build
+
+
+def _source_type_builder(type_name):
+    """Resolve a sources[].type name to its builder fn(spec, table_map) ->
+    ProviderResult, or None if the name isn't (yet) registered."""
+    if type_name in SOURCE_TYPES:
+        return SOURCE_TYPES[type_name]
+    for cls in FRAMEWORK_OVERLAYS:
+        if f'{cls.name}.models' == type_name:
+            return _models_type_builder(cls)
+    return None
+
+
+def known_source_type_names():
+    """Every currently valid sources[].type value, sorted — the static
+    registry, one '<overlay.name>.models' entry per registered
+    FrameworkOverlay, and the 'rails.project' macro (D4 — it never reaches
+    the dispatch registry itself, since normalize_input_specs expands it
+    away first, but it's still a name a user can legitimately declare). Used
+    only to build "unknown type" error messages."""
+    dynamic = {f'{cls.name}.models' for cls in FRAMEWORK_OVERLAYS}
+    return sorted(set(SOURCE_TYPES) | dynamic | {'rails.project'})
+
+
+def _join_given(root_given, *parts):
+    """Join further path segments onto a user-given path STRING for display
+    only — never resolved/normalized, so a relative rails.project root like
+    `./railsapp` still reads `./railsapp/db/schema.rb` in the expanded
+    rails.schema half's own messages, not whatever normalize_input_specs's
+    early .resolve() turned the root into."""
+    root = root_given.rstrip('/')
+    return '/'.join((root, *parts)) if root else '/'.join(parts)
+
+
+def _expand_rails_project(spec):
+    """D4 macro expansion: a `rails.project` source's path is a Rails project
+    root, expanded (in place, before dispatch ever sees it) into a
+    'rails.schema' spec for root/db/schema.rb and/or a 'rails.models' spec
+    for root/app/models — whichever exist. Neither existing is a hard error;
+    exactly one existing proceeds with a stderr note naming what was
+    skipped (both existing is the common case and stays silent). Messages
+    name the paths via the user-given root string (`spec['given']`), not the
+    resolved `spec['path']` — see the InputSpec shape note above."""
+    sid, root, given_root = spec['id'], spec['path'], spec['given']
+    schema_path, models_path = root / 'db' / 'schema.rb', root / 'app' / 'models'
+    given_schema = _join_given(given_root, 'db', 'schema.rb')
+    given_models = _join_given(given_root, 'app', 'models')
+    has_schema, has_models = schema_path.is_file(), models_path.is_dir()
+    if not has_schema and not has_models:
+        sys.exit(f"Error: source {sid!r}: rails.project found neither {given_schema} "
+                 f"nor {given_models} under {given_root}")
+    expanded = []
+    if has_schema:
+        expanded.append({'id': f'{sid}:schema', 'type': 'rails.schema',
+                         'path': schema_path, 'given': given_schema})
+    else:
+        print(f"Note: source {sid!r}: rails.project found no {given_schema} — "
+              "skipping its rails.schema half", file=sys.stderr)
+    if has_models:
+        expanded.append({'id': f'{sid}:models', 'type': 'rails.models',
+                         'path': models_path, 'given': given_models})
+    else:
+        print(f"Note: source {sid!r}: rails.project found no {given_models} — "
+              "skipping its rails.models half", file=sys.stderr)
+    return expanded
+
+
+def normalize_input_specs(models_list, config_sources):
+    """Build the deterministic, ordered InputSpec list merge_ir's layers come
+    from (D4): config `sources` first, in declared order (a `rails.project`
+    entry expands in place to its rails.schema/rails.models pair — see
+    _expand_rails_project — so it never reaches dispatch as its own type),
+    then each legacy --models / config `models` entry (id `models[<i>]`,
+    type None — auto-detected at dispatch), preserving their given order.
+    Later entries win same-kind merge ties (existing merge rule); CLI
+    --models sorting after config `sources` is consistent with "CLI wins
+    over config". Each spec keeps the user's original path STRING alongside
+    the resolved Path (see the InputSpec shape note above)."""
+    specs = []
+    for s in config_sources:
+        spec = {'id': s['id'], 'type': s['type'], 'given': s['path'],
+               'path': Path(s['path']).expanduser().resolve()}
+        if spec['type'] == 'rails.project':
+            specs.extend(_expand_rails_project(spec))
+        else:
+            specs.append(spec)
+    for i, m in enumerate(models_list):
+        specs.append({'id': f'models[{i}]', 'type': None, 'given': m,
+                      'path': Path(m).expanduser().resolve()})
+    return specs
+
+
+def run_input_specs(specs, table_map):
+    """Dispatch every InputSpec (in order) to its ProviderResult, printing a
+    per-source progress line and forwarding every warning the provider
+    returns to stderr (D4 — the first real consumer of ProviderResult
+    warnings)."""
+    results = []
+    for spec in specs:
+        result = (_run_typed_spec(spec, table_map) if spec['type'] is not None
+                  else _run_untyped_spec(spec, table_map))
+        for w in result['warnings']:
+            print(f'Warning: {w}', file=sys.stderr)
+        results.append(result)
+    return results
+
+
+def _run_typed_spec(spec, table_map):
+    sid, stype, path, given = spec['id'], spec['type'], spec['path'], spec['given']
+    builder = _source_type_builder(stype)
+    if builder is None:
+        sys.exit(f"Error: source {sid!r}: unknown type {stype!r} "
+                 f"(known types: {', '.join(known_source_type_names())})")
+    if not path.exists():
+        sys.exit(f"Error: source {sid!r}: {given} does not exist")
+    if stype in _FILE_SOURCE_TYPES and not path.is_file():
+        sys.exit(f"Error: source {sid!r}: {stype} expects {_FILE_SOURCE_TYPES[stype]}, "
+                 f"got {given}")
+    result = builder(spec, table_map)
+    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
+          file=sys.stderr)
+    return result
+
+
+def _progress_noun(result):
+    """D4's per-source progress line uses 'tables' for a schema-kind layer
+    (rails.schema's contribution is columns/indexes/PK, not code semantics)
+    and keeps the existing 'associations' wording for every other kind
+    (framework layers — tests may match this exact phrase)."""
+    return 'tables' if result['source']['kind'] == 'schema' else 'associations'
+
+
+def _run_untyped_spec(spec, table_map):
+    """Legacy --models / config `models` auto-detection (today's behavior),
+    plus ambiguity reporting (D4b/c): when more than one FrameworkOverlay
+    matches, the winner is unchanged (framework_overlay_for's own priority
+    order) but now a stderr note names the runner-up(s) and points at
+    `sources[].type` as the way to pin it down explicitly."""
+    sid, path, given = spec['id'], spec['path'], spec['given']
+    if not path.exists():
+        sys.exit(f'Error: {given} does not exist')
+    if path.is_file() and path.name == 'schema.rb':
+        print(f'Note: {given} auto-detected as rails.schema (declare it in config '
+              'sources to make this explicit)', file=sys.stderr)
+        result = rails_schema_provider(path, given=given)
+        print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
+              file=sys.stderr)
+        return result
+    matches = framework_overlays_matching(path)
+    if not matches:
+        sys.exit(f'Error: could not detect the code kind at {given} (expected a Rails '
+                 'app/models dir, a schema.prisma, a Django project, or a db/schema.rb '
+                 'file — declare `sources[].type` in the config to be explicit)')
+    winner = matches[0]
+    if len(matches) > 1:
+        names = ', '.join(c.name for c in matches)
+        print(f'Note: {given} matched multiple frameworks ({names}); using {winner.name}. '
+              f'Declare sources[].type in the config to override.', file=sys.stderr)
+    result = winner().build(path, table_map)
+    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
+          file=sys.stderr)
+    return result
+# ---------------------------------------------------------------------------
 # Provider dispatchers (DB) + config layer construction/validation.
 #
 # The framework overlays and their dispatcher (framework_provider /
@@ -2173,6 +2957,7 @@ def write_excel(tables, path, title, template_path=None):
                      [('Type', S_HEADER), ('Name', S_HEADER), ('Target', S_HEADER), ('Via', S_HEADER)]]
             for i, a in enumerate(t['associations']):
                 via = ('DB FK' if a.get('db_fk') else
+                       'schema FK' if a.get('schema_fk') else
                        'inferred' if a.get('inferred') else
                        'manual' if a.get('manual') else 'code')
                 s = alt(i)
@@ -2524,6 +3309,7 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .atype{font-size:10px;color:#64748b}
 .badge-inf{font-size:9px;background:#fef9c3;color:#854d0e;padding:0 4px;border-radius:3px}
 .badge-dbfk{font-size:9px;background:#dbeafe;color:#1e3a5f;padding:0 4px;border-radius:3px}
+.badge-schemafk{font-size:9px;background:#ccfbf1;color:#0f766e;padding:0 4px;border-radius:3px}
 .badge-manual{font-size:9px;background:#ede9fe;color:#5b21b6;padding:0 4px;border-radius:3px}
 .aname{font-family:monospace;font-size:12px;font-weight:600;color:#1e293b}
 .atarget{font-size:11px;color:#64748b;margin-top:1px}
@@ -4621,6 +5407,7 @@ function showDetails(){
         :(DESC[a.type]||'');
       if(a.inferred) desc+=' (inferred from the FK column name; no association is declared)';
       if(a.db_fk) desc+=' (from a database foreign-key constraint)';
+      if(a.schema_fk) desc+=' (from a foreign-key definition in db/schema.rb)';
       if(a.manual) desc+=' (manually declared in the config file)';
       const inView=dispTables.has(a.target);
       const isHidden=hiddenTables.has(a.target);
@@ -4633,7 +5420,7 @@ function showDetails(){
             :`<a class="add-target" data-add="${esc(a.target)}" title="Not displayed — click to add to the diagram">${escMark(a.target)} ＋</a>`;
       const thr=a.through?`<div class="athrough">through: :${esc(a.through)}</div>`:'';
       // plain-language description appears as a tooltip on hover
-      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${escMark(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
+      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.schema_fk?' <span class="badge-schemafk">schema FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${escMark(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
     });
     h+='</div>';
   }
@@ -5955,7 +6742,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -5975,6 +6762,15 @@ def _check_config_types(config, path):
               isinstance(val, expected))
         if not ok:
             sys.exit(f'Error: {path} `{key}` must be a {expected.__name__}, got {val!r}')
+    # version: purely a documented marker for the config *shape* users are
+    # shown (e.g. in erdscope.example.yml) — no runtime behavior hangs off it
+    # yet, so the only valid value is the literal int 1. Same bool-vs-int
+    # discipline as above: `version: true` must not slip through as 1.
+    if 'version' in config:
+        v = config['version']
+        if not (isinstance(v, int) and not isinstance(v, bool) and v == 1):
+            sys.exit(f'Error: {path} `version` must be 1 (the only supported '
+                     f'config version), got {v!r}')
     # models: a single path (str) or a list of paths (str) — multiple frameworks
     if 'models' in config:
         m = config['models']
@@ -6010,6 +6806,35 @@ def _check_config_types(config, path):
                  '({table, column, references, ...})')
     if 'tables' in config:
         _check_config_tables(config['tables'], path)
+    if 'sources' in config:
+        _check_config_sources(config['sources'], path)
+
+# ---------------------------------------------------------------------------
+# `sources:` — typed code-source declarations (D5). Purely syntactic here:
+# shape, required fields, allow-listed keys, Config-internal duplicate `id`.
+# Whether `type` names a REGISTERED source type is a dispatch-time (sources.py
+# run_input_specs) concern, not a load-time one — an --adapter plugin loaded
+# later in the pipeline can still register its own overlay/type in time.
+# ---------------------------------------------------------------------------
+_CONFIG_SOURCE_KEYS = {'id', 'type', 'path'}
+
+def _check_config_sources(sources, path):
+    if not isinstance(sources, list):
+        sys.exit(f'Error: {path} `sources` must be a list of objects '
+                 '({id, type, path})')
+    seen = set()
+    for i, s in enumerate(sources):
+        sw = f'sources[{i}]'
+        if not isinstance(s, dict):
+            sys.exit(f'Error: {path} `{sw}` must be an object')
+        _reject_unknown_keys(s, _CONFIG_SOURCE_KEYS, path, sw)
+        for key in ('id', 'type', 'path'):
+            val = s.get(key)
+            if not isinstance(val, str) or not val:
+                sys.exit(f'Error: {path} `{sw}` needs a non-empty string `{key}`')
+        if s['id'] in seen:
+            sys.exit(f'Error: {path} `sources` has a duplicate id {s["id"]!r}')
+        seen.add(s['id'])
 
 # ---------------------------------------------------------------------------
 # `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)
@@ -6274,13 +7099,18 @@ def assemble_config_url(config):
 # CLI
 # ---------------------------------------------------------------------------
 def _framework_project_name(mroot):
-    """A meaningful project name for a --models path (§10 title fallback).
-    Walk from a Rails app/models dir up to the project root, from a
-    prisma/schema.prisma up to the project, and from a schema file up to its
-    directory, then use the basename."""
+    """A meaningful project name for the first normalized InputSpec's path (§10
+    title fallback / D6.3). Walk from a Rails app/models dir up to the project
+    root, from a prisma/schema.prisma up to the project, from a Rails
+    db/schema.rb up to ITS project root (file -> parent `db` -> its parent),
+    and from any other schema file up to its directory, then use the
+    basename."""
     p = mroot
     if p.is_file():                                    # e.g. .../schema.prisma
-        p = p.parent
+        if p.name == 'schema.rb' and p.parent.name == 'db':  # .../<proj>/db/schema.rb
+            p = p.parent.parent
+        else:
+            p = p.parent
     if p.name == 'models' and p.parent.name == 'app':  # Rails app/models
         p = p.parent.parent
     elif p.name == 'prisma':                           # .../<proj>/prisma
@@ -6628,13 +7458,16 @@ def _run_pipeline(args):
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
     cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
+    config_sources = config.get('sources') or []  # shape already validated by load_config()
+
     # ── valid-input check (§10): at least one SCHEMA source (DB / Framework /
-    #    config.tables). relations alone is not a source — it needs a base. ──
-    if not (url or models_list or config_tables):
+    #    config.tables / config.sources). relations alone is not a source — it
+    #    needs a base. ──
+    if not (url or models_list or config_tables or config_sources):
         sys.exit('Error: no schema input. Provide at least one of: a database URL '
                  '(mysql:// or postgres://) as the argument or config `database`; '
-                 '--models pointing at a Rails/Prisma/Django project; or a config file '
-                 'with a `tables:` section.')
+                 '--models pointing at a Rails/Prisma/Django project; a config `sources` '
+                 'entry; or a config file with a `tables:` section.')
 
     # ── collect provider layers, low→high spec priority, then merge (§3) ──
     layers = []
@@ -6645,16 +7478,16 @@ def _run_pipeline(args):
         print(f'Fetched {len(db_result["tables"])} tables from {engine_name}', file=sys.stderr)
         layers.append(db_result)
 
-    fw_root = None
-    for m in models_list:  # each --models / config `models` entry, in order
-        mroot = Path(m).expanduser().resolve()
-        if not mroot.exists():
-            sys.exit(f'Error: {mroot} does not exist')
-        fw = framework_provider(mroot, args.table_map)
-        layers.append(fw)
-        if fw_root is None:
-            fw_root = mroot  # the first framework drives the title fallback (§10)
-        print(f'Merged {fw["source"]["provider"]} associations from {mroot}', file=sys.stderr)
+    # Code-source inputs (framework `--models`/config `models`, and config
+    # `sources` — rails.schema, `<overlay>.models`, the rails.project macro)
+    # normalize to one deterministic InputSpec order — config `sources`
+    # (declared order, macros expanded) then legacy `models` entries (D3/D4) —
+    # then dispatch through the source-type registry. Cross-kind priority still
+    # comes from _PHYSICAL_RANK/_LOGICAL_RANK, not list order, so a schema
+    # layer listed before a framework layer still resolves ties correctly.
+    specs = normalize_input_specs(models_list, config_sources)
+    layers += run_input_specs(specs, args.table_map)
+    fw_root = specs[0]['path'] if specs else None  # first spec drives the title fallback (§10)
 
     # config.tables join as a top-priority config layer (add/override/drop/
     # replace — §6.2/§7). Its DROP ops are semantic-validated against the merged

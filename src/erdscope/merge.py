@@ -10,16 +10,24 @@
 # (key present — §4: an absent key never participates), pick the value
 # maximizing (rank, spec_order); spec_order is the index in `layers`, so a
 # later layer wins ties (e.g. multiple frameworks -> last one wins).
-_PHYSICAL_RANK = {'config': 3, 'db': 2, 'framework': 1}   # DB is the physical truth
-_LOGICAL_RANK = {'config': 3, 'framework': 2, 'db': 1}    # code owns logical names
+# DB is the physical truth; a static rails.schema parse sits below a live DB
+# read but above framework code (a schema.rb dump is closer to the real
+# database than an association declaration is). Framework code owns logical
+# names, so schema.rb ranks below it there but still above the DB (an
+# association's declared name beats a machine-derived one, which in turn beats
+# a raw DB-FK-derived name).
+_PHYSICAL_RANK = {'config': 4, 'db': 3, 'schema': 2, 'framework': 1}
+_LOGICAL_RANK = {'config': 4, 'framework': 3, 'schema': 2, 'db': 1}
 # Column attributes split by authority kind (§7.2). Everything not physical
 # (i.e. `comment`) is logical.
 _PHYSICAL_COL_ATTRS = ('type', 'sql_type', 'nullable', 'primary', 'default', 'extra')
 # Deterministic column-attribute emit order (str-set iteration is hash-seed
 # dependent, so never iterate a set for output order).
 _COL_ATTR_ORDER = ('type', 'sql_type', 'nullable', 'primary', 'default', 'extra', 'comment')
-# Representative-provenance precedence (§9.1): manual > declared > db_fk > inferred.
-_PROV_PRECEDENCE = {'manual': 3, 'declared': 2, 'db_fk': 1, 'inferred': 0}
+# Representative-provenance precedence (§9.1): manual > declared > db_fk >
+# schema_fk > inferred — a live DB FK is more authoritative than the same edge
+# parsed statically out of schema.rb.
+_PROV_PRECEDENCE = {'manual': 4, 'declared': 3, 'db_fk': 2, 'schema_fk': 1, 'inferred': 0}
 
 def _pick_by_authority(contribs):
     """contribs: list of (rank, spec_order, value). Return the value with the
@@ -405,13 +413,19 @@ def merge_ir(layers):
     return result
 
 def reconcile_db_fks(tables):
-    """Phase B (§8.5) — edge-level DB-FK reconciliation: an explicit (non-db_fk,
-    non-inferred) association covering an undirected {source, target} pair drops
-    the DB FK for that pair when the explicit side names no column or the same
-    column; a dropped has_one DB FK upgrades a lone covering belongs_to to
-    has_one in place. belongs_to alone doesn't assert cardinality in Rails, so
-    dropping a 1:1 DB FK outright would silently discard the DB's 1:1 signal.
-    Mutates `tables` in place and returns the number of DB FKs removed."""
+    """Phase B (§8.5) — edge-level DB/schema-FK reconciliation: an explicit
+    (non-db_fk, non-schema_fk, non-inferred) association covering an
+    undirected {source, target} pair drops the DB/schema FK for that pair when
+    the explicit side names no column or the same column; a dropped has_one
+    DB/schema FK upgrades a lone covering belongs_to to has_one in place.
+    belongs_to alone doesn't assert cardinality in Rails, so dropping a 1:1
+    DB/schema FK outright would silently discard its 1:1 signal. A
+    'schema_fk' association (rails.schema's static parse of a foreign-key
+    definition) is treated exactly like 'db_fk' here — same covered-by-
+    explicit drop, same has_one upgrade — since it is the same kind of
+    machine-derived, un-named edge; only its representative-provenance rank
+    (§9.1, below db_fk) tells them apart at the field-authority level. Mutates
+    `tables` in place and returns the number of DB/schema FKs removed."""
     explicit_by_pair = {}
     for name, t in tables.items():
         for a in t['associations']:
@@ -421,7 +435,7 @@ def reconcile_db_fks(tables):
     for name, t in tables.items():
         kept = []
         for a in t['associations']:
-            if _assoc_provenance(a) == 'db_fk':
+            if _assoc_provenance(a) in ('db_fk', 'schema_fk'):
                 candidates = explicit_by_pair.get(frozenset((name, a['target'])), [])
                 covering = [(n, ea) for n, ea in candidates
                             if not ea.get('foreign_key') or ea['foreign_key'] == a.get('foreign_key')]

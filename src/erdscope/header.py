@@ -26,7 +26,7 @@ consumes this shape:
         "associations": [{"type": has_many|belongs_to|has_one|has_and_belongs_to_many,
                           "name", "target",
                           "through"?, "foreign_key"?, "polymorphic"?,
-                          "db_fk"?, "inferred"?, "manual"?}],
+                          "db_fk"?, "inferred"?, "manual"?, "schema_fk"?}],
       }
     }
 
@@ -55,8 +55,9 @@ serialization time, so the DATA_JSON output stays byte-identical.
     IR = dict[table_name, TableFragment]
 
     # Each parser is (moving toward) "parse only, no merging" and returns:
-    Source         = {"kind": "db"|"framework"|"config",
-                      "provider": "mysql"|"postgres"|"rails"|"prisma"|"django"|"config",
+    Source         = {"kind": "db"|"framework"|"config"|"schema",
+                      "provider": "mysql"|"postgres"|"rails"|"prisma"|"django"|"config"
+                                 |"rails.schema",
                       "location"?: str}            # url (no password) / dir / config path
     Warning        = {"code": str, "message": str, "table"?: str}
     ProviderResult = {"source": Source, "tables": IR, "warnings": list[Warning]}

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `rails.schema` provider: statically parses a Rails `db/schema.rb` file (columns,
+  primary keys, indexes, real foreign keys) into a new `schema` layer kind — no live
+  database and, crucially, **no Ruby execution** required. A `schema.rb`-derived
+  foreign key merges as a **schema FK** (a new teal badge in the viewer, its own
+  "schema FK" column in the Excel `--excel` export), reconciled against a covering
+  declared/DB-FK association exactly like a live DB FK already is.
+- Config gains a typed **`sources:`** list — `{ id, type, path }` entries that name
+  their own input kind explicitly instead of relying on `--models`/`models`
+  auto-detection. Every registered framework overlay gets a `<name>.models` type for
+  free (`rails.models`, `prisma.models`, `django.models`, and any `--adapter`-registered
+  overlay's own), plus the new `rails.schema` type and a `rails.project` macro that
+  expands a Rails app root into both its `rails.schema` and `rails.models` halves.
+  `sources` and `models`/`--models` are independent and both apply if both are given.
+- Merge authority order extends for the new `schema` layer: physical facts (column
+  types, indexes, primary keys) follow **Config > live DB > rails.schema > models**;
+  associations/comments (logical names) follow **Config > models > rails.schema > DB**.
+- An untyped `--models`/config `models` path pointing directly at a `schema.rb` file
+  now auto-detects as `rails.schema` (with a stderr note suggesting `sources[].type`
+  to make it explicit), and ambiguous auto-detection (a path matching more than one
+  framework overlay) now prints which frameworks matched and which one won, instead of
+  resolving silently.
+
 ## [0.4.1] - 2026-07-16
 
 ### Fixed

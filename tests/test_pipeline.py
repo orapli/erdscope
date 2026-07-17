@@ -757,5 +757,128 @@ class TestAdapterPlugins(_NoDBDriver):
         self.assertIn('gadgets', self._data(out)['tables'])
 
 
+class TestInputSpecNormalization(unittest.TestCase):
+    """D4: normalize_input_specs — the deterministic order code-source layers
+    are built in (config `sources` first, in declared order, then legacy
+    --models/config `models` entries), independent of any dispatch."""
+
+    def test_config_sources_then_legacy_models_order(self):
+        specs = erd.normalize_input_specs(
+            ['a/models', 'b/models'],
+            [{'id': 'primary', 'type': 'rails.models', 'path': str(FIXTURE_RAILS)}])
+        self.assertEqual([s['id'] for s in specs], ['primary', 'models[0]', 'models[1]'])
+        self.assertEqual(specs[0]['type'], 'rails.models')
+        self.assertIsNone(specs[1]['type'])
+        self.assertIsNone(specs[2]['type'])
+        self.assertTrue(specs[1]['path'].is_absolute())  # resolved, like today's --models
+
+    def test_no_sources_no_models_is_empty(self):
+        self.assertEqual(erd.normalize_input_specs([], []), [])
+
+    def test_known_source_type_names_includes_dynamic_models_types(self):
+        names = erd.known_source_type_names()
+        self.assertIn('rails.models', names)
+        self.assertIn('prisma.models', names)
+        self.assertIn('django.models', names)
+        self.assertEqual(names, sorted(names))  # sorted, per D4
+
+
+class TestSourceDispatch(_NoDBDriver):
+    """D4 run_input_specs: typed sources skip detection and call the named
+    overlay directly; untyped (legacy) sources keep today's auto-detection,
+    now with ambiguity reporting when more than one framework matches."""
+
+    def test_typed_models_source_skips_detection(self):
+        # FIXTURE_PRISMA would auto-detect as prisma (it has a schema.prisma);
+        # a typed rails.models source dispatches straight to RailsOverlay
+        # instead — no detection step runs at all, so Prisma's models never
+        # get parsed (the fixture has no app/models dir, so the rails result
+        # is just empty — that emptiness IS the proof detection was skipped).
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'x', 'type': 'rails.models', 'path': str(FIXTURE_PRISMA)}]}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '-o', out)
+        # RailsOverlay.build found no app/models under FIXTURE_PRISMA and no
+        # *.rb files at its root -> an empty fragment; Prisma's Post model
+        # (which detection WOULD have found) never gets parsed
+        self.assertEqual(self._data(out)['tables'], {})
+
+    def test_typed_source_type_overrides_would_be_detection(self):
+        # a directory with BOTH a schema.prisma and Rails-parseable models:
+        # declaring type: prisma.models must retrieve Prisma's columns even
+        # though Rails would win auto-detection (lower priority number).
+        proj = Path(self._p('mixed'))
+        (proj / 'app' / 'models').mkdir(parents=True)
+        (proj / 'app' / 'models' / 'widget.rb').write_text(
+            'class Widget < ApplicationRecord\nend\n')
+        (proj / 'schema.prisma').write_text(
+            'model Post {\n  id Int @id\n  title String\n}\n')
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'x', 'type': 'prisma.models', 'path': str(proj)}]}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '-o', out)
+        data = self._data(out)['tables']
+        self.assertIn('Post', data)
+        self.assertNotIn('widgets', data)
+
+    def test_unknown_source_type_lists_known_types(self):
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'x', 'type': 'nope', 'path': str(FIXTURE_RAILS)}]}))
+        with self.assertRaises(SystemExit) as cm:
+            self._run('--config', cfg, '-o', self._p('out.html'))
+        msg = str(cm.exception)
+        self.assertIn("unknown type 'nope'", msg)
+        self.assertIn('rails.models', msg)
+
+    def test_typed_source_path_must_exist(self):
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'x', 'type': 'rails.models', 'path': self._p('nope')}]}))
+        with self.assertRaises(SystemExit) as cm:
+            self._run('--config', cfg, '-o', self._p('out.html'))
+        self.assertIn('does not exist', str(cm.exception))
+
+    def test_sources_and_models_both_apply(self):
+        cfg = self._p('c.json')
+        Path(cfg).write_text(json.dumps({'sources': [
+            {'id': 'x', 'type': 'prisma.models', 'path': str(FIXTURE_PRISMA)}]}))
+        out = self._p('out.html')
+        self._run('--config', cfg, '--models', str(FIXTURE_RAILS), '-o', out)
+        data = self._data(out)['tables']
+        self.assertIn('Post', data)      # from config sources
+        self.assertIn('webhooks', data)  # from --models
+
+    def test_multiple_framework_matches_reports_ambiguity_but_keeps_winner(self):
+        # a directory containing both an app/models dir (Rails, priority 1)
+        # and a schema.prisma (Prisma, priority 3) matches two overlays; the
+        # winner is unchanged (today's framework_overlay_for pick) but a note
+        # is printed naming the runner-up(s).
+        proj = Path(self._p('ambiguous'))
+        (proj / 'app' / 'models').mkdir(parents=True)
+        (proj / 'app' / 'models' / 'widget.rb').write_text(
+            'class Widget < ApplicationRecord\nend\n')
+        (proj / 'schema.prisma').write_text('model Post {\n  id Int @id\n}\n')
+        out = self._p('out.html')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self._run('--models', str(proj), '--no-config', '-o', out)
+        self.assertIn('matched multiple frameworks', err.getvalue())
+        self.assertIn('rails', err.getvalue())
+        self.assertIn('sources[].type', err.getvalue())
+        data = self._data(out)['tables']
+        self.assertIn('widgets', data)   # rails won (today's winner, unchanged)
+        self.assertNotIn('Post', data)
+
+    def test_single_framework_match_is_silent(self):
+        out = self._p('out.html')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self._run('--models', str(FIXTURE_RAILS), '--no-config', '-o', out)
+        self.assertNotIn('matched multiple frameworks', err.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main()

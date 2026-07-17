@@ -135,13 +135,16 @@ def _run_pipeline(args):
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
     cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
+    config_sources = config.get('sources') or []  # shape already validated by load_config()
+
     # ── valid-input check (§10): at least one SCHEMA source (DB / Framework /
-    #    config.tables). relations alone is not a source — it needs a base. ──
-    if not (url or models_list or config_tables):
+    #    config.tables / config.sources). relations alone is not a source — it
+    #    needs a base. ──
+    if not (url or models_list or config_tables or config_sources):
         sys.exit('Error: no schema input. Provide at least one of: a database URL '
                  '(mysql:// or postgres://) as the argument or config `database`; '
-                 '--models pointing at a Rails/Prisma/Django project; or a config file '
-                 'with a `tables:` section.')
+                 '--models pointing at a Rails/Prisma/Django project; a config `sources` '
+                 'entry; or a config file with a `tables:` section.')
 
     # ── collect provider layers, low→high spec priority, then merge (§3) ──
     layers = []
@@ -152,16 +155,16 @@ def _run_pipeline(args):
         print(f'Fetched {len(db_result["tables"])} tables from {engine_name}', file=sys.stderr)
         layers.append(db_result)
 
-    fw_root = None
-    for m in models_list:  # each --models / config `models` entry, in order
-        mroot = Path(m).expanduser().resolve()
-        if not mroot.exists():
-            sys.exit(f'Error: {mroot} does not exist')
-        fw = framework_provider(mroot, args.table_map)
-        layers.append(fw)
-        if fw_root is None:
-            fw_root = mroot  # the first framework drives the title fallback (§10)
-        print(f'Merged {fw["source"]["provider"]} associations from {mroot}', file=sys.stderr)
+    # Code-source inputs (framework `--models`/config `models`, and config
+    # `sources` — rails.schema, `<overlay>.models`, the rails.project macro)
+    # normalize to one deterministic InputSpec order — config `sources`
+    # (declared order, macros expanded) then legacy `models` entries (D3/D4) —
+    # then dispatch through the source-type registry. Cross-kind priority still
+    # comes from _PHYSICAL_RANK/_LOGICAL_RANK, not list order, so a schema
+    # layer listed before a framework layer still resolves ties correctly.
+    specs = normalize_input_specs(models_list, config_sources)
+    layers += run_input_specs(specs, args.table_map)
+    fw_root = specs[0]['path'] if specs else None  # first spec drives the title fallback (§10)
 
     # config.tables join as a top-priority config layer (add/override/drop/
     # replace — §6.2/§7). Its DROP ops are semantic-validated against the merged
