@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Typed `sources[]` entries that parse **nothing** (e.g. a Prisma project declared as
+  `rails.models`) are now a hard error naming the source id and the layout the type
+  expected, instead of a silently empty success. A new per-source `allow_empty: true`
+  opts back into accepting an empty result; `rails.project` passes the flag down to
+  both of its expanded halves.
+- Prisma: composite `@@id([...])` becomes a composite primary key (list form, with
+  `primary` flags on the member columns); a single-field `@@unique([x])` now carries
+  the same 1:1 signal as an inline `@unique`; a relation whose `fields:` column is
+  `@map`ped now reports the real column name as its foreign key.
+- Django: `GenericForeignKey` surfaces as a polymorphic `belongs_to` (details-pane
+  only, no edge — same treatment as a Rails polymorphic association); an FK whose
+  target can't be resolved statically (swappable `AUTH_USER_MODEL`, contenttypes'
+  `ContentType`, ...) keeps its column and skips only the edge; two apps defining
+  models with the same class name now both keep their tables (previously one
+  silently overwrote the other), with bare references preferring the same app.
+- A shared provider contract suite (`tests/test_provider_contract.py`) now holds every
+  input provider (`rails.models`, `prisma.models`, `django.models`, `rails.schema`) to
+  the same checks — typed dispatch, standalone HTML/Excel generation, DB-layer merge,
+  1:N / 1:1 / M:N / self-reference, association provenance, empty-input diagnostics —
+  over one common fixture domain, plus advanced per-framework fixtures (composite
+  keys, named/self relations, explicit m2m, app collisions, swappable models).
+- README and the manual (EN/JA) document the **verified versions** of every input:
+  MySQL 8.4 / PostgreSQL 16 (CI, real servers), CPython's bundled SQLite, the Rails
+  7.x/8.x `schema.rb` format, the Rails 7.x association DSL, Prisma 5/6 schema
+  language, Django 4.2/5.x models.
+
+### Fixed
+
+- Prisma: a 1:N **self-relation** (`parent`/`replies`) and mixed **named relations**
+  are no longer misread as implicit many-to-many — the m2m pairing now matches
+  `@relation` names on both sides instead of "the other model declares some list".
+- Prisma: a typed `prisma.models` source pointing at a directory without a
+  `schema.prisma` now exits with a clear message instead of a `StopIteration`
+  traceback.
+
 ## [0.5.0] - 2026-07-17
 
 ### Added

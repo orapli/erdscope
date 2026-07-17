@@ -254,6 +254,22 @@ standard library's <code>zipfile</code>/XML handling, not a spreadsheet package.
 <code>openpyxl</code> (roundtrip-verifies <code>--excel</code> output in unit tests) and
 <a href="https://playwright.dev/python/">Playwright</a> (drives the generated HTML in the browser E2E suite). Neither is needed to
 generate or view diagrams.</p>
+<h3 id="verified-versions">Verified versions <a class="anchor-link" href="#verified-versions">#</a></h3>
+<p>The input formats erdscope parses change rarely, so exact versions matter less than they
+might seem — newer releases are expected to keep working, though constructs beyond the tested
+ones may be ignored rather than parsed. For the record, this is what each input is actually
+verified against:</p>
+<table>
+<tr><th>Input</th><th>Verified against</th></tr>
+<tr><td>MySQL</td><td><strong>8.4</strong> — real-server integration tests in CI (<code>information_schema</code>); developed against 8.x</td></tr>
+<tr><td>PostgreSQL</td><td><strong>16</strong> — real-server integration tests in CI (<code>pg_catalog</code>/<code>information_schema</code>)</td></tr>
+<tr><td>SQLite</td><td>the <code>sqlite3</code> module bundled with CPython (any supported 3.x)</td></tr>
+<tr><td>Rails <code>schema.rb</code></td><td>the format Rails <strong>7.x / 8.x</strong> writes (<code>ActiveRecord::Schema[7.x]</code>, and the classic un-versioned header)</td></tr>
+<tr><td>Rails models</td><td>the association DSL as of Rails <strong>7.x</strong> — <code>has_many</code>/<code>has_one</code>/<code>belongs_to</code>/<code>has_and_belongs_to_many</code>, <code>through:</code>, <code>polymorphic:</code>, STI, concerns, custom base classes; also exercised against Mastodon's real codebase. Dynamically computed definitions (and <code>structure.sql</code>) are out of scope</td></tr>
+<tr><td>Prisma</td><td>the schema language as of Prisma <strong>5 / 6</strong> — <code>@map</code>/<code>@@map</code>, enums, named relations, implicit and explicit m2m, self-relations, composite <code>@@id</code>/<code>@@unique</code>, <code>@@schema</code></td></tr>
+<tr><td>Django</td><td>models as of Django <strong>4.2 / 5.x</strong> — FK / OneToOne / M2M (incl. <code>through=</code>), abstract bases, <code>db_table</code>/<code>db_column</code>, <code>GenericForeignKey</code> (kept as a polymorphic marker); a swappable <code>AUTH_USER_MODEL</code> FK keeps its column and skips the edge</td></tr>
+<tr><td>Python</td><td>3.9+ (<code>requires-python</code>); CI runs the latest CPython 3.x</td></tr>
+</table>
 </section>
 
 <section id="quickstart">
@@ -410,6 +426,14 @@ Every registered framework overlay gets a <code>&lt;name&gt;.models</code> type 
 same as auto-detection would, just without the detection step. <code>type</code> isn't checked
 against the registry until the source actually runs, so a type an <code>--adapter</code> plugin
 registers is valid even though it doesn't exist yet when the config loads.
+</p>
+<p>
+A typed source that parses <strong>nothing</strong> — say, a Prisma project accidentally
+declared as <code>rails.models</code> — is a hard error naming the source id and the layout
+the type expected, never a silently empty diagram. If an empty result is genuinely intended
+(a scaffolded but still-empty <code>app/models</code>, for example), opt in per source with
+<code>allow_empty: true</code>; a <code>rails.project</code> entry passes the flag down to both
+of its expanded halves.
 </p>
 <p>
 <strong><code>rails.schema</code></strong> is new: it statically parses a Rails

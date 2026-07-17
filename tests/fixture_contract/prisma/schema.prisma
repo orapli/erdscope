@@ -1,0 +1,48 @@
+// Contract fixture: same users/profiles/posts/tags domain as the other
+// providers' fixtures (@@map aligns the table names).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id      Int      @id @default(autoincrement())
+  name    String
+  posts   Post[]
+  profile Profile?
+
+  @@map("users")
+}
+
+model Profile {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
+
+  @@map("profiles")
+}
+
+model Post {
+  id       Int    @id @default(autoincrement())
+  title    String
+  userId   Int
+  user     User   @relation(fields: [userId], references: [id])
+  parentId Int?
+  parent   Post?  @relation("Thread", fields: [parentId], references: [id])
+  replies  Post[] @relation("Thread")
+  tags     Tag[]
+
+  @@map("posts")
+}
+
+model Tag {
+  id    Int    @id @default(autoincrement())
+  label String
+  posts Post[]
+
+  @@map("tags")
+}

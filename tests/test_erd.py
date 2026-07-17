@@ -816,6 +816,75 @@ class TestParsePrisma(unittest.TestCase):
         self.assertIn('Post', merged)
 
 
+class TestParsePrismaAdvanced(unittest.TestCase):
+    """Constructs beyond the basic fixture: composite @@id / @@unique,
+    explicit m2m join models, named relations, self-relations (1:N and
+    implicit m2m), @@schema / multiple datasource blocks."""
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = erd.parse_prisma(
+            Path(__file__).resolve().parent / 'fixture_prisma_advanced' / 'schema.prisma')
+
+    def test_multi_schema_and_extra_datasource_do_not_hide_models(self):
+        # @@schema lines and a second datasource block are non-model noise —
+        # every model must still be found (and @@map still applies)
+        self.assertEqual(set(self.tables),
+                         {'User', 'Follow', 'Post', 'devices', 'Tag'})
+
+    def test_composite_at_at_id_becomes_list_pk_with_primary_flags(self):
+        follow = self.tables['Follow']
+        # field names map through @map to column names
+        self.assertEqual(follow['primary_key'], ['follower_id', 'followee_id'])
+        flags = {c['name']: c for c in follow['columns']}
+        for col in ('follower_id', 'followee_id'):
+            self.assertTrue(flags[col]['primary'])
+            self.assertFalse(flags[col]['nullable'])
+
+    def test_explicit_m2m_join_model_is_two_belongs_to_not_habtm(self):
+        by_name = {a['name']: a for a in self.tables['Follow']['associations']}
+        self.assertEqual(by_name['follower']['type'], 'belongs_to')
+        self.assertEqual(by_name['follower']['foreign_key'], 'follower_id')
+        self.assertEqual(by_name['followee']['type'], 'belongs_to')
+        # the parents' list fields point at the join model as plain has_many —
+        # the join model itself holds no list back, so no habtm
+        user = {a['name']: a for a in self.tables['User']['associations']}
+        self.assertEqual(user['follows']['type'], 'has_many')
+        self.assertEqual(user['followers']['type'], 'has_many')
+
+    def test_two_named_relations_between_the_same_pair(self):
+        post = {a['name']: a for a in self.tables['Post']['associations']}
+        self.assertEqual(post['author']['type'], 'belongs_to')
+        self.assertEqual(post['author']['foreign_key'], 'authorId')
+        self.assertEqual(post['reviewer']['type'], 'belongs_to')
+        self.assertEqual(post['reviewer']['foreign_key'], 'reviewerId')
+        user = {a['name']: a for a in self.tables['User']['associations']}
+        # User has list fields of Post but Post lists no User back — these
+        # named relations must stay 1:N, never collapse into habtm
+        self.assertEqual(user['posts']['type'], 'has_many')
+        self.assertEqual(user['reviewed']['type'], 'has_many')
+
+    def test_self_relation_one_to_many_is_not_misread_as_m2m(self):
+        post = {a['name']: a for a in self.tables['Post']['associations']}
+        self.assertEqual(post['parent']['type'], 'belongs_to')
+        self.assertEqual(post['parent']['foreign_key'], 'parentId')
+        self.assertEqual(post['parent']['target'], 'Post')
+        # the back-reference list field of the SAME relation is the 1-side
+        self.assertEqual(post['replies']['type'], 'has_many')
+        self.assertEqual(post['replies']['target'], 'Post')
+
+    def test_self_relation_implicit_m2m_still_detected(self):
+        tag = {a['name']: a for a in self.tables['Tag']['associations']}
+        self.assertEqual(tag['related']['type'], 'has_and_belongs_to_many')
+        self.assertEqual(tag['relants']['type'], 'has_and_belongs_to_many')
+
+    def test_block_level_single_field_unique_means_one_to_one(self):
+        post = {a['name']: a for a in self.tables['Post']['associations']}
+        # @@unique([deviceId]) — same signal as an inline @unique
+        self.assertEqual(post['device']['type'], 'has_one')
+        # the composite @@unique([authorId, title]) must NOT make author 1:1
+        self.assertEqual(post['author']['type'], 'belongs_to')
+
+
 class TestParseDjango(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -838,6 +907,53 @@ class TestParseDjango(unittest.TestCase):
         self.assertEqual(erd.detect_code_source(base / 'fixture_django'), 'django')
         self.assertEqual(erd.detect_code_source(base / 'fixture_prisma'), 'prisma')
         self.assertEqual(erd.detect_code_source(FIXTURE), 'rails')
+
+
+class TestParseDjangoAdvanced(unittest.TestCase):
+    """Constructs beyond the basic fixture: same class name in two apps,
+    swappable AUTH_USER_MODEL, GenericForeignKey, unknown custom fields."""
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = erd.parse_django(
+            Path(__file__).resolve().parent / 'fixture_django_advanced')
+
+    def test_same_class_name_in_two_apps_yields_both_tables(self):
+        # blog.Tag and shop.Tag must both exist — a name-keyed class dict
+        # silently dropped one of them
+        self.assertIn('blog_tag', self.tables)
+        self.assertIn('shop_tag', self.tables)
+        blog_cols = {c['name'] for c in self.tables['blog_tag']['columns']}
+        shop_cols = {c['name'] for c in self.tables['shop_tag']['columns']}
+        self.assertIn('label', blog_cols)
+        self.assertIn('name', shop_cols)
+
+    def test_bare_reference_to_collided_name_prefers_own_app(self):
+        item = {a['name']: a for a in self.tables['shop_item']['associations']}
+        self.assertEqual(item['tag']['target'], 'shop_tag')
+        # the dotted 'blog.Tag' string still reaches the other app's table
+        self.assertEqual(item['blog_tag']['target'], 'blog_tag')
+
+    def test_swappable_user_fk_keeps_column_but_skips_edge(self):
+        art = self.tables['blog_article']
+        self.assertIn('author_id', {c['name'] for c in art['columns']})
+        self.assertNotIn('author', {a['name'] for a in art['associations']})
+
+    def test_generic_foreign_key_becomes_polymorphic_association(self):
+        notice = self.tables['blog_notice']
+        cols = {c['name'] for c in notice['columns']}
+        # the declared ct FK / object_id columns are ordinary columns; the
+        # ContentType edge is skipped (external app), the column kept
+        self.assertIn('content_type_id', cols)
+        self.assertIn('object_id', cols)
+        gfk = {a['name']: a for a in notice['associations']}
+        self.assertIn('content_object', gfk)
+        self.assertTrue(gfk['content_object'].get('polymorphic'))
+        self.assertEqual(gfk['content_object']['type'], 'belongs_to')
+
+    def test_unknown_custom_field_is_skipped_not_fatal(self):
+        art_cols = {c['name'] for c in self.tables['blog_article']['columns']}
+        self.assertNotIn('location', art_cols)  # PointField: not parsed
+        self.assertIn('title', art_cols)        # neighbours unaffected
 
 
 class TestGeneration(unittest.TestCase):

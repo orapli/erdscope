@@ -537,6 +537,17 @@ class TestConfigSourcesKey(unittest.TestCase):
                                 'bogus': 1}]})
         self.assertIn('bogus', str(cm.exception))
 
+    def test_source_allow_empty_accepted(self):
+        cfg = _load({'sources': [{'id': 'x', 'type': 'rails.models', 'path': '/a',
+                                  'allow_empty': True}]})
+        self.assertIs(cfg['sources'][0]['allow_empty'], True)
+
+    def test_source_allow_empty_must_be_bool(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'sources': [{'id': 'x', 'type': 'rails.models', 'path': '/a',
+                                'allow_empty': 'yes'}]})
+        self.assertIn('allow_empty', str(cm.exception))
+
     def test_duplicate_source_id_rejected(self):
         with self.assertRaises(SystemExit) as cm:
             _load({'sources': [{'id': 'x', 'type': 'rails.models', 'path': '/a'},

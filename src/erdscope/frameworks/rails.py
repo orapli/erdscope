@@ -190,6 +190,8 @@ class RailsOverlay(FrameworkOverlay):
     files). Contributes associations only — no columns."""
     name = 'rails'
     priority = 1
+    expects = ('a Rails app/models directory (or a directory of *.rb model '
+               'files) declaring at least one model')
 
     def detect(self, root):
         return root.is_dir() and (

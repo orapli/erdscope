@@ -176,7 +176,7 @@ def _check_config_types(config, path):
 # run_input_specs) concern, not a load-time one — an --adapter plugin loaded
 # later in the pipeline can still register its own overlay/type in time.
 # ---------------------------------------------------------------------------
-_CONFIG_SOURCE_KEYS = {'id', 'type', 'path'}
+_CONFIG_SOURCE_KEYS = {'id', 'type', 'path', 'allow_empty'}
 
 def _check_config_sources(sources, path):
     if not isinstance(sources, list):
@@ -192,6 +192,7 @@ def _check_config_sources(sources, path):
             val = s.get(key)
             if not isinstance(val, str) or not val:
                 sys.exit(f'Error: {path} `{sw}` needs a non-empty string `{key}`')
+        _check_bool(s.get('allow_empty'), 'allow_empty' in s, path, f'{sw}.allow_empty')
         if s['id'] in seen:
             sys.exit(f'Error: {path} `sources` has a duplicate id {s["id"]!r}')
         seen.add(s['id'])
