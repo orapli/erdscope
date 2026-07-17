@@ -261,6 +261,7 @@ def write_excel(tables, path, title, template_path=None):
                      [('Type', S_HEADER), ('Name', S_HEADER), ('Target', S_HEADER), ('Via', S_HEADER)]]
             for i, a in enumerate(t['associations']):
                 via = ('DB FK' if a.get('db_fk') else
+                       'schema FK' if a.get('schema_fk') else
                        'inferred' if a.get('inferred') else
                        'manual' if a.get('manual') else 'code')
                 s = alt(i)

@@ -19,7 +19,19 @@
 # listed here — they're derived dynamically from FRAMEWORK_OVERLAYS in
 # _source_type_builder/known_source_type_names so a newly-registered overlay
 # gets a usable `sources[].type` for free, with no registry edit.
-SOURCE_TYPES = {}
+def _rails_schema_type_builder(spec, table_map):
+    return rails_schema_provider(spec['path'])
+
+
+SOURCE_TYPES = {
+    'rails.schema': _rails_schema_type_builder,
+}
+
+# Source types whose path must be an existing FILE, not a directory (D4) —
+# checked in _run_typed_spec before the builder runs, with a type-specific
+# message (a directory is the mistake someone makes when they meant the
+# containing project, or copy-pasted a `rails.models` path by habit).
+_FILE_SOURCE_TYPES = {'rails.schema': 'a schema.rb file'}
 
 
 def _models_type_builder(overlay_cls):
@@ -87,9 +99,21 @@ def _run_typed_spec(spec, table_map):
                  f"(known types: {', '.join(known_source_type_names())})")
     if not path.exists():
         sys.exit(f"Error: source {sid!r}: {path} does not exist")
+    if stype in _FILE_SOURCE_TYPES and not path.is_file():
+        sys.exit(f"Error: source {sid!r}: {stype} expects {_FILE_SOURCE_TYPES[stype]}, "
+                 f"got {path}")
     result = builder(spec, table_map)
-    print(f'Merged {result["source"]["provider"]} associations from {path}', file=sys.stderr)
+    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {path}',
+          file=sys.stderr)
     return result
+
+
+def _progress_noun(result):
+    """D4's per-source progress line uses 'tables' for a schema-kind layer
+    (rails.schema's contribution is columns/indexes/PK, not code semantics)
+    and keeps the existing 'associations' wording for every other kind
+    (framework layers — tests may match this exact phrase)."""
+    return 'tables' if result['source']['kind'] == 'schema' else 'associations'
 
 
 def _run_untyped_spec(spec, table_map):
@@ -101,6 +125,13 @@ def _run_untyped_spec(spec, table_map):
     sid, path = spec['id'], spec['path']
     if not path.exists():
         sys.exit(f'Error: {path} does not exist')
+    if path.is_file() and path.name == 'schema.rb':
+        print(f'Note: {path} auto-detected as rails.schema (declare it in config '
+              'sources to make this explicit)', file=sys.stderr)
+        result = rails_schema_provider(path)
+        print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {path}',
+              file=sys.stderr)
+        return result
     matches = framework_overlays_matching(path)
     if not matches:
         sys.exit(f'Error: could not detect the code kind at {path} (expected a Rails '
@@ -112,5 +143,6 @@ def _run_untyped_spec(spec, table_map):
         print(f'Note: {path} matched multiple frameworks ({names}); using {winner.name}. '
               f'Declare sources[].type in the config to override.', file=sys.stderr)
     result = winner().build(path, table_map)
-    print(f'Merged {result["source"]["provider"]} associations from {path}', file=sys.stderr)
+    print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {path}',
+          file=sys.stderr)
     return result

@@ -1,4 +1,5 @@
-_PROVENANCE_TO_FLAG = {'db_fk': 'db_fk', 'manual': 'manual', 'inferred': 'inferred'}
+_PROVENANCE_TO_FLAG = {'db_fk': 'db_fk', 'manual': 'manual', 'inferred': 'inferred',
+                       'schema_fk': 'schema_fk'}
 
 
 def make_provider_result(kind, provider, tables, location=None, warnings=None):
@@ -17,12 +18,15 @@ def make_provider_result(kind, provider, tables, location=None, warnings=None):
 def provenance_of(assoc):
     """Representative provenance (§9.1) for an association dict, derived from
     the legacy boolean flags it currently carries. Precedence when several
-    coexist: manual > db_fk > inferred; a bare association (no flag) is
-    'declared'. This is the read half of the legacy<->provenance seam."""
+    coexist: manual > db_fk > schema_fk > inferred; a bare association (no
+    flag) is 'declared'. This is the read half of the legacy<->provenance
+    seam."""
     if assoc.get('manual'):
         return 'manual'
     if assoc.get('db_fk'):
         return 'db_fk'
+    if assoc.get('schema_fk'):
+        return 'schema_fk'
     if assoc.get('inferred'):
         return 'inferred'
     return 'declared'

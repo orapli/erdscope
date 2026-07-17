@@ -38,6 +38,7 @@ MODULES = [
     'db/',            # DBAdapter base + registry, and the built-in DB adapters
     'merge.py',       # merge_ir + reconcile_db_fks + association identity
     'frameworks/',    # FrameworkOverlay base + registry, Rails/Prisma/Django, FK inference
+    'rails_schema.py', # rails.schema — static db/schema.rb parser (no Ruby execution)
     'sources.py',     # InputSpec normalization + source-type registry/dispatch
     'providers.py',   # DB provider seam, config layer + validation
     'exporters.py',   # Excel writer + the HTML_TEMPLATE sentinel (viewer inlined below)
