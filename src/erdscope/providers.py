@@ -238,5 +238,51 @@ def resolve_and_validate_notes(notes, tables, label):
     return out
 
 # ---------------------------------------------------------------------------
+# `groups:` semantic validation + viewer-ready resolution (groups Phase 1).
+#
+# Called from cli._finish, mirroring resolve_and_validate_notes above: AFTER
+# --infer-fk (groups don't care about associations, but validating against the
+# same final IR keeps the two sidecars consistent) and BEFORE --only/--exclude
+# filtering (so a group is fully semantic-validated against the complete
+# schema; _finish filters the RESOLVED groups' membership down afterward).
+#
+# groups are a pure sidecar: this function only READS `tables` (never mutates
+# it, never feeds anything back into layers/merge_ir/ProviderResult/
+# provenance/fk_columns) and returns a new, viewer-ready list. Every error
+# includes the group's `id`, per the Phase 1 contract.
+#
+# Phase 1 scope: NO overlapping membership — a table claimed by two groups is
+# a hard error (naming both group ids and the table), not a silently-picked
+# winner. Layout affinity (placing group members near each other) is
+# explicitly out of scope for this PR (DESIGN_ROADMAP §P2 follow-up).
+# ---------------------------------------------------------------------------
+def resolve_and_validate_groups(groups, tables, label):
+    """Semantic-validate config `groups` against the FINAL merged IR: every
+    member table must exist, and no table may belong to more than one group.
+    Returns a viewer-ready list of {'id', 'tables':[...], 'title'?, 'color'?}
+    (title/color present only when configured). Hard error via sys.exit
+    (group id always included)."""
+    out = []
+    owner = {}  # table -> group id that already claimed it
+    for g in groups:
+        group_id = g['id']
+        for t in g['tables']:
+            if t not in tables:
+                sys.exit(f"Error: {label} group {group_id!r}: unknown table {t!r} "
+                         "(not in the final schema)")
+            if t in owner:
+                sys.exit(f"Error: {label} group {group_id!r}: table {t!r} already "
+                         f"belongs to group {owner[t]!r} (a table may belong to only "
+                         "one group)")
+            owner[t] = group_id
+        entry = {'id': group_id, 'tables': list(g['tables'])}
+        if g.get('title'):
+            entry['title'] = g['title']
+        if g.get('color'):
+            entry['color'] = g['color']
+        out.append(entry)
+    return out
+
+# ---------------------------------------------------------------------------
 # Excel export (.xlsx via zipfile — no third-party dependency)
 # ---------------------------------------------------------------------------

@@ -767,6 +767,176 @@ class TestConfigNotesValidation(unittest.TestCase):
         self.assertEqual(_load({'notes': []})['notes'], [])
 
 
+class TestConfigGroupsValidation(unittest.TestCase):
+    """`groups:` syntactic validation (config.py `_check_config_groups`) —
+    groups Phase 1. Purely syntactic: whether every member table actually
+    exists, and whether a table is claimed by more than one group, is
+    semantic validation, covered in tests/test_groups.py against
+    providers.resolve_and_validate_groups, NOT here (mirrors the notes split
+    directly above and the tables §6.4①/② split further up)."""
+
+    def _group(self, **overrides):
+        g = {'id': 'g1', 'tables': ['users']}
+        g.update(overrides)
+        return g
+
+    def test_minimal_group_accepted(self):
+        cfg = _load({'groups': [self._group()]})
+        self.assertEqual(cfg['groups'][0]['id'], 'g1')
+
+    def test_groups_must_be_a_list(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': {'id': 'g1'}})
+        self.assertIn('groups', str(cm.exception))
+
+    def test_group_must_be_an_object(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': ['nope']})
+        self.assertIn('groups[0]', str(cm.exception))
+
+    def test_unknown_top_level_key_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(bogus=1)]})
+        self.assertIn('bogus', str(cm.exception))
+
+    def test_missing_id_rejected(self):
+        g = self._group()
+        del g['id']
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [g]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_empty_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(id='')]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_non_string_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(id=123)]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_duplicate_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(id='dup', tables=['a']),
+                              self._group(id='dup', tables=['b'])]})
+        self.assertIn('duplicate', str(cm.exception))
+        self.assertIn('dup', str(cm.exception))
+
+    def test_missing_tables_rejected(self):
+        g = self._group()
+        del g['tables']
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [g]})
+        self.assertIn('g1', str(cm.exception))
+        self.assertIn('tables', str(cm.exception))
+
+    def test_empty_tables_list_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(tables=[])]})
+        self.assertIn('tables', str(cm.exception))
+
+    def test_non_list_tables_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(tables='users')]})
+        self.assertIn('tables', str(cm.exception))
+
+    def test_non_string_table_entry_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(tables=['users', 123])]})
+        self.assertIn('tables[1]', str(cm.exception))
+
+    def test_empty_string_table_entry_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(tables=['users', ''])]})
+        self.assertIn('tables[1]', str(cm.exception))
+
+    def test_multiple_tables_accepted(self):
+        cfg = _load({'groups': [self._group(tables=['users', 'posts', 'comments'])]})
+        self.assertEqual(cfg['groups'][0]['tables'], ['users', 'posts', 'comments'])
+
+    def test_title_optional(self):
+        cfg = _load({'groups': [self._group(title='People')]})
+        self.assertEqual(cfg['groups'][0]['title'], 'People')
+
+    def test_non_string_title_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(title=123)]})
+        self.assertIn('title', str(cm.exception))
+
+    def test_color_optional(self):
+        cfg = _load({'groups': [self._group(color='#0d9488')]})
+        self.assertEqual(cfg['groups'][0]['color'], '#0d9488')
+
+    def test_color_accepts_3_4_6_and_8_digit_hex(self):
+        for color in ('#abc', '#abcd', '#0d9488', '#0d948800'):
+            cfg = _load({'groups': [self._group(color=color)]})
+            self.assertEqual(cfg['groups'][0]['color'], color)
+
+    def test_color_uppercase_hex_digits_accepted(self):
+        cfg = _load({'groups': [self._group(color='#ABCDEF')]})
+        self.assertEqual(cfg['groups'][0]['color'], '#ABCDEF')
+
+    def test_color_without_hash_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(color='0d9488')]})
+        self.assertIn('color', str(cm.exception))
+
+    def test_color_named_css_color_rejected(self):
+        # only hex is accepted — a viewer that trusted an arbitrary string
+        # here would be putting unvalidated input straight into an SVG
+        # attribute (config.py's own first line of XSS/attribute-injection
+        # defense, mirroring the notes link-URL scheme check above)
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(color='teal')]})
+        self.assertIn('color', str(cm.exception))
+
+    def test_color_too_short_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(color='#ab')]})
+        self.assertIn('color', str(cm.exception))
+
+    def test_color_too_long_rejected(self):
+        # 9 valid hex digits — one past the {3,8} ceiling
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(color='#abcdef123')]})
+        self.assertIn('color', str(cm.exception))
+
+    def test_color_5_and_7_digit_hex_rejected(self):
+        # Only the real CSS/SVG hex lengths (3/4/6/8) are accepted; a 5- or
+        # 7-digit value is not a valid color and the browser would drop it,
+        # silently falling back to the default frame color — so it's rejected
+        # at load rather than accepted as an inert attribute (Codex re-review #2).
+        for color in ('#abcde', '#abcdef1'):
+            with self.assertRaises(SystemExit) as cm:
+                _load({'groups': [self._group(color=color)]})
+            self.assertIn('color', str(cm.exception))
+
+    def test_color_canonical_lengths_accepted(self):
+        for color in ('#abc', '#abcd', '#aabbcc', '#aabbccdd'):
+            cfg = _load({'groups': [self._group(color=color)]})
+            self.assertEqual(cfg['groups'][0]['color'], color)
+
+    def test_color_non_string_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(color=123)]})
+        self.assertIn('color', str(cm.exception))
+
+    def test_duplicate_table_within_one_groups_list_rejected(self):
+        # a table repeated within the SAME group's own `tables` list is a config
+        # mistake, rejected at load (Codex re-review #3) — otherwise it reaches
+        # the cross-group overlap check, which would confusingly report the
+        # group as overlapping with itself. Cross-group overlap (a table in TWO
+        # different groups) is the separate semantic-layer concern, tested
+        # against resolve_and_validate_groups in tests/test_groups.py.
+        with self.assertRaises(SystemExit) as cm:
+            _load({'groups': [self._group(tables=['users', 'users'])]})
+        self.assertIn('more than once', str(cm.exception))
+
+    def test_empty_groups_list_is_syntactically_fine(self):
+        self.assertEqual(_load({'groups': []})['groups'], [])
+
+
 class TestConfigOwnerFkAliasMerge(unittest.TestCase):
     def test_owner_fk_aliases_survive_into_merged_ir(self):
         # P1-e: two aliased owner_fk associations on the same column both reach

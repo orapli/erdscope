@@ -133,6 +133,7 @@ def _run_pipeline(args):
     relations = config.get('relations', [])  # shape already validated by load_config()
     config_tables = config.get('tables')     # shape already validated by load_config()
     config_notes = config.get('notes')       # shape already validated by load_config()
+    config_groups = config.get('groups')     # shape already validated by load_config()
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
     cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
@@ -213,7 +214,8 @@ def _run_pipeline(args):
     # (finding #1). Pass the RAW config `notes:` (unresolved) plus a label;
     # `_finish` resolves them itself against its own final IR.
     _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)),
-            notes=config_notes, notes_label=cfg_label)
+            notes=config_notes, notes_label=cfg_label,
+            groups=config_groups, groups_label=cfg_label)
 
 def serialize_for_viewer(tables):
     """Convert the internal merged IR to the shape the HTML viewer JSON and the
@@ -239,7 +241,8 @@ def serialize_for_viewer(tables):
                 a.update(legacy_flags_for(prov))
     return out
 
-def _finish(tables, args, title_name, notes=None, notes_label='config'):
+def _finish(tables, args, title_name, notes=None, notes_label='config',
+            groups=None, groups_label='config'):
     """Shared tail: FK inference, notes resolution, --only/--exclude filtering,
     HTML generation.
 
@@ -252,7 +255,15 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
     demo passes 'demo'). Still never None-but-empty-list vs absent-key
     ambiguity in the output: an empty/None result omits the DATA_JSON `notes`
     key entirely, keeping the demo and every pre-Phase-1 config byte-identical
-    to today's output."""
+    to today's output.
+
+    `groups` (groups Phase 1) is the RAW config `groups:` list (or None/empty),
+    mirroring `notes` end to end: resolved/validated here against the same
+    final IR, then its members filtered down to the tables that survive
+    --only/--exclude (a group that loses every member that way is dropped
+    entirely, rather than shipping an empty frame). `groups_label` mirrors
+    `notes_label`. An empty/None result omits the DATA_JSON `groups` key
+    entirely — same byte-equality guarantee as notes."""
     if getattr(args, 'infer_fk', False):
         inferred = infer_fk_associations(tables)
         if inferred:
@@ -264,6 +275,12 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
     # below so validation always sees the complete final IR (an excluded
     # table's note is still validated, just filtered out of the output after).
     notes_data = resolve_and_validate_notes(notes, tables, notes_label) if notes else None
+
+    # groups Phase 1: semantic validation + viewer resolution against the
+    # SAME final IR notes just validated against — before --only/--exclude,
+    # for the same reason (validation always sees the complete schema; the
+    # filtering below trims membership down after).
+    groups_data = resolve_and_validate_groups(groups, tables, groups_label) if groups else None
 
     # single source of truth for "is this column really a foreign key" —
     # the FK badge and the PK/FK column view both read this instead of
@@ -303,6 +320,15 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
                       or (n['scope'] == 'relation' and n['source_table'] in tables
                           and n['target'] in tables)]
 
+    # groups Phase 1: narrow each group's membership to the tables that
+    # survived --only/--exclude, then drop any group left with zero members —
+    # a group frame drawn around nothing would be a bug in the viewer, not a
+    # feature. A no-op when --only/--exclude weren't passed, same as notes.
+    if groups_data:
+        groups_data = [{**g, 'tables': [t for t in g['tables'] if t in tables]}
+                       for g in groups_data]
+        groups_data = [g for g in groups_data if g['tables']]
+
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
     # IR), so BOTH the HTML DATA_JSON and the Excel export below see exactly the
@@ -318,6 +344,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
     payload = {'tables': tables}
     if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
         payload['notes'] = notes_data
+    if groups_data:  # same byte-equality guarantee as notes
+        payload['groups'] = groups_data
     data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
     html = (HTML_TEMPLATE
             .replace('__MAX_ROWS__', str(args.max_rows))
@@ -330,7 +358,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,
-                    template_path=getattr(args, 'excel_template', None), notes=notes_data)
+                    template_path=getattr(args, 'excel_template', None), notes=notes_data,
+                    groups=groups_data)
         print(f'Generated: {args.excel}', file=sys.stderr)
     elif getattr(args, 'excel_template', None):
         print('Warning: --excel-template has no effect without --excel', file=sys.stderr)

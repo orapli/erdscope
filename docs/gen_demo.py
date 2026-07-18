@@ -166,6 +166,14 @@ NOTES = [
              'their orders are kept for accounting and warranty history.'},
 ]
 
+# Visual groups (groups Phase 1) — one illustrative group so the live demo
+# shows the feature: the order-fulfillment tables boxed together. Every table
+# here belongs to exactly ONE group (Phase 1 forbids overlapping membership).
+GROUPS = [
+    {'id': 'orders-domain', 'title': 'Orders',
+     'tables': ['orders', 'order_items', 'payments', 'shipments', 'order_coupons']},
+]
+
 tables = erd.mysql_ir(T, C, FK, IX)
 args = SimpleNamespace(output=str(ROOT / 'docs' / 'index.html'),
                        models=None, excel=None, max_rows=15,
@@ -174,8 +182,10 @@ args = SimpleNamespace(output=str(ROOT / 'docs' / 'index.html'),
                                        # columns are deliberately FK-less in the schema
 # notes Phase 1 (Sol finding #3): _finish now resolves/validates notes itself,
 # AFTER infer_fk — pass the RAW NOTES list (not pre-resolved) so this exercises
-# the same post-infer resolution path the real CLI pipeline uses.
-erd._finish(tables, args, 'demo_shop', notes=NOTES, notes_label='demo')
+# the same post-infer resolution path the real CLI pipeline uses. groups
+# Phase 1 mirrors that exactly with the RAW GROUPS list.
+erd._finish(tables, args, 'demo_shop', notes=NOTES, notes_label='demo',
+            groups=GROUPS, groups_label='demo')
 print('demo written to docs/index.html', file=sys.stderr)
 
 # README's screenshot used to be a hand-exported SVG that this script never

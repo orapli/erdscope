@@ -10,7 +10,8 @@ zero-dependency Python CLI. Turn an ER diagram into a documented schema: attach 
 decisions, operational rules, and ADR links to tables and relationships with config
 [`notes:`](#notes-attach-design-decisions-to-the-diagram) — plain text and http(s) links
 only, validated against the real schema so a note can never point at something that
-doesn't exist.
+doesn't exist — and draw a rounded, titled frame around a set of related tables with config
+[`groups:`](#groups-draw-a-frame-around-related-tables).
 
 ```bash
 pip install erdscope
@@ -297,6 +298,38 @@ notes:
 See the [Notes chapter of the manual](https://orapli.github.io/erdscope/manual.html#notes)
 for the full reference.
 
+### Groups: draw a frame around related tables
+
+Config **`groups:`** draws a rounded frame with a title around a set of related tables in
+the diagram — a lightweight way to call out a domain ("Billing", "Orders") without changing
+the schema or the layout. Like `notes:`, it's a read-only sidecar validated against the
+final merged schema:
+
+```yaml
+groups:
+  - id: billing
+    title: Billing
+    tables: [invoices, payments, coupons]
+    color: "#0d9488"
+
+  - id: catalog
+    tables: [products, categories, product_categories]
+```
+
+- Every group needs a config-unique `id` and non-empty `tables`; `title` (defaults to `id`)
+  and `color` (a hex string, e.g. `#0d9488`) are optional.
+- A table may belong to **at most one** group — claiming the same table from two groups is
+  a hard error naming both group `id`s and the table, not a silently-picked winner. There's
+  no support for overlapping/nested groups in this release.
+- Validation runs twice, like `notes:`/`tables:` above: syntax at load time, then
+  semantically against the final merged schema, so a group can reference a table config
+  itself adds, and a group naming something config *removes* is correctly an error.
+- Purely visual: groups never affect layout, merge precedence, or associations — the frame
+  is drawn around wherever its member tables already ended up. In the viewer, drag a
+  group's title to move every member together; a "Groups" toolbar toggle shows/hides the
+  frames, and both PNG and SVG exports include them. `--only`/`--exclude` narrow a group's
+  membership down to the surviving tables, dropping the group entirely if none remain.
+
 ## Dependencies
 
 `erd.py` runs with **zero required dependencies** — everything below is optional, and
@@ -367,6 +400,9 @@ Feature highlights — each link goes to the relevant [manual](https://orapli.gi
 - **[Notes](#notes-attach-design-decisions-to-the-diagram)** — attach design decisions,
   operational rules, and ADR links to a table, a relation, or the whole diagram, validated
   against the real schema and searchable alongside tables/columns
+- **[Groups](#groups-draw-a-frame-around-related-tables)** — draw a rounded, titled frame
+  around a set of related tables to call out a domain, purely visual, draggable by its
+  title, with its own toolbar toggle and export support
 
 ## Tests
 

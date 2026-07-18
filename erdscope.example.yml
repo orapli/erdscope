@@ -122,3 +122,22 @@ relations: []
 #     target: { type: global }
 #     title: How to read this diagram
 #     text: The dotted amber edge under activity_logs.user_id is inferred, not a real FK.
+
+# `groups:` draws a rounded frame around a set of related tables (groups
+# Phase 1) — purely visual, no effect on layout/merge/associations. Every
+# group needs a config-unique `id` and a non-empty `tables` list; `title`
+# (defaults to `id` if omitted) and `color` (hex only, e.g. "#0d9488") are
+# optional. Groups are validated against the FINAL merged schema, same as
+# notes above. A table may belong to at most ONE group — claiming the same
+# table from two groups is a hard error, on purpose (Phase 1 doesn't support
+# overlapping membership). In the viewer, drag a group's title chip to move
+# every member together; a "Groups" toolbar toggle shows/hides the frames.
+#
+# groups:
+#   - id: billing
+#     title: Billing
+#     tables: [invoices, payments, coupons]
+#     color: "#0d9488"
+#
+#   - id: catalog
+#     tables: [products, categories, product_categories]

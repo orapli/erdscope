@@ -466,6 +466,189 @@ class TestNotesXSS(unittest.TestCase):
         self.assertIn('" onmouseover=alert(1) foo="', links[1]['text'])
 
 
+def _build_html_with_groups():
+    # groups Phase 1: exercise the real resolve_and_validate_groups ->
+    # _finish(groups=...) path, not a hand-rolled DATA.groups shape. 'posts'
+    # and 'comments' are grouped together (both are 'users' spokes, so their
+    # nodes land near each other under the default layout); 'users',
+    # 'likes', 'audit_logs' are left ungrouped.
+    tables = erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
+    groups_cfg = [
+        {'id': 'content', 'title': 'Content', 'tables': ['posts', 'comments'],
+         'color': '#0d9488'},
+    ]
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture', groups=groups_cfg, groups_label='test')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestGroups(unittest.TestCase):
+    """groups Phase 1 — group-layer frame rendering, drag-following, the
+    toolbar toggle, and export inclusion."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_with_groups()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _frame_bbox(self):
+        return self.page.evaluate('''() => {
+            const rect = document.querySelector('.grp-frame[data-group="content"] .grp-rect');
+            if (!rect) return null;
+            return {x: +rect.getAttribute('x'), y: +rect.getAttribute('y'),
+                    w: +rect.getAttribute('width'), h: +rect.getAttribute('height')};
+        }''')
+
+    def test_frame_drawn_and_encloses_both_members(self):
+        bbox = self._frame_bbox()
+        self.assertIsNotNone(bbox, 'expected a .grp-frame rect for the "content" group')
+        members = self.page.evaluate('''() => ['posts','comments'].map(n =>
+            ({...nodePos[n], ...nodeSize[n]}))''')
+        for m in members:
+            self.assertGreaterEqual(m['x'] - m['w']/2, bbox['x'] - 0.01,
+                                     'member left edge should be inside the frame')
+            self.assertLessEqual(m['x'] + m['w']/2, bbox['x'] + bbox['w'] + 0.01,
+                                  'member right edge should be inside the frame')
+            self.assertGreaterEqual(m['y'] - m['h']/2, bbox['y'] - 0.01,
+                                     'member top edge should be inside the frame')
+            self.assertLessEqual(m['y'] + m['h']/2, bbox['y'] + bbox['h'] + 0.01,
+                                  'member bottom edge should be inside the frame')
+
+    def test_ungrouped_table_has_no_frame(self):
+        # 'users'/'likes'/'audit_logs' aren't in any group — only one
+        # .grp-frame should exist at all (the "content" group)
+        count = self.page.evaluate("document.querySelectorAll('.grp-frame').length")
+        self.assertEqual(count, 1)
+
+    def test_frame_follows_a_dragged_member(self):
+        before = self._frame_bbox()
+        rect = self.page.evaluate('''() => {
+            const r = document.querySelector('svg').getBoundingClientRect();
+            return {left:r.left, top:r.top};
+        }''')
+        view = self.page.evaluate('({vx, vy, vs})')
+        to_client = lambda wx, wy: (rect['left'] + view['vx'] + wx * view['vs'],
+                                     rect['top'] + view['vy'] + wy * view['vs'])
+        start = self.page.evaluate('({...nodePos.posts})')
+        sx, sy = to_client(start['x'], start['y'])
+        tx, ty = to_client(start['x'] + 300, start['y'] + 300)
+        self.page.mouse.move(sx, sy)
+        self.page.mouse.down()
+        # mid-drag: the frame must already be tracking, not just on drop
+        self.page.mouse.move((sx + tx) / 2, (sy + ty) / 2, steps=4)
+        mid = self._frame_bbox()
+        self.page.mouse.move(tx, ty, steps=4)
+        self.page.mouse.up()
+        after = self._frame_bbox()
+        self.assertNotEqual(mid, before, 'frame should already move mid-drag, not just on drop')
+        self.assertNotEqual(after, before, 'frame should track the dragged member after drop')
+
+    def test_dragging_the_title_chip_moves_every_member_together(self):
+        posts_before = self.page.evaluate('({...nodePos.posts})')
+        comments_before = self.page.evaluate('({...nodePos.comments})')
+        chip = self.page.evaluate('''() => {
+            const r = document.querySelector('.grp-chip[data-group="content"] .grp-label-bg')
+                .getBoundingClientRect();
+            return {x: r.x + r.width/2, y: r.y + r.height/2};
+        }''')
+        self.page.mouse.move(chip['x'], chip['y'])
+        self.page.mouse.down()
+        self.page.mouse.move(chip['x'] + 150, chip['y'] + 150, steps=6)
+        self.page.mouse.up()
+        posts_after = self.page.evaluate('({...nodePos.posts})')
+        comments_after = self.page.evaluate('({...nodePos.comments})')
+        dxp = posts_after['x'] - posts_before['x']
+        dyp = posts_after['y'] - posts_before['y']
+        dxc = comments_after['x'] - comments_before['x']
+        dyc = comments_after['y'] - comments_before['y']
+        self.assertGreater(abs(dxp) + abs(dyp), 5, 'dragging the chip should move posts')
+        self.assertAlmostEqual(dxp, dxc, delta=1,
+                                msg='both members should move by the same delta')
+        self.assertAlmostEqual(dyp, dyc, delta=1,
+                                msg='both members should move by the same delta')
+
+    def test_toggle_hides_and_reshows_the_frame(self):
+        self.assertIsNotNone(self._frame_bbox())
+        self.page.click('#btn-groups')
+        self.page.wait_for_timeout(50)
+        self.assertIsNone(self._frame_bbox(), 'Groups toggle off should remove the frame')
+        self.page.click('#btn-groups')
+        self.page.wait_for_timeout(50)
+        self.assertIsNotNone(self._frame_bbox(), 'Groups toggle back on should redraw the frame')
+
+    def test_groups_toggle_hidden_when_no_groups_configured(self):
+        page = self.browser.new_page()
+        page.goto(_build_html().as_uri())
+        page.wait_for_function('typeof nodePos.users !== "undefined"')
+        page.wait_for_timeout(50)
+        visible = page.evaluate('''() => {
+            const b = document.getElementById('btn-groups');
+            return !!b && b.offsetParent !== null;
+        }''')
+        page.close()
+        self.assertFalse(visible, 'Groups toggle must stay hidden for a config with no groups')
+
+    def test_export_svg_includes_the_group_frame(self):
+        svg = self.page.evaluate('''() => {
+            const built = buildExportSvg();
+            return new XMLSerializer().serializeToString(built.svg);
+        }''')
+        self.assertIn('grp-rect', svg)
+        self.assertIn('data-group="content"', svg)
+
+    def test_export_svg_omits_the_group_frame_when_toggled_off(self):
+        # the EXPORT_CSS stylesheet always defines the .grp-rect/.grp-label-*
+        # rules (same as every other class, whether or not it's used) — the
+        # actual signal that a frame was/wasn't drawn is the group-layer's
+        # own element, tagged data-group, not the CSS class name.
+        self.page.click('#btn-groups')
+        self.page.wait_for_timeout(50)
+        svg = self.page.evaluate('''() => {
+            const built = buildExportSvg();
+            return new XMLSerializer().serializeToString(built.svg);
+        }''')
+        self.assertNotIn('data-group=', svg)
+
+    def test_export_viewbox_contains_a_long_group_title(self):
+        # Codex re-review #1: a title chip wider than its member nodes must not
+        # be clipped by the export canvas. buildExportSvg's viewBox has to grow
+        # to cover the actually-rendered group-layer (frame + chip), not just
+        # the member-node bbox groupFrameBBox() knows about.
+        res = self.page.evaluate('''() => {
+            GROUPS[0].title = "This is an intentionally very long group title that extends well beyond its member tables";
+            updateGroupFrames();
+            const built = buildExportSvg();
+            const vb = built.svg.getAttribute('viewBox').split(/\\s+/).map(Number);
+            const gl = document.getElementById('group-layer');
+            const b = gl.getBBox();
+            return {chipRight: b.x + b.width, viewRight: vb[0] + vb[2]};
+        }''')
+        self.assertLessEqual(res['chipRight'], res['viewRight'] + 0.5)
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestClientJS(unittest.TestCase):
     @classmethod

@@ -102,7 +102,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version', 'notes'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version', 'notes', 'groups'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -170,6 +170,8 @@ def _check_config_types(config, path):
         _check_config_sources(config['sources'], path)
     if 'notes' in config:
         _check_config_notes(config['notes'], path)
+    if 'groups' in config:
+        _check_config_groups(config['groups'], path)
 
 # ---------------------------------------------------------------------------
 # `sources:` — typed code-source declarations (D5). Purely syntactic here:
@@ -302,6 +304,63 @@ def _check_config_note_links(links, path, note_id):
         if not url.lower().startswith(('http://', 'https://')):
             sys.exit(f'Error: {path} note {note_id!r} `{lw}.url` must start with http:// '
                      f'or https:// (got {url!r})')
+
+# ---------------------------------------------------------------------------
+# `groups:` — visual table grouping sidecar (groups Phase 1, DESIGN_ROADMAP §P2).
+# Purely syntactic here: shape, required fields, allow-listed keys,
+# Config-internal duplicate `id`, and `color` restricted to a hex string (the
+# first line of XSS/attribute-injection defense, since a group's color renders
+# as a real SVG fill/stroke attribute in the viewer). Whether every member
+# TABLE actually exists, and whether any table is claimed by more than one
+# group, is a semantic, final-IR-after-merge concern — see
+# resolve_and_validate_groups in providers.py, not here. Mirrors the notes
+# two-stage split above.
+# ---------------------------------------------------------------------------
+_CONFIG_GROUP_KEYS = {'id', 'title', 'tables', 'color'}
+# Only the valid CSS/SVG hex-color lengths: #rgb, #rgba, #rrggbb, #rrggbbaa.
+# A 5- or 7-digit value is not a real hex color — the browser would drop it and
+# silently fall back to the default frame color, so reject it at load instead
+# (Codex re-review #2).
+_CONFIG_GROUP_COLOR_RE = re.compile(r'#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})')
+
+def _check_config_groups(groups, path):
+    if not isinstance(groups, list):
+        sys.exit(f'Error: {path} `groups` must be a list of objects '
+                 '({id, tables, title?, color?})')
+    seen = set()
+    for i, g in enumerate(groups):
+        gw = f'groups[{i}]'
+        if not isinstance(g, dict):
+            sys.exit(f'Error: {path} `{gw}` must be an object')
+        _reject_unknown_keys(g, _CONFIG_GROUP_KEYS, path, gw)
+        group_id = g.get('id')
+        if not isinstance(group_id, str) or not group_id:
+            sys.exit(f'Error: {path} `{gw}` needs a non-empty string `id`')
+        if group_id in seen:
+            sys.exit(f'Error: {path} `groups` has a duplicate id {group_id!r}')
+        seen.add(group_id)
+        tables = g.get('tables')
+        if not isinstance(tables, list) or not tables:
+            sys.exit(f'Error: {path} group {group_id!r} needs a non-empty list `tables`')
+        seen_tables = set()
+        for j, t in enumerate(tables):
+            if not isinstance(t, str) or not t:
+                sys.exit(f'Error: {path} group {group_id!r} `tables[{j}]` must be a '
+                         f'non-empty string, got {t!r}')
+            # A table listed twice in ONE group is a config mistake — reject it
+            # here at load (like duplicate column/index names), rather than let
+            # it reach the cross-group overlap check, which would then blame the
+            # group for overlapping with itself (Codex re-review #3).
+            if t in seen_tables:
+                sys.exit(f'Error: {path} group {group_id!r} lists table {t!r} more than once')
+            seen_tables.add(t)
+        if 'title' in g and g['title'] is not None and not isinstance(g['title'], str):
+            sys.exit(f'Error: {path} group {group_id!r} `title` must be a string')
+        if 'color' in g and g['color'] is not None:
+            color = g['color']
+            if not isinstance(color, str) or not _CONFIG_GROUP_COLOR_RE.fullmatch(color):
+                sys.exit(f'Error: {path} group {group_id!r} `color` must be a hex color '
+                         f'like "#0d9488", got {color!r}')
 
 # ---------------------------------------------------------------------------
 # `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)

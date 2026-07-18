@@ -326,6 +326,20 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
   font-size:12px;pointer-events:none;opacity:0;transition:opacity .25s;z-index:100}
 #toast.show{opacity:1}
 
+/* ── groups (groups Phase 1) — group-layer frames, backmost in #er-main ──
+   fill/stroke COLOR itself comes from each group's inline style attribute
+   (already hex-validated server-side); these classes only set the shape
+   properties that don't vary per group. */
+#group-layer{pointer-events:none}
+.grp-rect{fill-opacity:.06;stroke-width:1.5;stroke-opacity:.55;pointer-events:none}
+.grp-chip{cursor:move;pointer-events:auto}
+.grp-label-bg{fill-opacity:.16;stroke:none}
+.grp-label-text{fill:#1e293b;font-size:11px;font-weight:700;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;user-select:none}
+body.dark .grp-rect{fill-opacity:.1;stroke-opacity:.7}
+body.dark .grp-label-bg{fill-opacity:.28}
+body.dark .grp-label-text{fill:#f1f5f9}
+
 /* ── SVG node ── */
 .er-node{cursor:pointer}
 .er-node .n-shadow{fill:rgba(0,0,0,.07)}
@@ -584,6 +598,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <button class="diag-btn" data-nm="2">Logical</button>
         </div>
         <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢) in this view — exports have their own toggle in the Export menu">Labels</button>
+        <button class="diag-btn" id="btn-groups" title="Show/hide group frames around related tables">Groups</button>
       </div>
       <div class="tb-sep"></div>
       <div class="tb-group">
@@ -648,6 +663,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <div class="help-row"><span>Focus a table (again to exit)</span><span class="help-k">double-click</span></div>
           <div class="help-row"><span>Move (hold Alt: no snap)</span><span class="help-k">drag table</span></div>
           <div class="help-row"><span>Multi-select</span><span class="help-k">Shift+click / Shift+drag</span></div>
+          <div class="help-row"><span>Move a whole group</span><span class="help-k">drag its title</span></div>
           <div class="tb-popup-sep"></div>
           <div class="tb-popup-caption">Keyboard</div>
           <div class="help-row"><span>Close menu / clear search / exit focus / deselect</span><span class="help-k">Esc</span></div>
@@ -677,6 +693,10 @@ const DATA = __DATA_JSON__;
 // (resolve_and_validate_notes in providers.py) — DATA.notes is absent when no
 // notes were configured (demo byte-equality), so default to [] here.
 const NOTES = DATA.notes || [];
+// groups Phase 1: viewer-ready sidecar, already validated/resolved server-side
+// (resolve_and_validate_groups in providers.py) — DATA.groups is absent when
+// no groups were configured (demo byte-equality), so default to [] here.
+const GROUPS = DATA.groups || [];
 // LocalStorage keys are namespaced per project so multiple ERD pages
 // served from the same origin don't share table selections
 const LS = k => `erd:${document.title}:${k}`;
@@ -807,6 +827,10 @@ function wordHit(name){
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
 let showEdgeLabels = true;
+// groups Phase 1: whether the group-layer frames are drawn at all. Toggle is
+// hidden entirely when GROUPS is empty (§ toolbar init below), so this only
+// ever matters for a config that actually declared groups.
+let showGroups = true;
 // export-only options (independent of the live view — the live Labels
 // toggle above controls what YOU see while working; these control what
 // goes into a PNG/SVG someone else will look at later)
@@ -829,6 +853,13 @@ let marqueeJustSelected=false; // suppresses the "click on empty canvas clears s
                                 // own mouseup — same trick dragMoved uses for node drags
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
 let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
+// groups Phase 1: true while the current drag was started from a group's
+// title chip (dragging the whole group by its label) rather than a node —
+// suppresses node-snap (a group move has no single "anchor" node to snap)
+// and skips per-node selection semantics. dragSet/dragGroupStart/dragName/
+// dragUndoSnapshot/dragEdgeCache/isDragging are otherwise fully shared with
+// the ordinary multi-node drag machinery above.
+let dragIsGroup=false;
 let dragUndoSnapshot=null; // nodePos captured at mousedown, committed to undoStack only if the drag actually moved something
 // the display set/edge list can't change mid-drag (only checkbox/auto-expand
 // changes do that), so it's computed once at mousedown instead of on every
@@ -857,6 +888,7 @@ function saveState() {
   setLS(LS('cm'),   String(colMode));
   setLS(LS('cov'),  JSON.stringify(colOverride));
   setLS(LS('lbl'),  String(showEdgeLabels));
+  setLS(LS('grp'),  String(showGroups));
   setLS(LS('dir'),  expandDir);
   setLS(LS('al'),   String(autoLayout));
   setLS(LS('xlbl'),  String(exportOptLabels));
@@ -876,6 +908,7 @@ function loadState() {
   expandDepth = parseInt(localStorage.getItem(LS('dep')) || '1', 10);
   colMode     = parseInt(localStorage.getItem(LS('cm'))  || '0', 10);
   showEdgeLabels = localStorage.getItem(LS('lbl')) !== 'false';
+  showGroups = localStorage.getItem(LS('grp')) !== 'false';
   const mr = parseInt(localStorage.getItem(LS('mr')), 10);
   if (mr > 0) maxRows = mr; // user's choice overrides the CLI default
   expandDir = localStorage.getItem(LS('dir')) || 'both';
@@ -1671,13 +1704,21 @@ function renderDiagram() {
   const tables = getDisplayTables();
   const edges  = getDisplayEdges(tables);
   layoutAll(tables, edges);
+  // group-layer goes in first — it's the backmost layer (§5.2), so group
+  // frames never sit on top of edges/nodes and never intercept clicks meant
+  // for them (rect pointer-events:none, see CSS).
+  const groupG=svgEl('g',{id:'group-layer'});
   const edgeG=svgEl('g',{id:'edge-layer'});
   const nodeG=svgEl('g',{id:'node-layer'});
+  erMain.appendChild(groupG);
   erMain.appendChild(edgeG);
   erMain.appendChild(nodeG);
   edgeObstacles=tables;
   edges.forEach(e => drawEdge(edgeG, e));
   tables.forEach(n => drawNode(nodeG, n));
+  // group frames are computed from nodePos/nodeSize, which layoutAll() and
+  // drawNode() above just finalized for this render — draw after both.
+  drawGroups(groupG, new Set(tables));
   updateEdgeHighlight();
   updateInfoBar(tables.length);
   const ce=document.getElementById('canvas-empty');
@@ -1693,6 +1734,118 @@ function updateInfoBar(shown) {
   const el = document.getElementById('info-bar');
   const cnt = shown === total ? `${total} tables` : `${shown} / ${total} tables`;
   el.textContent = focusedTable ? `Focused: ${focusedTable} · ${cnt}` : cnt;
+}
+
+// ── Groups (groups Phase 1) — visual table grouping ─────────────────────────
+// A group frame is a rounded rect drawn behind whichever of the group's
+// members are CURRENTLY displayed, sized to their live nodePos/nodeSize —
+// this is layered on top of whatever layout already placed the nodes
+// (DESIGN_ROADMAP §P2: no layout affinity in Phase 1), so a frame just
+// tracks its members wherever they already are, and disappears the moment
+// zero members remain on screen (e.g. --only/--exclude, hidden tables, or
+// focus mode having pulled the display set down to something disjoint from
+// this group).
+const GROUP_PAD = 16;
+const GROUP_DEFAULT_COLOR = '#64748b'; // slate — used when a group has no configured color
+// Compute the padded bounding box of a group's currently-displayed members,
+// or null if none of them are on screen right now. `displayTables` is a Set
+// (the same shape getDisplayTables() returns via new Set(...) at call sites)
+// so membership tests below stay O(1).
+function groupFrameBBox(members, displayTables){
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity, any=false;
+  members.forEach(name=>{
+    if(!displayTables.has(name)) return;
+    const p=nodePos[name], s=nodeSize[name];
+    if(!p||!s) return;
+    any=true;
+    x0=Math.min(x0,p.x-s.w/2); y0=Math.min(y0,p.y-s.h/2);
+    x1=Math.max(x1,p.x+s.w/2); y1=Math.max(y1,p.y+s.h/2);
+  });
+  if(!any) return null;
+  return {x0:x0-GROUP_PAD, y0:y0-GROUP_PAD, x1:x1+GROUP_PAD, y1:y1+GROUP_PAD};
+}
+// Draws every group's frame + title chip into `parent` (the group-layer <g>).
+// `displayTables` is a Set of the currently-shown table names. Colors are
+// SVG style/attribute values built ONLY from `g.color`, which config.py
+// already restricted to `^#[0-9a-fA-F]{3,8}$` at load time (never a raw,
+// unvalidated string) — see _check_config_groups. Titles go through
+// .textContent (like every other node/edge label in this file), which never
+// interprets its argument as markup, so no separate esc() call is needed
+// here the way the innerHTML-built notes panels need one.
+function drawGroups(parent, displayTables){
+  parent.innerHTML='';
+  if(!showGroups) return;
+  GROUPS.forEach(g=>{
+    const bbox=groupFrameBBox(g.tables, displayTables);
+    if(!bbox) return; // every member currently hidden — nothing to frame
+    const {x0,y0,x1,y1}=bbox;
+    const color=g.color || GROUP_DEFAULT_COLOR;
+    const frame=svgEl('g',{class:'grp-frame','data-group':g.id});
+    frame.appendChild(svgEl('rect',{
+      x:x0, y:y0, width:x1-x0, height:y1-y0, rx:10, ry:10,
+      class:'grp-rect', style:`fill:${color};stroke:${color}`,
+    }));
+    parent.appendChild(frame);
+
+    // title chip: small background pill + label, top-left of the frame.
+    // Only the chip has pointer-events (CSS: .grp-rect is none, .grp-chip is
+    // auto) — it's the drag handle for moving the whole group (§5.4), and
+    // the frame body must never steal a click meant for the node/pan below.
+    const label = g.title || g.id;
+    const chip = svgEl('g', {class:'grp-chip', 'data-group':g.id});
+    const chipText = svgEl('text', {x:x0+10, y:y0+16, class:'grp-label-text'});
+    chipText.textContent = label;
+    chip.appendChild(chipText);
+    frame.appendChild(chip);
+    // measure real glyph width only after the text node is attached to the
+    // live DOM (getBBox needs layout), then insert the background pill
+    // behind it sized to fit
+    const tw = chipText.getBBox().width;
+    const chipBg = svgEl('rect', {
+      x:x0+4, y:y0+2, width:tw+12, height:20, rx:6, ry:6,
+      class:'grp-label-bg', style:`fill:${color};stroke:${color}`,
+    });
+    chip.insertBefore(chipBg, chipText);
+    const chipTitle = svgEl('title', {});
+    chipTitle.textContent = label;
+    chip.appendChild(chipTitle);
+    chip.addEventListener('mousedown', e => startGroupDrag(e, g));
+  });
+}
+// Lightweight re-layout of the group-layer alone, called after ordinary node
+// drags/moves so frames track their members without a full renderDiagram()
+// (which would also rebuild edges/nodes needlessly mid-drag). group counts
+// are small, so redrawing all of them each time is simpler and cheap enough
+// — no need to track "only the groups touching this drag."
+function updateGroupFrames(){
+  const g=document.getElementById('group-layer');
+  if(!g) return;
+  drawGroups(g, new Set(getDisplayTables()));
+}
+// Start dragging an entire group by its title chip — reuses the SAME
+// dragSet/dragGroupStart/dragName/dragUndoSnapshot/dragEdgeCache/isDragging
+// machinery the ordinary multi-node drag (drawNode's mousedown, below) sets
+// up, just seeded with the group's own currently-displayed members instead
+// of the clicked node/selection. dragIsGroup=true tells the shared mousemove
+// handler to skip node-snap (a group move has no single "anchor" to snap;
+// same effect as holding Alt during a normal drag).
+function startGroupDrag(e, g){
+  e.stopPropagation();
+  if(e.button!==0) return;
+  const display=new Set(getDisplayTables());
+  const members=g.tables.filter(t=>display.has(t));
+  if(!members.length) return;
+  dragSet = new Set(members);
+  dragGroupStart = {};
+  dragSet.forEach(t => { dragGroupStart[t] = {...(nodePos[t]||{x:0,y:0})}; });
+  dragUndoSnapshot = snapshotPos();
+  dragEdgeCache = getDisplayEdges(getDisplayTables());
+  dragName = members[0]; // representative member — anchors the delta the same way a plain node drag does
+  const pt=svgPt(e.clientX,e.clientY);
+  dragIsGroup=true; isDragging=true; dragMoved=false;
+  dragCX=e.clientX; dragCY=e.clientY;
+  dragOX=pt.x-(nodePos[dragName]?.x||0); dragOY=pt.y-(nodePos[dragName]?.y||0);
+  svg.classList.add('node-drag');
 }
 
 function drawNode(parent, name) {
@@ -2714,6 +2867,9 @@ function showToast(msg){
 // ── PNG Export ─────────────────────────────────────────────────────────────
 // Inline CSS for SVG export (classes won't resolve in offscreen canvas)
 const EXPORT_CSS = `
+.grp-rect{fill-opacity:.06;stroke-width:1.5;stroke-opacity:.55;pointer-events:none}
+.grp-label-bg{fill-opacity:.16;stroke:none}
+.grp-label-text{fill:#1e293b;font-size:11px;font-weight:700;font-family:sans-serif}
 .er-node .n-shadow{fill:rgba(0,0,0,.07)}
 .er-node .n-bg{fill:#fff;stroke:#cbd5e1;stroke-width:1}
 .er-node.sel .n-bg{stroke:#3b82f6;stroke-width:2}
@@ -2762,6 +2918,21 @@ function buildExportSvg(){
     x1=Math.max(x1,p.x+s.w/2+24); y1=Math.max(y1,p.y+s.h/2+24);
   });
   if(!isFinite(x0)){showToast('Export failed');return null;}
+  // group frames (groups Phase 1) extend past their member nodes' own bbox —
+  // by GROUP_PAD for the rounded frame, and by an unbounded amount for a title
+  // chip whose text is wider than its members. Measuring the live group-layer's
+  // own getBBox() captures BOTH exactly (frames + chips as actually rendered),
+  // where groupFrameBBox() alone knows only the member nodes and would clip a
+  // long title (Codex re-review #1). Skipped when groups are hidden — the layer
+  // is then empty, matching its empty clone in the export.
+  if(showGroups){
+    const gl=document.getElementById('group-layer');
+    if(gl && gl.childNodes.length){
+      const b=gl.getBBox();
+      x0=Math.min(x0,b.x); y0=Math.min(y0,b.y);
+      x1=Math.max(x1,b.x+b.width); y1=Math.max(y1,b.y+b.height);
+    }
+  }
   const vw=x1-x0, vh=y1-y0;
 
   const exportSvg=document.createElementNS(NS,'svg');
@@ -3086,7 +3257,9 @@ window.addEventListener('mousemove', e=>{
     const pt=svgPt(e.clientX,e.clientY);
     let nx=pt.x-dragOX, ny=pt.y-dragOY;
     const guides=[];
-    if(!e.altKey){
+    // a whole-group drag (§5.4) has no single "anchor" node to snap against
+    // — same no-snap treatment as holding Alt during an ordinary node drag
+    if(!e.altKey && !dragIsGroup){
       const sp=snapToNodes(dragName, nx, ny, guides, dragSet);
       nx=sp.x; ny=sp.y;
     }
@@ -3120,6 +3293,7 @@ window.addEventListener('mousemove', e=>{
       });
       updateEdgeHighlight();
     }
+    updateGroupFrames(); // group frames track their members live, same as edges above
     return;
   }
   if(isMarqueeSelecting){
@@ -3140,7 +3314,7 @@ window.addEventListener('mouseup', e=>{
       updateUndoRedoUI();
     }
     dragUndoSnapshot=null;
-    dragSet=new Set(); dragGroupStart={}; dragEdgeCache=null;
+    dragSet=new Set(); dragGroupStart={}; dragEdgeCache=null; dragIsGroup=false;
     // dragMoved stays set: the click event fires after mouseup and must see it.
     // If no click follows (released outside the node/window), clear it on the
     // next task so it can't swallow a later legitimate click.
@@ -3149,6 +3323,7 @@ window.addEventListener('mouseup', e=>{
     drawSnapGuides([]);
     const eL=document.getElementById('edge-layer');
     if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
+    updateGroupFrames(); // full, guaranteed-correct redraw once, same as edges above
     return;
   }
   if(isMarqueeSelecting){
@@ -3479,6 +3654,19 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
   showEdgeLabels=!showEdgeLabels; saveState(); updateLabelUI();
 });
 
+// Group-frame visibility toggle (groups Phase 1). The button itself is
+// hidden entirely when no groups are configured (init, below) — a config
+// with no `groups:` must look exactly like it did before this feature
+// existed, toolbar included.
+function updateGroupsUI(){
+  const btn=document.getElementById('btn-groups');
+  if(!btn) return;
+  btn.classList.toggle('active', showGroups);
+}
+document.getElementById('btn-groups').addEventListener('click',()=>{
+  showGroups=!showGroups; saveState(); updateGroupsUI(); updateGroupFrames();
+});
+
 // ── Pane resize / collapse ──────────────────────────────────────────────────
 (()=>{
   const lp=document.getElementById('left-pane'), rp=document.getElementById('right-pane');
@@ -3707,6 +3895,15 @@ updateFocusUI();
 updateColModeUI();
 updateNameModeUI();
 updateLabelUI();
+// groups Phase 1: no groups configured -> hide the toggle entirely, keeping
+// the toolbar byte-for-byte the same as before this feature for every
+// pre-existing config/demo.
+if(!GROUPS.length){
+  const gbtn=document.getElementById('btn-groups');
+  if(gbtn) gbtn.style.display='none';
+} else {
+  updateGroupsUI();
+}
 document.getElementById('btn-autolayout').classList.toggle('active',autoLayout);
 document.getElementById('export-opt-labels').checked=exportOptLabels;
 document.getElementById('export-opt-roots').checked=exportOptRoots;

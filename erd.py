@@ -2932,6 +2932,52 @@ def resolve_and_validate_notes(notes, tables, label):
     return out
 
 # ---------------------------------------------------------------------------
+# `groups:` semantic validation + viewer-ready resolution (groups Phase 1).
+#
+# Called from cli._finish, mirroring resolve_and_validate_notes above: AFTER
+# --infer-fk (groups don't care about associations, but validating against the
+# same final IR keeps the two sidecars consistent) and BEFORE --only/--exclude
+# filtering (so a group is fully semantic-validated against the complete
+# schema; _finish filters the RESOLVED groups' membership down afterward).
+#
+# groups are a pure sidecar: this function only READS `tables` (never mutates
+# it, never feeds anything back into layers/merge_ir/ProviderResult/
+# provenance/fk_columns) and returns a new, viewer-ready list. Every error
+# includes the group's `id`, per the Phase 1 contract.
+#
+# Phase 1 scope: NO overlapping membership — a table claimed by two groups is
+# a hard error (naming both group ids and the table), not a silently-picked
+# winner. Layout affinity (placing group members near each other) is
+# explicitly out of scope for this PR (DESIGN_ROADMAP §P2 follow-up).
+# ---------------------------------------------------------------------------
+def resolve_and_validate_groups(groups, tables, label):
+    """Semantic-validate config `groups` against the FINAL merged IR: every
+    member table must exist, and no table may belong to more than one group.
+    Returns a viewer-ready list of {'id', 'tables':[...], 'title'?, 'color'?}
+    (title/color present only when configured). Hard error via sys.exit
+    (group id always included)."""
+    out = []
+    owner = {}  # table -> group id that already claimed it
+    for g in groups:
+        group_id = g['id']
+        for t in g['tables']:
+            if t not in tables:
+                sys.exit(f"Error: {label} group {group_id!r}: unknown table {t!r} "
+                         "(not in the final schema)")
+            if t in owner:
+                sys.exit(f"Error: {label} group {group_id!r}: table {t!r} already "
+                         f"belongs to group {owner[t]!r} (a table may belong to only "
+                         "one group)")
+            owner[t] = group_id
+        entry = {'id': group_id, 'tables': list(g['tables'])}
+        if g.get('title'):
+            entry['title'] = g['title']
+        if g.get('color'):
+            entry['color'] = g['color']
+        out.append(entry)
+    return out
+
+# ---------------------------------------------------------------------------
 # Excel export (.xlsx via zipfile — no third-party dependency)
 # ---------------------------------------------------------------------------
 def _xml(s):
@@ -3138,11 +3184,12 @@ def _build_stylesheet_parts(role_styles):
                         'applyFont="1" applyFill="1" applyBorder="1"/>')
     return fonts, fills, borders, cellxfs
 
-def write_excel(tables, path, title, template_path=None, notes=None):
-    """`notes` (notes Phase 1) is accepted but UNUSED in this release — wiring
-    only, so the shared data form (tables + notes) is already in place for a
-    future Notes sheet without an interface break. Not touching it here keeps
-    every existing Excel test byte-for-byte unchanged."""
+def write_excel(tables, path, title, template_path=None, notes=None, groups=None):
+    """`notes` (notes Phase 1) and `groups` (groups Phase 1) are accepted but
+    UNUSED in this release — wiring only, so the shared data form (tables +
+    notes + groups) is already in place for a future sheet without an
+    interface break. Not touching them here keeps every existing Excel test
+    byte-for-byte unchanged."""
     import zipfile
     used = set()
     sheets = []  # (sheet_name, xml)
@@ -3601,6 +3648,20 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
   font-size:12px;pointer-events:none;opacity:0;transition:opacity .25s;z-index:100}
 #toast.show{opacity:1}
 
+/* ── groups (groups Phase 1) — group-layer frames, backmost in #er-main ──
+   fill/stroke COLOR itself comes from each group's inline style attribute
+   (already hex-validated server-side); these classes only set the shape
+   properties that don't vary per group. */
+#group-layer{pointer-events:none}
+.grp-rect{fill-opacity:.06;stroke-width:1.5;stroke-opacity:.55;pointer-events:none}
+.grp-chip{cursor:move;pointer-events:auto}
+.grp-label-bg{fill-opacity:.16;stroke:none}
+.grp-label-text{fill:#1e293b;font-size:11px;font-weight:700;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;user-select:none}
+body.dark .grp-rect{fill-opacity:.1;stroke-opacity:.7}
+body.dark .grp-label-bg{fill-opacity:.28}
+body.dark .grp-label-text{fill:#f1f5f9}
+
 /* ── SVG node ── */
 .er-node{cursor:pointer}
 .er-node .n-shadow{fill:rgba(0,0,0,.07)}
@@ -3859,6 +3920,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <button class="diag-btn" data-nm="2">Logical</button>
         </div>
         <button class="diag-btn" id="btn-labels" title="Show/hide join-table labels (⇢) in this view — exports have their own toggle in the Export menu">Labels</button>
+        <button class="diag-btn" id="btn-groups" title="Show/hide group frames around related tables">Groups</button>
       </div>
       <div class="tb-sep"></div>
       <div class="tb-group">
@@ -3923,6 +3985,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           <div class="help-row"><span>Focus a table (again to exit)</span><span class="help-k">double-click</span></div>
           <div class="help-row"><span>Move (hold Alt: no snap)</span><span class="help-k">drag table</span></div>
           <div class="help-row"><span>Multi-select</span><span class="help-k">Shift+click / Shift+drag</span></div>
+          <div class="help-row"><span>Move a whole group</span><span class="help-k">drag its title</span></div>
           <div class="tb-popup-sep"></div>
           <div class="tb-popup-caption">Keyboard</div>
           <div class="help-row"><span>Close menu / clear search / exit focus / deselect</span><span class="help-k">Esc</span></div>
@@ -3952,6 +4015,10 @@ const DATA = __DATA_JSON__;
 // (resolve_and_validate_notes in providers.py) — DATA.notes is absent when no
 // notes were configured (demo byte-equality), so default to [] here.
 const NOTES = DATA.notes || [];
+// groups Phase 1: viewer-ready sidecar, already validated/resolved server-side
+// (resolve_and_validate_groups in providers.py) — DATA.groups is absent when
+// no groups were configured (demo byte-equality), so default to [] here.
+const GROUPS = DATA.groups || [];
 // LocalStorage keys are namespaced per project so multiple ERD pages
 // served from the same origin don't share table selections
 const LS = k => `erd:${document.title}:${k}`;
@@ -4082,6 +4149,10 @@ function wordHit(name){
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
 let showEdgeLabels = true;
+// groups Phase 1: whether the group-layer frames are drawn at all. Toggle is
+// hidden entirely when GROUPS is empty (§ toolbar init below), so this only
+// ever matters for a config that actually declared groups.
+let showGroups = true;
 // export-only options (independent of the live view — the live Labels
 // toggle above controls what YOU see while working; these control what
 // goes into a PNG/SVG someone else will look at later)
@@ -4104,6 +4175,13 @@ let marqueeJustSelected=false; // suppresses the "click on empty canvas clears s
                                 // own mouseup — same trick dragMoved uses for node drags
 let isDragging=false, dragName, dragOX, dragOY, dragMoved=false, dragCX=0, dragCY=0;
 let dragSet=new Set(), dragGroupStart={}; // nodes moving together in the current drag
+// groups Phase 1: true while the current drag was started from a group's
+// title chip (dragging the whole group by its label) rather than a node —
+// suppresses node-snap (a group move has no single "anchor" node to snap)
+// and skips per-node selection semantics. dragSet/dragGroupStart/dragName/
+// dragUndoSnapshot/dragEdgeCache/isDragging are otherwise fully shared with
+// the ordinary multi-node drag machinery above.
+let dragIsGroup=false;
 let dragUndoSnapshot=null; // nodePos captured at mousedown, committed to undoStack only if the drag actually moved something
 // the display set/edge list can't change mid-drag (only checkbox/auto-expand
 // changes do that), so it's computed once at mousedown instead of on every
@@ -4132,6 +4210,7 @@ function saveState() {
   setLS(LS('cm'),   String(colMode));
   setLS(LS('cov'),  JSON.stringify(colOverride));
   setLS(LS('lbl'),  String(showEdgeLabels));
+  setLS(LS('grp'),  String(showGroups));
   setLS(LS('dir'),  expandDir);
   setLS(LS('al'),   String(autoLayout));
   setLS(LS('xlbl'),  String(exportOptLabels));
@@ -4151,6 +4230,7 @@ function loadState() {
   expandDepth = parseInt(localStorage.getItem(LS('dep')) || '1', 10);
   colMode     = parseInt(localStorage.getItem(LS('cm'))  || '0', 10);
   showEdgeLabels = localStorage.getItem(LS('lbl')) !== 'false';
+  showGroups = localStorage.getItem(LS('grp')) !== 'false';
   const mr = parseInt(localStorage.getItem(LS('mr')), 10);
   if (mr > 0) maxRows = mr; // user's choice overrides the CLI default
   expandDir = localStorage.getItem(LS('dir')) || 'both';
@@ -4946,13 +5026,21 @@ function renderDiagram() {
   const tables = getDisplayTables();
   const edges  = getDisplayEdges(tables);
   layoutAll(tables, edges);
+  // group-layer goes in first — it's the backmost layer (§5.2), so group
+  // frames never sit on top of edges/nodes and never intercept clicks meant
+  // for them (rect pointer-events:none, see CSS).
+  const groupG=svgEl('g',{id:'group-layer'});
   const edgeG=svgEl('g',{id:'edge-layer'});
   const nodeG=svgEl('g',{id:'node-layer'});
+  erMain.appendChild(groupG);
   erMain.appendChild(edgeG);
   erMain.appendChild(nodeG);
   edgeObstacles=tables;
   edges.forEach(e => drawEdge(edgeG, e));
   tables.forEach(n => drawNode(nodeG, n));
+  // group frames are computed from nodePos/nodeSize, which layoutAll() and
+  // drawNode() above just finalized for this render — draw after both.
+  drawGroups(groupG, new Set(tables));
   updateEdgeHighlight();
   updateInfoBar(tables.length);
   const ce=document.getElementById('canvas-empty');
@@ -4968,6 +5056,118 @@ function updateInfoBar(shown) {
   const el = document.getElementById('info-bar');
   const cnt = shown === total ? `${total} tables` : `${shown} / ${total} tables`;
   el.textContent = focusedTable ? `Focused: ${focusedTable} · ${cnt}` : cnt;
+}
+
+// ── Groups (groups Phase 1) — visual table grouping ─────────────────────────
+// A group frame is a rounded rect drawn behind whichever of the group's
+// members are CURRENTLY displayed, sized to their live nodePos/nodeSize —
+// this is layered on top of whatever layout already placed the nodes
+// (DESIGN_ROADMAP §P2: no layout affinity in Phase 1), so a frame just
+// tracks its members wherever they already are, and disappears the moment
+// zero members remain on screen (e.g. --only/--exclude, hidden tables, or
+// focus mode having pulled the display set down to something disjoint from
+// this group).
+const GROUP_PAD = 16;
+const GROUP_DEFAULT_COLOR = '#64748b'; // slate — used when a group has no configured color
+// Compute the padded bounding box of a group's currently-displayed members,
+// or null if none of them are on screen right now. `displayTables` is a Set
+// (the same shape getDisplayTables() returns via new Set(...) at call sites)
+// so membership tests below stay O(1).
+function groupFrameBBox(members, displayTables){
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity, any=false;
+  members.forEach(name=>{
+    if(!displayTables.has(name)) return;
+    const p=nodePos[name], s=nodeSize[name];
+    if(!p||!s) return;
+    any=true;
+    x0=Math.min(x0,p.x-s.w/2); y0=Math.min(y0,p.y-s.h/2);
+    x1=Math.max(x1,p.x+s.w/2); y1=Math.max(y1,p.y+s.h/2);
+  });
+  if(!any) return null;
+  return {x0:x0-GROUP_PAD, y0:y0-GROUP_PAD, x1:x1+GROUP_PAD, y1:y1+GROUP_PAD};
+}
+// Draws every group's frame + title chip into `parent` (the group-layer <g>).
+// `displayTables` is a Set of the currently-shown table names. Colors are
+// SVG style/attribute values built ONLY from `g.color`, which config.py
+// already restricted to `^#[0-9a-fA-F]{3,8}$` at load time (never a raw,
+// unvalidated string) — see _check_config_groups. Titles go through
+// .textContent (like every other node/edge label in this file), which never
+// interprets its argument as markup, so no separate esc() call is needed
+// here the way the innerHTML-built notes panels need one.
+function drawGroups(parent, displayTables){
+  parent.innerHTML='';
+  if(!showGroups) return;
+  GROUPS.forEach(g=>{
+    const bbox=groupFrameBBox(g.tables, displayTables);
+    if(!bbox) return; // every member currently hidden — nothing to frame
+    const {x0,y0,x1,y1}=bbox;
+    const color=g.color || GROUP_DEFAULT_COLOR;
+    const frame=svgEl('g',{class:'grp-frame','data-group':g.id});
+    frame.appendChild(svgEl('rect',{
+      x:x0, y:y0, width:x1-x0, height:y1-y0, rx:10, ry:10,
+      class:'grp-rect', style:`fill:${color};stroke:${color}`,
+    }));
+    parent.appendChild(frame);
+
+    // title chip: small background pill + label, top-left of the frame.
+    // Only the chip has pointer-events (CSS: .grp-rect is none, .grp-chip is
+    // auto) — it's the drag handle for moving the whole group (§5.4), and
+    // the frame body must never steal a click meant for the node/pan below.
+    const label = g.title || g.id;
+    const chip = svgEl('g', {class:'grp-chip', 'data-group':g.id});
+    const chipText = svgEl('text', {x:x0+10, y:y0+16, class:'grp-label-text'});
+    chipText.textContent = label;
+    chip.appendChild(chipText);
+    frame.appendChild(chip);
+    // measure real glyph width only after the text node is attached to the
+    // live DOM (getBBox needs layout), then insert the background pill
+    // behind it sized to fit
+    const tw = chipText.getBBox().width;
+    const chipBg = svgEl('rect', {
+      x:x0+4, y:y0+2, width:tw+12, height:20, rx:6, ry:6,
+      class:'grp-label-bg', style:`fill:${color};stroke:${color}`,
+    });
+    chip.insertBefore(chipBg, chipText);
+    const chipTitle = svgEl('title', {});
+    chipTitle.textContent = label;
+    chip.appendChild(chipTitle);
+    chip.addEventListener('mousedown', e => startGroupDrag(e, g));
+  });
+}
+// Lightweight re-layout of the group-layer alone, called after ordinary node
+// drags/moves so frames track their members without a full renderDiagram()
+// (which would also rebuild edges/nodes needlessly mid-drag). group counts
+// are small, so redrawing all of them each time is simpler and cheap enough
+// — no need to track "only the groups touching this drag."
+function updateGroupFrames(){
+  const g=document.getElementById('group-layer');
+  if(!g) return;
+  drawGroups(g, new Set(getDisplayTables()));
+}
+// Start dragging an entire group by its title chip — reuses the SAME
+// dragSet/dragGroupStart/dragName/dragUndoSnapshot/dragEdgeCache/isDragging
+// machinery the ordinary multi-node drag (drawNode's mousedown, below) sets
+// up, just seeded with the group's own currently-displayed members instead
+// of the clicked node/selection. dragIsGroup=true tells the shared mousemove
+// handler to skip node-snap (a group move has no single "anchor" to snap;
+// same effect as holding Alt during a normal drag).
+function startGroupDrag(e, g){
+  e.stopPropagation();
+  if(e.button!==0) return;
+  const display=new Set(getDisplayTables());
+  const members=g.tables.filter(t=>display.has(t));
+  if(!members.length) return;
+  dragSet = new Set(members);
+  dragGroupStart = {};
+  dragSet.forEach(t => { dragGroupStart[t] = {...(nodePos[t]||{x:0,y:0})}; });
+  dragUndoSnapshot = snapshotPos();
+  dragEdgeCache = getDisplayEdges(getDisplayTables());
+  dragName = members[0]; // representative member — anchors the delta the same way a plain node drag does
+  const pt=svgPt(e.clientX,e.clientY);
+  dragIsGroup=true; isDragging=true; dragMoved=false;
+  dragCX=e.clientX; dragCY=e.clientY;
+  dragOX=pt.x-(nodePos[dragName]?.x||0); dragOY=pt.y-(nodePos[dragName]?.y||0);
+  svg.classList.add('node-drag');
 }
 
 function drawNode(parent, name) {
@@ -5989,6 +6189,9 @@ function showToast(msg){
 // ── PNG Export ─────────────────────────────────────────────────────────────
 // Inline CSS for SVG export (classes won't resolve in offscreen canvas)
 const EXPORT_CSS = `
+.grp-rect{fill-opacity:.06;stroke-width:1.5;stroke-opacity:.55;pointer-events:none}
+.grp-label-bg{fill-opacity:.16;stroke:none}
+.grp-label-text{fill:#1e293b;font-size:11px;font-weight:700;font-family:sans-serif}
 .er-node .n-shadow{fill:rgba(0,0,0,.07)}
 .er-node .n-bg{fill:#fff;stroke:#cbd5e1;stroke-width:1}
 .er-node.sel .n-bg{stroke:#3b82f6;stroke-width:2}
@@ -6037,6 +6240,21 @@ function buildExportSvg(){
     x1=Math.max(x1,p.x+s.w/2+24); y1=Math.max(y1,p.y+s.h/2+24);
   });
   if(!isFinite(x0)){showToast('Export failed');return null;}
+  // group frames (groups Phase 1) extend past their member nodes' own bbox —
+  // by GROUP_PAD for the rounded frame, and by an unbounded amount for a title
+  // chip whose text is wider than its members. Measuring the live group-layer's
+  // own getBBox() captures BOTH exactly (frames + chips as actually rendered),
+  // where groupFrameBBox() alone knows only the member nodes and would clip a
+  // long title (Codex re-review #1). Skipped when groups are hidden — the layer
+  // is then empty, matching its empty clone in the export.
+  if(showGroups){
+    const gl=document.getElementById('group-layer');
+    if(gl && gl.childNodes.length){
+      const b=gl.getBBox();
+      x0=Math.min(x0,b.x); y0=Math.min(y0,b.y);
+      x1=Math.max(x1,b.x+b.width); y1=Math.max(y1,b.y+b.height);
+    }
+  }
   const vw=x1-x0, vh=y1-y0;
 
   const exportSvg=document.createElementNS(NS,'svg');
@@ -6361,7 +6579,9 @@ window.addEventListener('mousemove', e=>{
     const pt=svgPt(e.clientX,e.clientY);
     let nx=pt.x-dragOX, ny=pt.y-dragOY;
     const guides=[];
-    if(!e.altKey){
+    // a whole-group drag (§5.4) has no single "anchor" node to snap against
+    // — same no-snap treatment as holding Alt during an ordinary node drag
+    if(!e.altKey && !dragIsGroup){
       const sp=snapToNodes(dragName, nx, ny, guides, dragSet);
       nx=sp.x; ny=sp.y;
     }
@@ -6395,6 +6615,7 @@ window.addEventListener('mousemove', e=>{
       });
       updateEdgeHighlight();
     }
+    updateGroupFrames(); // group frames track their members live, same as edges above
     return;
   }
   if(isMarqueeSelecting){
@@ -6415,7 +6636,7 @@ window.addEventListener('mouseup', e=>{
       updateUndoRedoUI();
     }
     dragUndoSnapshot=null;
-    dragSet=new Set(); dragGroupStart={}; dragEdgeCache=null;
+    dragSet=new Set(); dragGroupStart={}; dragEdgeCache=null; dragIsGroup=false;
     // dragMoved stays set: the click event fires after mouseup and must see it.
     // If no click follows (released outside the node/window), clear it on the
     // next task so it can't swallow a later legitimate click.
@@ -6424,6 +6645,7 @@ window.addEventListener('mouseup', e=>{
     drawSnapGuides([]);
     const eL=document.getElementById('edge-layer');
     if(eL){eL.innerHTML='';edgeObstacles=getDisplayTables();getDisplayEdges(edgeObstacles).forEach(e2=>drawEdge(eL,e2));updateEdgeHighlight();}
+    updateGroupFrames(); // full, guaranteed-correct redraw once, same as edges above
     return;
   }
   if(isMarqueeSelecting){
@@ -6754,6 +6976,19 @@ document.getElementById('btn-labels').addEventListener('click',()=>{
   showEdgeLabels=!showEdgeLabels; saveState(); updateLabelUI();
 });
 
+// Group-frame visibility toggle (groups Phase 1). The button itself is
+// hidden entirely when no groups are configured (init, below) — a config
+// with no `groups:` must look exactly like it did before this feature
+// existed, toolbar included.
+function updateGroupsUI(){
+  const btn=document.getElementById('btn-groups');
+  if(!btn) return;
+  btn.classList.toggle('active', showGroups);
+}
+document.getElementById('btn-groups').addEventListener('click',()=>{
+  showGroups=!showGroups; saveState(); updateGroupsUI(); updateGroupFrames();
+});
+
 // ── Pane resize / collapse ──────────────────────────────────────────────────
 (()=>{
   const lp=document.getElementById('left-pane'), rp=document.getElementById('right-pane');
@@ -6982,6 +7217,15 @@ updateFocusUI();
 updateColModeUI();
 updateNameModeUI();
 updateLabelUI();
+// groups Phase 1: no groups configured -> hide the toggle entirely, keeping
+// the toolbar byte-for-byte the same as before this feature for every
+// pre-existing config/demo.
+if(!GROUPS.length){
+  const gbtn=document.getElementById('btn-groups');
+  if(gbtn) gbtn.style.display='none';
+} else {
+  updateGroupsUI();
+}
 document.getElementById('btn-autolayout').classList.toggle('active',autoLayout);
 document.getElementById('export-opt-labels').checked=exportOptLabels;
 document.getElementById('export-opt-roots').checked=exportOptRoots;
@@ -7126,7 +7370,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version', 'notes'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version', 'notes', 'groups'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -7194,6 +7438,8 @@ def _check_config_types(config, path):
         _check_config_sources(config['sources'], path)
     if 'notes' in config:
         _check_config_notes(config['notes'], path)
+    if 'groups' in config:
+        _check_config_groups(config['groups'], path)
 
 # ---------------------------------------------------------------------------
 # `sources:` — typed code-source declarations (D5). Purely syntactic here:
@@ -7326,6 +7572,63 @@ def _check_config_note_links(links, path, note_id):
         if not url.lower().startswith(('http://', 'https://')):
             sys.exit(f'Error: {path} note {note_id!r} `{lw}.url` must start with http:// '
                      f'or https:// (got {url!r})')
+
+# ---------------------------------------------------------------------------
+# `groups:` — visual table grouping sidecar (groups Phase 1, DESIGN_ROADMAP §P2).
+# Purely syntactic here: shape, required fields, allow-listed keys,
+# Config-internal duplicate `id`, and `color` restricted to a hex string (the
+# first line of XSS/attribute-injection defense, since a group's color renders
+# as a real SVG fill/stroke attribute in the viewer). Whether every member
+# TABLE actually exists, and whether any table is claimed by more than one
+# group, is a semantic, final-IR-after-merge concern — see
+# resolve_and_validate_groups in providers.py, not here. Mirrors the notes
+# two-stage split above.
+# ---------------------------------------------------------------------------
+_CONFIG_GROUP_KEYS = {'id', 'title', 'tables', 'color'}
+# Only the valid CSS/SVG hex-color lengths: #rgb, #rgba, #rrggbb, #rrggbbaa.
+# A 5- or 7-digit value is not a real hex color — the browser would drop it and
+# silently fall back to the default frame color, so reject it at load instead
+# (Codex re-review #2).
+_CONFIG_GROUP_COLOR_RE = re.compile(r'#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})')
+
+def _check_config_groups(groups, path):
+    if not isinstance(groups, list):
+        sys.exit(f'Error: {path} `groups` must be a list of objects '
+                 '({id, tables, title?, color?})')
+    seen = set()
+    for i, g in enumerate(groups):
+        gw = f'groups[{i}]'
+        if not isinstance(g, dict):
+            sys.exit(f'Error: {path} `{gw}` must be an object')
+        _reject_unknown_keys(g, _CONFIG_GROUP_KEYS, path, gw)
+        group_id = g.get('id')
+        if not isinstance(group_id, str) or not group_id:
+            sys.exit(f'Error: {path} `{gw}` needs a non-empty string `id`')
+        if group_id in seen:
+            sys.exit(f'Error: {path} `groups` has a duplicate id {group_id!r}')
+        seen.add(group_id)
+        tables = g.get('tables')
+        if not isinstance(tables, list) or not tables:
+            sys.exit(f'Error: {path} group {group_id!r} needs a non-empty list `tables`')
+        seen_tables = set()
+        for j, t in enumerate(tables):
+            if not isinstance(t, str) or not t:
+                sys.exit(f'Error: {path} group {group_id!r} `tables[{j}]` must be a '
+                         f'non-empty string, got {t!r}')
+            # A table listed twice in ONE group is a config mistake — reject it
+            # here at load (like duplicate column/index names), rather than let
+            # it reach the cross-group overlap check, which would then blame the
+            # group for overlapping with itself (Codex re-review #3).
+            if t in seen_tables:
+                sys.exit(f'Error: {path} group {group_id!r} lists table {t!r} more than once')
+            seen_tables.add(t)
+        if 'title' in g and g['title'] is not None and not isinstance(g['title'], str):
+            sys.exit(f'Error: {path} group {group_id!r} `title` must be a string')
+        if 'color' in g and g['color'] is not None:
+            color = g['color']
+            if not isinstance(color, str) or not _CONFIG_GROUP_COLOR_RE.fullmatch(color):
+                sys.exit(f'Error: {path} group {group_id!r} `color` must be a hex color '
+                         f'like "#0d9488", got {color!r}')
 
 # ---------------------------------------------------------------------------
 # `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)
@@ -7947,6 +8250,7 @@ def _run_pipeline(args):
     relations = config.get('relations', [])  # shape already validated by load_config()
     config_tables = config.get('tables')     # shape already validated by load_config()
     config_notes = config.get('notes')       # shape already validated by load_config()
+    config_groups = config.get('groups')     # shape already validated by load_config()
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
     cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
@@ -8027,7 +8331,8 @@ def _run_pipeline(args):
     # (finding #1). Pass the RAW config `notes:` (unresolved) plus a label;
     # `_finish` resolves them itself against its own final IR.
     _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)),
-            notes=config_notes, notes_label=cfg_label)
+            notes=config_notes, notes_label=cfg_label,
+            groups=config_groups, groups_label=cfg_label)
 
 def serialize_for_viewer(tables):
     """Convert the internal merged IR to the shape the HTML viewer JSON and the
@@ -8053,7 +8358,8 @@ def serialize_for_viewer(tables):
                 a.update(legacy_flags_for(prov))
     return out
 
-def _finish(tables, args, title_name, notes=None, notes_label='config'):
+def _finish(tables, args, title_name, notes=None, notes_label='config',
+            groups=None, groups_label='config'):
     """Shared tail: FK inference, notes resolution, --only/--exclude filtering,
     HTML generation.
 
@@ -8066,7 +8372,15 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
     demo passes 'demo'). Still never None-but-empty-list vs absent-key
     ambiguity in the output: an empty/None result omits the DATA_JSON `notes`
     key entirely, keeping the demo and every pre-Phase-1 config byte-identical
-    to today's output."""
+    to today's output.
+
+    `groups` (groups Phase 1) is the RAW config `groups:` list (or None/empty),
+    mirroring `notes` end to end: resolved/validated here against the same
+    final IR, then its members filtered down to the tables that survive
+    --only/--exclude (a group that loses every member that way is dropped
+    entirely, rather than shipping an empty frame). `groups_label` mirrors
+    `notes_label`. An empty/None result omits the DATA_JSON `groups` key
+    entirely — same byte-equality guarantee as notes."""
     if getattr(args, 'infer_fk', False):
         inferred = infer_fk_associations(tables)
         if inferred:
@@ -8078,6 +8392,12 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
     # below so validation always sees the complete final IR (an excluded
     # table's note is still validated, just filtered out of the output after).
     notes_data = resolve_and_validate_notes(notes, tables, notes_label) if notes else None
+
+    # groups Phase 1: semantic validation + viewer resolution against the
+    # SAME final IR notes just validated against — before --only/--exclude,
+    # for the same reason (validation always sees the complete schema; the
+    # filtering below trims membership down after).
+    groups_data = resolve_and_validate_groups(groups, tables, groups_label) if groups else None
 
     # single source of truth for "is this column really a foreign key" —
     # the FK badge and the PK/FK column view both read this instead of
@@ -8117,6 +8437,15 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
                       or (n['scope'] == 'relation' and n['source_table'] in tables
                           and n['target'] in tables)]
 
+    # groups Phase 1: narrow each group's membership to the tables that
+    # survived --only/--exclude, then drop any group left with zero members —
+    # a group frame drawn around nothing would be a bug in the viewer, not a
+    # feature. A no-op when --only/--exclude weren't passed, same as notes.
+    if groups_data:
+        groups_data = [{**g, 'tables': [t for t in g['tables'] if t in tables]}
+                       for g in groups_data]
+        groups_data = [g for g in groups_data if g['tables']]
+
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
     # IR), so BOTH the HTML DATA_JSON and the Excel export below see exactly the
@@ -8132,6 +8461,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
     payload = {'tables': tables}
     if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
         payload['notes'] = notes_data
+    if groups_data:  # same byte-equality guarantee as notes
+        payload['groups'] = groups_data
     data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
     html = (HTML_TEMPLATE
             .replace('__MAX_ROWS__', str(args.max_rows))
@@ -8144,7 +8475,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config'):
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,
-                    template_path=getattr(args, 'excel_template', None), notes=notes_data)
+                    template_path=getattr(args, 'excel_template', None), notes=notes_data,
+                    groups=groups_data)
         print(f'Generated: {args.excel}', file=sys.stderr)
     elif getattr(args, 'excel_template', None):
         print('Warning: --excel-template has no effect without --excel', file=sys.stderr)
