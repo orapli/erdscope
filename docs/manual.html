@@ -817,6 +817,10 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
 <tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
 <tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>Also write the final schema as a config-authoring file, re-importable via <code>--config</code> — see <a href="#emit-config">Exports</a>. Extension picks the format (<code>-</code> for stdout, always JSON). The HTML is still generated</td></tr>
+<tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--excel</code></td></tr>
+<tr><td><code>--diff-provenance</code></td><td>With <code>--diff</code>, also compare association provenance/sources (ignored by default)</td></tr>
+<tr><td><code>--diff-exit-zero</code></td><td>With <code>--diff</code>, exit 0 even when a difference is found</td></tr>
+<tr><td><code>--diff-format text|json</code></td><td>With <code>--diff</code>, render as human-readable text (default) or deterministic JSON</td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
@@ -1092,6 +1096,35 @@ deterministic — sorted keys, literal block style for multi-line note text — 
 plain value that YAML's own type rules would otherwise misread as a boolean, octal, or other
 number on the next load (e.g. a comment that's literally the string <code>no</code>), so a
 string always comes back as the same string.</p>
+
+<h3 id="diff">Schema diff / drift gate</h3>
+<p><code>--diff SNAPSHOT.json</code> compares this run against a previously-saved
+<code>--emit-json</code> snapshot and reports the difference instead of generating any
+output — no HTML, Excel, JSON snapshot, or config file is written for a <code>--diff</code>
+run, and it can't be combined with <code>--emit-json</code>/<code>--emit-config</code>/
+<code>--excel</code> (a usage error, exit 2). It compares at <strong>level1</strong> — the
+same "materially the same schema" notion <a href="#emit-config">Config export</a> defines —
+not byte-for-byte: <code>added</code> means present in <em>this run</em> only, <code>removed</code>
+means present in the <em>snapshot</em> only, at every level (tables, then within each common
+table its columns/indexes/associations, plus notes and groups). Indexes are matched by
+<code>(columns, unique)</code>, so a bare rename is invisible; associations are matched by
+<code>(type, target, name, foreign_key, through, polymorphic)</code> with provenance/sources
+excluded unless <code>--diff-provenance</code> is passed, so a retargeted foreign key (or a
+provenance-only change under that flag) shows as one relation removed and its replacement
+added, not a single "changed" entry.</p>
+<p>Exit code is the gate signal: <strong>0</strong> when the two are level1-identical,
+<strong>1</strong> when they differ (pass <code>--diff-exit-zero</code> to report the
+difference without failing a CI step), <strong>2</strong> on a usage error or an
+unreadable/invalid snapshot (missing file, malformed JSON, or a document that isn't a real
+<code>--emit-json</code> snapshot — e.g. an <code>--emit-config</code> file, which has no
+top-level <code>format</code>/<code>schema</code>). When the snapshot's own
+<code>fingerprint</code> matches this run's, the two are trivially identical and the full
+comparison is skipped. <code>--diff-format text</code> (default) prints a summary count plus
+<code>+added</code>/<code>-removed</code>/<code>~changed</code> lines; <code>--diff-format
+json</code> prints the same structure as deterministic JSON for scripting. As with
+<code>--emit-config</code>, no provider distinguishes an empty-string column default from no
+default at all, so <code>--diff</code> cannot detect that one specific change either — a
+known level1 limit, not something worth adding a special case for.</p>
 </section>
 
 <section id="troubleshooting">

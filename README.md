@@ -161,6 +161,7 @@ explicit CLI argument wins.
 | `--excel FILE.xlsx` | Also generate a table-definition workbook |
 | `--emit-json FILE.json` | Also write a canonical JSON schema snapshot with a content fingerprint (`-` for stdout) |
 | `--emit-config FILE.yml\|.json` | Also write the schema as a config-authoring file, re-importable via `--config` (`-` for stdout, always JSON) |
+| `--diff SNAPSHOT.json` | Compare this run against a saved `--emit-json` snapshot and exit 0/1/2 instead of generating output (CI drift gate) |
 | `--only 'user*,order*'` | Generate only matching tables |
 | `--exclude '*_logs'` | Leave matching tables out |
 | `--infer-fk` | Add clearly marked relation guesses from `*_id` columns |

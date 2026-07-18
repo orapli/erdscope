@@ -163,6 +163,7 @@ python3 erd.py demo
 | `--excel FILE.xlsx` | テーブル定義のExcelワークブックも生成する |
 | `--emit-json FILE.json` | スキーマの正規JSONスナップショット（内容フィンガープリント付き）も書き出す（`-`で標準出力） |
 | `--emit-config FILE.yml\|.json` | スキーマを設定ファイル形式でも書き出す。`--config`で再取込可能（`-`で標準出力、常にJSON） |
+| `--diff SNAPSHOT.json` | 保存済みの`--emit-json`スナップショットと比較し、出力を生成する代わりに0/1/2で終了する（CIドリフトゲート） |
 | `--only 'user*,order*'` | 一致するテーブルだけを生成する |
 | `--exclude '*_logs'` | 一致するテーブルを除外する |
 | `--infer-fk` | `*_id`カラムから推測したリレーションを、明確に区別して追加する |

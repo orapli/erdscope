@@ -47,6 +47,26 @@ def main():
                    help="Override the workbook's colors/fonts/borders from a template "
                         '.xlsx — see excel-template.xlsx and its Styles sheet for the '
                         '5-cell contract (default: built-in styling)')
+    p.add_argument('--diff', metavar='SNAPSHOT.json', default=None,
+                   help='Compare this run against a previously-saved --emit-json snapshot '
+                        'instead of generating any output (CLI-only, not a config key). '
+                        'level1 comparison — materially the same schema, not byte-identical '
+                        '(see --emit-config). added = present in this run only; removed = '
+                        'present in the snapshot only. Exits 0 if identical, 1 if different '
+                        '(see --diff-exit-zero), 2 on a usage/snapshot-load error, or when '
+                        'combined with --emit-json/--emit-config/--excel. Note: an empty-'
+                        'string default and no default at all are never distinguished by '
+                        'any provider, so this cannot detect that specific change (a known '
+                        'level1 limit)')
+    p.add_argument('--diff-provenance', action='store_true',
+                   help='With --diff, also compare association provenance/sources '
+                        '(ignored by default)')
+    p.add_argument('--diff-exit-zero', action='store_true',
+                   help='With --diff, exit 0 even when a difference is found (a load/usage '
+                        'error still exits 2)')
+    p.add_argument('--diff-format', choices=('text', 'json'), default='text',
+                   help='With --diff, render the difference as human-readable text '
+                        '(default) or as deterministic JSON')
     p.add_argument('--max-rows', type=int, default=argparse.SUPPRESS,
                    help='Max column rows shown per table before scrolling (default: 15)')
     p.add_argument('--only', action='append', metavar='PATTERN', default=argparse.SUPPRESS,
@@ -118,6 +138,17 @@ def _emit_config_format(val):
                      'not installed (pip install pyyaml, or use a .json extension '
                      'instead)')
     return fmt
+
+def _diff_fail(message):
+    """--diff's usage/snapshot-load error path: prints `Error: {message}` to
+    stderr and exits 2 — distinct from every other CLI error in this file
+    (which use `sys.exit(f'Error: ...')`, always exit code 1) because the
+    --diff spec reserves 1 for "ran fine, found a difference" and 2 for "the
+    comparison itself couldn't run". `sys.exit(str)` can't produce a
+    non-1 code, hence the explicit print + sys.exit(2) instead of that
+    shorthand."""
+    print(f'Error: {message}', file=sys.stderr)
+    sys.exit(2)
 
 def _run_pipeline(args):
     """The actual generate pipeline, shared by a normal run and `erdscope
@@ -388,6 +419,62 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
         groups_data = [{**g, 'tables': [t for t in g['tables'] if t in tables]}
                        for g in groups_data]
         groups_data = [g for g in groups_data if g['tables']]
+
+    # --diff (backlog #2): the CI drift gate. Same emit point as --emit-json/
+    # --emit-config below (after notes/groups resolution and --only/--exclude
+    # filtering, before the §9.3 serialize boundary that would replace
+    # provenance with legacy flags), but a diff run is a COMPARISON MODE: it
+    # never reaches HTML/Excel/emit-json/emit-config generation at all — it
+    # renders the difference against a previously-saved --emit-json snapshot
+    # and exits here. See diff.py's module docstring for the fixed
+    # left=this-run/right=snapshot direction and the level1 identity rules.
+    if getattr(args, 'diff', None) is not None:
+        for _flag, _val in (('--emit-json', getattr(args, 'emit_json', None)),
+                            ('--emit-config', getattr(args, 'emit_config', None)),
+                            ('--excel', getattr(args, 'excel', None))):
+            if _val:
+                _diff_fail(f'--diff cannot be combined with {_flag} '
+                          '(diff is a comparison mode — it never generates output)')
+        diff_path = args.diff
+        try:
+            diff_raw = Path(diff_path).read_text(encoding='utf-8')
+        except OSError as e:
+            _diff_fail(f'--diff {diff_path!r}: {e.strerror or e}')
+        try:
+            diff_doc = json.loads(diff_raw)
+        except json.JSONDecodeError as e:
+            _diff_fail(f'--diff {diff_path!r}: not valid JSON ({e})')
+        if not (isinstance(diff_doc, dict) and diff_doc.get('format') == 1
+                and isinstance(diff_doc.get('schema'), dict)
+                and isinstance(diff_doc['schema'].get('tables'), dict)):
+            _diff_fail(f'--diff {diff_path!r} is not a valid --emit-json snapshot '
+                      '(expected {"format": 1, "fingerprint": ..., "schema": {"tables": {...}}})')
+        left_schema = canonical_schema(tables, notes_data, groups_data)
+        right_schema = diff_doc['schema']
+        # A shape-valid but internally-malformed snapshot (an association with
+        # no `type`, a note that isn't an object, ...) would raise deep inside
+        # snapshot_fingerprint/schema_diff/render. Catch it and exit 2 ("the
+        # comparison couldn't run") rather than let the traceback surface as
+        # exit 1, which a CI gate would misread as "drift detected".
+        try:
+            # Fast path: recompute the snapshot's OWN fingerprint from its
+            # schema — never trust the stored `fingerprint` field, since a
+            # snapshot hand-edited with a now-stale fingerprint must not report
+            # a false "identical". An exact match means both sides serialize to
+            # the same canonical payload, so the deep compare can be skipped.
+            if snapshot_fingerprint(right_schema) == snapshot_fingerprint(left_schema):
+                diff_result = empty_schema_diff()
+            else:
+                diff_result = schema_diff(left_schema, right_schema,
+                                          include_provenance=getattr(args, 'diff_provenance', False))
+            rendered = (render_json(diff_result) if args.diff_format == 'json'
+                       else render_text(diff_result))
+        except Exception as e:
+            _diff_fail(f'--diff {diff_path!r}: snapshot is malformed ({e!r})')
+        sys.stdout.write(rendered)
+        if diff_is_empty(diff_result):
+            sys.exit(0)
+        sys.exit(0 if getattr(args, 'diff_exit_zero', False) else 1)
 
     # Guard: two file outputs must not resolve to the same path, or the second
     # write silently clobbers the first — `-o x.json --emit-json x.json` would

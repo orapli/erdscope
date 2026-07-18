@@ -46,6 +46,7 @@ MODULES = [
     'demo.py',        # `erdscope demo` — bundled sample DB, no pip-installed file needed
     'emit.py',        # --emit-json (canonical schema + fingerprint) and --emit-config
                       # (config-authoring YAML/JSON projection, level1 round trip)
+    'diff.py',        # --diff (backlog #2): level1 schema diff / CI drift gate
     'cli.py',         # argparse main, serialize_for_viewer, _finish
 ]
 

@@ -41,6 +41,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scalar that YAML's own implicit-typing rules would otherwise misread as a
   bool/int/float on the next load (the "Norway problem"). Purely additive:
   existing HTML/Excel/`--emit-json` output is untouched.
+- **`--diff SNAPSHOT.json`** — a CI drift gate: compares this run's schema
+  against a previously-saved `--emit-json` snapshot at "level1" (materially
+  the same schema, not byte-identical — the same notion `--emit-config`
+  round trips to) and exits instead of generating any output. `added` =
+  present in this run only, `removed` = present in the snapshot only, at
+  every level (tables, then each common table's columns/indexes/
+  associations, plus notes/groups); indexes match on `(columns, unique)`
+  (name-blind), associations match on `(type, target, name, foreign_key,
+  through, polymorphic)` with provenance/sources ignored unless
+  `--diff-provenance` is passed. Exit 0 when identical, 1 when different
+  (`--diff-exit-zero` to report without failing), 2 on a usage error or an
+  unreadable/invalid snapshot. `--diff-format text` (default) or `json`
+  (deterministic, for scripting). A matching snapshot `fingerprint` short-
+  circuits the comparison. Not combinable with `--emit-json`/`--emit-config`/
+  `--excel` (a `--diff` run is comparison-only). Like `--emit-config`, an
+  empty-string default vs. no default at all isn't distinguished by any
+  provider, so it's the one change `--diff` can't detect — a known level1
+  limit, called out in `--diff --help` and the manual.
 
 ## [0.6.0] - 2026-07-18
 
