@@ -1,0 +1,71 @@
+{
+  "title": "Support domain",
+  "tables": {
+    "customers": {
+      "comment": "People and organizations receiving support",
+      "primary_key": "id",
+      "columns": [
+        { "name": "id", "type": "bigint", "primary": true },
+        { "name": "email", "type": "varchar", "nullable": false, "comment": "Primary contact address" },
+        { "name": "plan", "type": "varchar", "nullable": false }
+      ],
+      "associations": [
+        { "type": "has_many", "name": "tickets", "target": "tickets" }
+      ]
+    },
+    "tickets": {
+      "comment": "Support requests and their current state",
+      "primary_key": "id",
+      "columns": [
+        { "name": "id", "type": "bigint", "primary": true },
+        { "name": "customer_id", "type": "bigint", "nullable": false },
+        { "name": "subject", "type": "varchar", "nullable": false },
+        { "name": "status", "type": "varchar", "nullable": false },
+        { "name": "created_at", "type": "datetime", "nullable": false }
+      ],
+      "indexes": [
+        { "name": "idx_tickets_customer", "columns": ["customer_id"] }
+      ],
+      "associations": [
+        { "type": "belongs_to", "name": "customer", "target": "customers", "foreign_key": "customer_id" },
+        { "type": "has_many", "name": "messages", "target": "ticket_messages" }
+      ]
+    },
+    "ticket_messages": {
+      "comment": "Conversation history for a support ticket",
+      "primary_key": "id",
+      "columns": [
+        { "name": "id", "type": "bigint", "primary": true },
+        { "name": "ticket_id", "type": "bigint", "nullable": false },
+        { "name": "author_type", "type": "varchar", "nullable": false },
+        { "name": "body", "type": "text", "nullable": false },
+        { "name": "created_at", "type": "datetime", "nullable": false }
+      ],
+      "associations": [
+        { "type": "belongs_to", "name": "ticket", "target": "tickets", "foreign_key": "ticket_id" }
+      ]
+    }
+  },
+  "notes": [
+    {
+      "id": "retention",
+      "target": { "type": "table", "table": "ticket_messages" },
+      "title": "Retention",
+      "text": "Message bodies are retained for 24 months, then anonymized."
+    },
+    {
+      "id": "diagram-guide",
+      "target": { "type": "global" },
+      "title": "About this view",
+      "text": "This schema is generated entirely from JSON config; no database connection is used."
+    }
+  ],
+  "groups": [
+    {
+      "id": "support",
+      "title": "Support",
+      "tables": ["customers", "tickets", "ticket_messages"],
+      "color": "#14b8a6"
+    }
+  ]
+}
