@@ -8,7 +8,7 @@
   [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB)](https://pypi.org/project/erdscope/)
   [![License](https://img.shields.io/badge/license-MIT-14B8A6)](LICENSE)
 
-  [Live demo](https://orapli.github.io/erdscope/) · [User manual](https://orapli.github.io/erdscope/manual.html) · [日本語マニュアル](https://orapli.github.io/erdscope/manual.ja.html)
+  [Live demo](https://orapli.github.io/erdscope/) · [Recipes](https://orapli.github.io/erdscope/recipes.html) · [User manual](https://orapli.github.io/erdscope/manual.html) · [日本語 README](README.ja.md)
 </div>
 
 erdscope generates a **self-contained, interactive ER diagram** and, when you want it,
@@ -183,6 +183,7 @@ boundaries are listed in the
 ## Project resources
 
 - **[Live demo](https://orapli.github.io/erdscope/)** — explore a generated shop schema.
+- **[Recipes](https://orapli.github.io/erdscope/recipes.html)** — task-oriented guides with copy-paste commands ([日本語](https://orapli.github.io/erdscope/recipes.ja.html)).
 - **[User manual](https://orapli.github.io/erdscope/manual.html)** — complete setup, viewer, config, export, and troubleshooting guide.
 - **[Examples](examples/)** — ready-to-run SQLite and config-only inputs.
 - **[Changelog](CHANGELOG.md)** — features and behavior by release.

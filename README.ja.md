@@ -8,7 +8,7 @@
   [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB)](https://pypi.org/project/erdscope/)
   [![License](https://img.shields.io/badge/license-MIT-14B8A6)](LICENSE)
 
-  [ライブデモ](https://orapli.github.io/erdscope/) · [ユーザーマニュアル](https://orapli.github.io/erdscope/manual.html) · [日本語マニュアル](https://orapli.github.io/erdscope/manual.ja.html)
+  [ライブデモ](https://orapli.github.io/erdscope/) · [レシピ集](https://orapli.github.io/erdscope/recipes.ja.html) · [日本語マニュアル](https://orapli.github.io/erdscope/manual.ja.html) · [English README](README.md)
 </div>
 
 erdscopeは、**自己完結型のインタラクティブなER図**と、必要に応じて
@@ -185,6 +185,7 @@ erdscopeは、MySQL 8.4、PostgreSQL 16、CPython同梱のSQLite、Rails 7.x/8.x
 ## プロジェクト資料
 
 - **[ライブデモ](https://orapli.github.io/erdscope/)** — 生成されたショップスキーマを操作できます。
+- **[レシピ集](https://orapli.github.io/erdscope/recipes.ja.html)** — やりたいことから引ける実践ガイド（コピペで動くコマンド付き）。
 - **[ユーザーマニュアル](https://orapli.github.io/erdscope/manual.ja.html)** — セットアップ、ビューアー、設定、エクスポート、トラブルシューティングの完全なガイドです。
 - **[サンプル](examples/)** — すぐに実行できるSQLite入力と設定ファイルのみの入力です。
 - **[変更履歴](CHANGELOG.md)** — リリースごとの機能と動作変更です。

@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>erdscope レシピ集 — 目的別の使い方ガイド（日本語）</title>
+<meta name="description" content="erdscope を目的からたどる実践レシピ集 — 稼働中DBから5分でER図、コードだけでER図、AIにスキーマを読ませる。コピペで動くコマンドと発展アイデア付き。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="erdscope レシピ集 — 目的別の使い方ガイド">
+<meta property="og:description" content="稼働中DBから5分でER図、コードだけでER図、AIにスキーマを読ませる。コピペで動くコマンド付き。">
+<meta property="og:url" content="https://orapli.github.io/erdscope/recipes.ja.html">
+<meta property="og:image" content="https://orapli.github.io/erdscope/screenshot.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{
+  --bg:#f8fafc; --bg-elevated:#ffffff; --bg-inset:#f1f5f9;
+  --fg:#1e293b; --fg-muted:#64748b; --fg-faint:#94a3b8;
+  --border:#e2e8f0; --border-strong:#cbd5e1;
+  --accent:#2563eb; --accent-soft:#dbeafe; --accent-fg:#1e3a5f;
+  --amber-soft:#fef9c3; --amber-fg:#854d0e;
+  --teal-soft:#ccfbf1; --teal-fg:#0f766e;
+  --code-bg:#f1f5f9; --code-fg:#334155;
+  --shadow: 0 1px 3px rgba(15,23,42,.08);
+  --mono: 'SF Mono','Fira Code',ui-monospace,Menlo,Consolas,monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --navy:#0f172a; --navy-2:#172554; --brand-teal:#14b8a6;
+  --hero-fg:#f8fafc;
+}
+:root[data-theme="dark"]{
+  --bg:#0b1220; --bg-elevated:#0f172a; --bg-inset:#141f36;
+  --fg:#e2e8f0; --fg-muted:#94a3b8; --fg-faint:#64748b;
+  --border:#1e293b; --border-strong:#334155;
+  --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
+  --amber-soft:#3f2d05; --amber-fg:#fcd34d;
+  --teal-soft:#134e4a; --teal-fg:#5eead4;
+  --code-bg:#141f36; --code-fg:#cbd5e1;
+  --shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b1220; --bg-elevated:#0f172a; --bg-inset:#141f36;
+    --fg:#e2e8f0; --fg-muted:#94a3b8; --fg-faint:#64748b;
+    --border:#1e293b; --border-strong:#334155;
+    --accent:#60a5fa; --accent-soft:#1e3a5f; --accent-fg:#bfdbfe;
+    --amber-soft:#3f2d05; --amber-fg:#fcd34d;
+    --teal-soft:#134e4a; --teal-fg:#5eead4;
+    --code-bg:#141f36; --code-fg:#cbd5e1;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0; background:var(--bg); color:var(--fg); font-family:var(--sans);
+  font-size:16px; line-height:1.68; -webkit-font-smoothing:antialiased}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+code,pre,kbd{font-family:var(--mono)}
+code{background:var(--code-bg); color:var(--code-fg); padding:.1em .4em; border-radius:4px; font-size:.88em}
+pre{background:var(--code-bg); color:var(--code-fg); padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:13px; line-height:1.55; border:1px solid var(--border)}
+pre code{background:none; padding:0; border-radius:0; font-size:1em}
+h1,h2,h3,h4{font-weight:700; line-height:1.3; scroll-margin-top:76px}
+h2{font-size:24px; margin-top:3.2em; letter-spacing:-.02em}
+h3{font-size:18px; margin-top:2em}
+p{margin:.9em 0}
+ul,ol{padding-left:1.4em}
+li{margin:.35em 0}
+.anchor-link{opacity:0; margin-left:.4em; font-size:.8em; color:var(--fg-faint)}
+h2:hover .anchor-link, h3:hover .anchor-link{opacity:1}
+.note, .warn{border-radius:8px; padding:12px 14px; margin:1.2em 0; font-size:14px; border:1px solid}
+.note{background:var(--accent-soft); border-color:var(--accent); color:var(--fg)}
+.warn{background:var(--amber-soft); border-color:var(--amber-fg); color:var(--fg)}
+.note strong, .warn strong{display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; opacity:.85}
+.shot{max-width:100%; border-radius:10px; border:1px solid var(--border); box-shadow:var(--shadow); display:block; margin:1.4em 0 .4em}
+.cap{font-size:12.5px; color:var(--fg-muted); margin:0 0 1.4em}
+.scene{border-left:3px solid var(--brand-teal); background:var(--bg-elevated); border-radius:0 10px 10px 0; padding:12px 16px; margin:1.2em 0; font-size:14.5px; color:var(--fg-muted)}
+.scene strong{color:var(--fg)}
+.next{background:var(--teal-soft); border:1px solid var(--brand-teal); border-radius:10px; padding:14px 16px; margin:1.6em 0; font-size:14px}
+.next strong{display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px; color:var(--teal-fg)}
+.next ul{margin:0}
+
+#topnav{position:fixed; top:0; left:0; right:0; height:60px; z-index:40;
+  background:var(--bg-elevated); border-bottom:1px solid var(--border-strong);
+  display:flex; align-items:center; gap:12px; padding:0 22px}
+#topnav .brand{display:flex; align-items:center; gap:9px; font-weight:700; font-size:15px; font-family:var(--mono); color:var(--fg); white-space:nowrap}
+.brand-mark{width:28px; height:28px; flex:none; filter:drop-shadow(0 3px 5px rgba(37,99,235,.2))}
+#topnav .spacer{flex:1}
+#topnav a.top-link{font-size:12.5px; color:var(--fg-muted); padding:6px 10px; border-radius:6px}
+#topnav a.top-link:hover{background:var(--bg-inset); text-decoration:none; color:var(--fg)}
+.lang-current{font-size:12.5px; font-weight:700; color:var(--fg); padding:6px 4px}
+.lang-sep{color:var(--fg-faint); font-size:12px}
+
+main{max-width:860px; margin:0 auto; padding:102px 34px 100px}
+footer{border-top:1px solid var(--border); margin:0 auto; padding:20px 34px 60px; font-size:12.5px; color:var(--fg-muted); max-width:860px}
+
+.recipes-hero{position:relative; overflow:hidden; isolation:isolate; margin:0 0 30px; padding:46px 48px 40px; border-radius:24px; color:var(--hero-fg); background:linear-gradient(125deg,var(--navy) 0%,var(--navy-2) 62%,#0f766e 140%); box-shadow:0 20px 55px rgba(15,23,42,.18)}
+.recipes-hero::before{content:""; position:absolute; inset:0; z-index:-2; opacity:.18; background-image:linear-gradient(rgba(255,255,255,.12) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.12) 1px,transparent 1px); background-size:30px 30px}
+.recipes-hero::after{content:""; position:absolute; width:330px; height:330px; right:-145px; top:-180px; z-index:-1; border-radius:50%; background:var(--brand-teal); opacity:.14}
+.hero-kicker{margin:0 0 12px; color:#99f6e4; font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase}
+.recipes-hero h1{margin:0; font-family:var(--mono); font-size:40px; letter-spacing:-.05em}
+.recipes-hero h1 span{color:#2dd4bf}
+.hero-lead{max-width:690px; margin:14px 0 24px; color:#dbeafe; font-size:17px; line-height:1.65}
+.hero-actions{display:flex; flex-wrap:wrap; gap:10px}
+.hero-action{display:inline-flex; align-items:center; min-height:42px; padding:9px 15px; border-radius:9px; font-size:14px; font-weight:750; color:white; border:1px solid rgba(255,255,255,.25)}
+.hero-action:hover{color:white; text-decoration:none; border-color:rgba(255,255,255,.5); background:rgba(255,255,255,.08)}
+.hero-action.primary{color:#0f172a; border-color:#5eead4; background:#5eead4}
+.hero-action.primary:hover{background:#99f6e4}
+.hero-command{margin:26px 0 0; padding:13px 16px; border:1px solid rgba(255,255,255,.16); border-radius:10px; color:#e2e8f0; background:rgba(2,6,23,.42); font-family:var(--mono); font-size:14px}
+.hero-command strong{color:#5eead4; font-weight:700}
+
+.route-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin:0 0 10px}
+.route-card{display:block; position:relative; min-height:112px; padding:17px 46px 16px 18px; color:var(--fg); background:var(--bg-elevated); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow)}
+.route-card:hover{text-decoration:none; border-color:var(--brand-teal); transform:translateY(-1px)}
+.route-card strong{display:block; margin-bottom:5px; font-size:15px}
+.route-card span{display:block; color:var(--fg-muted); font-size:13px; line-height:1.5}
+.route-card::after{content:"→"; position:absolute; right:17px; top:17px; color:var(--brand-teal); font-size:20px}
+.route-num{display:inline-block; font-family:var(--mono); font-size:11px; font-weight:800; color:var(--teal-fg); background:var(--teal-soft); border-radius:4px; padding:1px 7px; margin-bottom:7px; letter-spacing:.05em}
+@media (prefers-reduced-motion:no-preference){.route-card{transition:transform .16s ease,border-color .16s ease}}
+@media (max-width:860px){
+  #topnav{height:56px; padding:0 12px}
+  #topnav .top-link.optional{display:none}
+  main{padding:82px 18px 80px}
+  .recipes-hero{padding:34px 24px 30px; border-radius:18px}
+  .recipes-hero h1{font-size:30px}
+  .hero-lead{font-size:15.5px}
+}
+</style>
+</head>
+<body>
+
+<nav id="topnav">
+  <span class="brand"><svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#f8fafc" stroke="#14b8a6" stroke-width="3"/><path d="M22 22l7 7" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/><path d="M9 11h10M9 15h5M14 15v5" fill="none" stroke="#94a3b8" stroke-width="1.5"/><rect x="7" y="8" width="6" height="6" rx="1.5" fill="#0f172a"/><rect x="17" y="8" width="6" height="6" rx="1.5" fill="#14b8a6"/><rect x="11" y="18" width="6" height="6" rx="1.5" fill="#2563eb"/></svg><span>erdscope</span><span>recipes</span></span>
+  <span class="spacer"></span>
+  <a class="top-link optional" href="index.html">ライブデモ</a>
+  <a class="top-link optional" href="manual.ja.html">マニュアル</a>
+  <a class="top-link optional" href="https://github.com/orapli/erdscope">GitHub</a>
+  <a class="top-link" href="recipes.html">EN</a><span class="lang-sep">|</span><span class="lang-current">日本語</span>
+</nav>
+
+<main id="main-content">
+
+<section class="recipes-hero">
+  <p class="hero-kicker">Recipes</p>
+  <h1>erdscope <span>レシピ集</span></h1>
+  <p class="hero-lead">「何ができるか」ではなく「やりたいこと」からたどる実践ガイド。
+  各レシピはコピペで動くコマンドと、その先の発展アイデア付きです。</p>
+  <div class="hero-actions">
+    <a class="hero-action primary" href="index.html">インストール不要のライブデモを触る</a>
+    <a class="hero-action" href="manual.ja.html">ユーザーマニュアル</a>
+  </div>
+  <p class="hero-command"><strong>$</strong> pip install erdscope <span style="opacity:.55">&amp;&amp;</span> erdscope demo</p>
+</section>
+
+<div class="route-grid">
+  <a class="route-card" href="#r1">
+    <span class="route-num">RECIPE 1</span>
+    <strong>稼働中のデータベースから5分でER図</strong>
+    <span>ドキュメントのないDBを引き継いだ。まず全体像が見たい。</span>
+  </a>
+  <a class="route-card" href="#r2">
+    <span class="route-num">RECIPE 2</span>
+    <strong>データベースなしで、コードからER図</strong>
+    <span>Rails / Django / Prisma のリポジトリだけでモデル関連図を作る。</span>
+  </a>
+  <a class="route-card" href="#r3">
+    <span class="route-num">RECIPE 3</span>
+    <strong>AI にスキーマを読ませる</strong>
+    <span>DB構造を踏まえた実装・レビューを AI にさせる。トークン効率よく。</span>
+  </a>
+</div>
+<p class="cap">レシピは今後追加予定です（DB×コードの突き合わせ、Excel定義書、CIでのドリフト検知、dbdiagram.io 連携など）。</p>
+
+<!-- ══════════════════════ R1 ══════════════════════ -->
+<section id="r1">
+<h2>Recipe 1 — 稼働中のデータベースから5分でER図 <a class="anchor-link" href="#r1">#</a></h2>
+
+<div class="scene"><strong>場面:</strong> ドキュメントのないシステムを引き継いだ。テーブルが数十個あり、
+どれとどれが繋がっているのか分からない。まず全体像を眺めたい。</div>
+
+<p>erdscope に接続URLを渡すだけで、テーブル・カラム・外部キーを読み取って
+1枚の自己完結HTMLを生成します。サーバーもアカウントも不要、生成されたファイルを開くだけです。</p>
+
+<pre><code># MySQL（ドライバ: pip install pymysql — 無ければ mysql CLI に自動フォールバック）
+erdscope "mysql://readonly_user:PASS@127.0.0.1:3306/myapp_production" -o schema.html
+
+# PostgreSQL（ドライバ: pip install psycopg）
+erdscope "postgresql://readonly_user:PASS@localhost/myapp" -o schema.html
+
+# SQLite はドライバ不要（標準ライブラリで動作）
+erdscope sqlite:///path/to/app.db -o schema.html</code></pre>
+
+<div class="warn"><strong>安全に接続する</strong>
+erdscope はスキーマ情報を読むだけで書き込みは一切しませんが、本番DBに繋ぐなら
+<b>SELECT 権限だけの読み取り専用ユーザー</b>を作って渡すのが安心です:
+<code>GRANT SELECT ON myapp_production.* TO 'readonly_user'@'%';</code></div>
+
+<a href="index.html"><img class="shot" src="screenshot.png" alt="生成されたインタラクティブER図"></a>
+<p class="cap">生成されるビューア（クリックでライブデモ）。テーブルをクリックすると列詳細、ダブルクリックで関連テーブルにフォーカス。</p>
+
+<h3>見どころ</h3>
+<ul>
+  <li><b>左のテーブル一覧</b>で表示するテーブルを選択。チェックした起点から関連を自動展開できます。</li>
+  <li><b>エッジの種類</b>で情報の出所が分かります — DBの実FK、コード由来の関連、名前からの推測は区別して描かれます。</li>
+  <li>テーブルが多すぎるときは生成時に絞り込み: <code>--only 'order*' --exclude 'tmp_*'</code></li>
+</ul>
+
+<div class="next"><strong>発展アイデア</strong>
+<ul>
+  <li>図と一緒に <a href="manual.ja.html#exports">Excel テーブル定義書</a>も出す: <code>--excel 定義書.xlsx</code></li>
+  <li>気づいたことを <a href="manual.ja.html#notes">設計メモ（notes）</a>として設定ファイルに書き溜め、図に表示する</li>
+  <li>このスキーマを AI に読ませる → <a href="#r3">Recipe 3</a></li>
+</ul></div>
+</section>
+
+<!-- ══════════════════════ R2 ══════════════════════ -->
+<section id="r2">
+<h2>Recipe 2 — データベースなしで、コードからER図 <a class="anchor-link" href="#r2">#</a></h2>
+
+<div class="scene"><strong>場面:</strong> DBへの接続権限がない。あるいはコードレビューで
+「このPRのモデル変更で関連はどうなる？」を図で確認したい。</div>
+
+<p>erdscope はアプリケーションコードを<b>静的解析</b>します（コードは実行しません）。
+Rails / Django / Prisma のプロジェクトを渡すと自動判定してモデルと関連を読み取ります。</p>
+
+<pre><code># プロジェクトのパスを渡すだけ（Rails / Django / Prisma を自動判定）
+erdscope --models path/to/your-app -o schema.html</code></pre>
+
+<p>コードだけの図は「論理モデル」— アプリが宣言している関連（<code>belongs_to</code> や
+<code>ForeignKey</code>、Prisma の <code>@relation</code>）がエッジになります。マイグレーション漏れや
+「コードには関連があるのにDBにはFKがない」の検出にも役立ちます。</p>
+
+<h3>見どころ</h3>
+<ul>
+  <li>DBがなくても列情報が出ます（Django / Prisma はフィールド定義から。Rails は <code>db/schema.rb</code> があれば列も揃います）。</li>
+  <li>関連名（<code>has_many :items, through:</code> など）がエッジのラベルに反映されます。</li>
+</ul>
+
+<div class="next"><strong>発展アイデア</strong>
+<ul>
+  <li><b>DBとコードを突き合わせる</b>のが erdscope の本領です:
+  <code>erdscope "mysql://…" --models path/to/app -o schema.html</code> —
+  物理（DB）と論理（コード）を1枚に統合し、情報の出所をバッジで区別します。</li>
+  <li>dbdiagram.io の DBML や Mermaid のスケッチも<a href="manual.ja.html#input-sources">入力にできます</a>（design-first の下書きから開始）。</li>
+</ul></div>
+</section>
+
+<!-- ══════════════════════ R3 ══════════════════════ -->
+<section id="r3">
+<h2>Recipe 3 — AI にスキーマを読ませる <a class="anchor-link" href="#r3">#</a></h2>
+
+<div class="scene"><strong>場面:</strong> ChatGPT / Claude に「このDBを踏まえて実装して」と頼みたい。
+でもダンプSQLを貼るとトークンを浪費するし、ER図の画像は読み違える。</div>
+
+<p><code>--emit-digest</code> は、スキーマ全体を<b>トークン効率の高い Markdown</b> に凝縮します。
+列・型・PK/FK・関連に加えて、設定ファイルに書いた<b>設計メモ（notes）</b>— 機械には推測できない
+設計意図 — も一緒に含められるのが特長です。</p>
+
+<pre><code># スキーマを Markdown ダイジェストに（- で標準出力）
+erdscope "mysql://readonly_user:PASS@localhost/myapp" --emit-digest schema.md</code></pre>
+
+<p>出力はこんな形です（同梱のサンプルDBの例）:</p>
+
+<pre><code># demo_shop — schema digest
+
+## Tables (13)
+
+### addresses
+- id: integer, pk
+- user_id: integer, fk→users
+- kind: string
+- line1: string
+- city: string
+- country: string
+Rel: belongs_to users as user fk=user_id
+
+### categories
+- id: integer, pk
+- parent_id: integer, fk→categories
+- name: string
+Rel: belongs_to categories as parent fk=parent_id
+…</code></pre>
+
+<h3>使い方の例</h3>
+<ul>
+  <li><b>チャットに貼る</b>: schema.md を貼り付けて「この構造を踏まえて注文キャンセルAPIを設計して」。</li>
+  <li><b>コーディングエージェントに常備させる</b>: リポジトリに <code>schema.md</code> をコミットし、
+  CLAUDE.md や プロジェクトの README から参照させる。スキーマ変更時に再生成するだけ。</li>
+  <li><b>設計レビューをさせる</b>: 「正規化の問題、命名の不整合、インデックス漏れを指摘して」。</li>
+</ul>
+
+<div class="note"><strong>設計意図も渡す</strong>
+設定ファイルの <a href="manual.ja.html#notes">notes</a> に「論理削除は deleted_at 方式」「この列は廃止予定」の
+ようなメモを書いておくと、digest にそのまま含まれます。AI が推測でなく<b>宣言された意図</b>を
+前提に答えられるようになります。</div>
+
+<div class="next"><strong>発展アイデア</strong>
+<ul>
+  <li>スナップショットを撮って（<code>--emit-json schema.json</code>）、CI で
+  <code>--diff schema.json</code> — 「DBが基準からズレたら落とす」ドリフト検知ゲートに。</li>
+  <li>マイグレーション前後で digest を2回生成して AI に差分の影響を聞く。</li>
+</ul></div>
+</section>
+
+<!-- ══════════════════════ FAQ ══════════════════════ -->
+<section id="stuck">
+<h2>つまずいたら <a class="anchor-link" href="#stuck">#</a></h2>
+<ul>
+  <li><b>ブラウザが開かない（サーバー / WSL / SSH先で実行した）</b> — 生成自体は成功しています。
+  <code>--no-open</code> を付けて生成し、出来た HTML ファイルを手元にコピーして開いてください。1ファイルで完結しているのでコピーするだけで動きます。</li>
+  <li><b>MySQL / PostgreSQL に繋がらない</b> — ドライバ（<code>pip install pymysql</code> /
+  <code>pip install psycopg</code>）を確認。無い場合は CLI（<code>mysql</code>/<code>psql</code>）への
+  フォールバックを試みます — <a href="manual.ja.html#faq-pymysql">詳細</a>。</li>
+  <li><b>日本語コメントが文字化けする</b> — <a href="manual.ja.html#troubleshooting">マニュアルのトラブルシューティング</a>参照。</li>
+  <li><b>テーブルが多すぎて図が重い</b> — <a href="manual.ja.html#large-schemas">大規模スキーマの扱い</a>参照
+  （<code>--only</code>/<code>--exclude</code>）。</li>
+</ul>
+<p>その他は<a href="manual.ja.html#troubleshooting">マニュアルのトラブルシューティング / FAQ</a> へ。
+解決しなければ <a href="https://github.com/orapli/erdscope/issues">GitHub Issues</a> でお知らせください。</p>
+</section>
+
+</main>
+
+<footer>
+  <a href="index.html">ライブデモ</a> ·
+  <a href="manual.ja.html">ユーザーマニュアル</a> ·
+  <a href="https://github.com/orapli/erdscope">GitHub</a> ·
+  <a href="https://pypi.org/project/erdscope/">PyPI</a> ·
+  <a href="recipes.html">English version</a>
+</footer>
+
+</body>
+</html>
