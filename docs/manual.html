@@ -136,28 +136,109 @@ footer{border-top:1px solid var(--border); padding:20px 34px 60px; font-size:12.
   main{padding:26px 18px 90px}
   .shell{display:block}
 }
+
+/* redesign preview: task-first manual shell */
+:root{
+  --navy:#0f172a; --navy-2:#172554; --brand-teal:#14b8a6;
+  --brand-blue:#2563eb; --hero-fg:#f8fafc;
+}
+body{font-size:16px; line-height:1.68}
+#topnav{height:60px; padding:0 22px; border-bottom-color:var(--border-strong)}
+#topnav .brand{display:flex; align-items:center; gap:9px; font-size:15px; white-space:nowrap}
+.brand-mark{width:28px; height:28px; flex:none; filter:drop-shadow(0 3px 5px rgba(37,99,235,.2))}
+.shell{max-width:1360px; padding-top:60px}
+#toc{width:280px; top:60px; height:calc(100vh - 60px); padding:28px 18px 48px 24px}
+#toc .toc-label{margin:22px 10px 7px; color:var(--fg-muted); font-family:var(--mono); font-size:10px; font-weight:800; letter-spacing:.13em; text-transform:uppercase}
+#toc .toc-label:first-child{margin-top:0}
+#toc a.lvl2{margin-top:2px}
+main{max-width:920px; padding:42px 44px 100px}
+main > section:first-child h1{margin:0}
+h2{margin-top:3.2em; padding-top:.2em; font-size:24px; letter-spacing:-.02em}
+h3{font-size:18px}
+.manual-hero{position:relative; overflow:hidden; isolation:isolate; margin:-10px 0 30px; padding:46px 48px 40px; border-radius:24px; color:var(--hero-fg); background:linear-gradient(125deg,var(--navy) 0%,var(--navy-2) 62%,#0f766e 140%); box-shadow:0 20px 55px rgba(15,23,42,.18)}
+.manual-hero::before{content:""; position:absolute; inset:0; z-index:-2; opacity:.18; background-image:linear-gradient(rgba(255,255,255,.12) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.12) 1px,transparent 1px); background-size:30px 30px}
+.manual-hero::after{content:""; position:absolute; width:330px; height:330px; right:-145px; top:-180px; z-index:-1; border-radius:50%; background:var(--brand-teal); opacity:.14}
+.hero-kicker{margin:0 0 12px; color:#99f6e4; font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase}
+.manual-hero h1{font-family:var(--mono); font-size:46px; letter-spacing:-.055em}
+.manual-hero h1 span{color:#2dd4bf}
+.hero-lead{max-width:690px; margin:14px 0 24px; color:#dbeafe; font-size:18px; line-height:1.65}
+.hero-actions{display:flex; flex-wrap:wrap; gap:10px}
+.hero-action{display:inline-flex; align-items:center; min-height:42px; padding:9px 15px; border-radius:9px; font-size:14px; font-weight:750; color:white; border:1px solid rgba(255,255,255,.25)}
+.hero-action:hover{color:white; text-decoration:none; border-color:rgba(255,255,255,.5); background:rgba(255,255,255,.08)}
+.hero-action.primary{color:#0f172a; border-color:#5eead4; background:#5eead4}
+.hero-action.primary:hover{background:#99f6e4}
+.hero-command{margin:26px 0 0; padding:13px 16px; border:1px solid rgba(255,255,255,.16); border-radius:10px; color:#e2e8f0; background:rgba(2,6,23,.42); font-family:var(--mono); font-size:14px}
+.hero-command strong{color:#5eead4; font-weight:700}
+.flow-figure{margin:0 0 28px}
+.flow-figure img{display:block; width:100%; border-radius:18px}
+.flow-mobile{display:none}
+.route-heading{margin:30px 0 12px; font-family:var(--mono); font-size:12px; color:var(--fg-muted); letter-spacing:.1em; text-transform:uppercase}
+.route-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:0 0 36px}
+.route-card{display:block; position:relative; min-height:112px; padding:17px 46px 16px 18px; color:var(--fg); background:var(--bg-elevated); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow)}
+.route-card:hover{text-decoration:none; border-color:var(--brand-teal); transform:translateY(-1px)}
+.route-card strong{display:block; margin-bottom:5px; font-size:15px}
+.route-card span{display:block; color:var(--fg-muted); font-size:13px; line-height:1.5}
+.route-card::after{content:"→"; position:absolute; right:17px; top:17px; color:var(--brand-teal); font-size:20px}
+.route-card.wide{grid-column:1/-1; min-height:94px}
+.overview-title{margin-top:2.2em}
+.anchor-link:focus-visible{opacity:1; outline:2px solid var(--accent); outline-offset:3px}
+.skip-link{position:fixed; left:14px; top:8px; z-index:100; transform:translateY(-150%); padding:8px 12px; border-radius:7px; color:#0f172a; background:#5eead4; font-weight:750}
+.skip-link:focus{transform:translateY(0)}
+@media (prefers-reduced-motion:no-preference){.route-card{transition:transform .16s ease,border-color .16s ease}}
+@media (max-width:860px){
+  #topnav{height:56px; padding:0 12px}
+  #topnav .top-link.optional{display:none}
+  #topnav .brand-manual{display:none}
+  #toc{top:56px; height:calc(100vh - 56px)}
+  #toc{visibility:hidden; pointer-events:none}
+  #toc.open{visibility:visible; pointer-events:auto}
+  .shell{padding-top:56px}
+  main{padding:24px 16px 80px}
+  .manual-hero{padding:34px 24px 30px; border-radius:18px}
+  .manual-hero h1{font-size:36px}
+  .hero-lead{font-size:16px}
+  .route-grid{grid-template-columns:1fr}
+  .route-card.wide{grid-column:auto}
+  .flow-figure{display:none}
+  .flow-mobile{display:grid; gap:9px; margin:0 0 28px; padding:16px; border:1px solid var(--border-strong); border-radius:16px; background:var(--bg-elevated)}
+  .mobile-source,.mobile-output{padding:12px 14px; border:1px solid var(--border); border-radius:10px; background:var(--bg-inset)}
+  .mobile-source strong,.mobile-output strong{display:block; font-size:14px}
+  .mobile-source span,.mobile-output span{display:block; margin-top:2px; color:var(--fg-muted); font-size:12.5px}
+  .mobile-merge{text-align:center; color:var(--brand-teal); font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.06em}
+  .mobile-output{border-color:var(--brand-teal); background:var(--teal-soft)}
+  table{display:block; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch}
+  td code,th code{white-space:normal; overflow-wrap:anywhere}
+  p code,li code{overflow-wrap:anywhere; word-break:break-word}
+}
 </style>
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
 <nav id="topnav">
-  <button id="nav-toggle" aria-label="Toggle table of contents" aria-expanded="false">☰</button>
-  <span class="brand">erdscope</span>
+  <button id="nav-toggle" aria-label="Toggle table of contents" aria-controls="toc" aria-expanded="false">☰</button>
+  <span class="brand"><svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#f8fafc" stroke="#14b8a6" stroke-width="3"/><path d="M22 22l7 7" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/><path d="M9 11h10M9 15h5M14 15v5" fill="none" stroke="#94a3b8" stroke-width="1.5"/><rect x="7" y="8" width="6" height="6" rx="1.5" fill="#0f172a"/><rect x="17" y="8" width="6" height="6" rx="1.5" fill="#14b8a6"/><rect x="11" y="18" width="6" height="6" rx="1.5" fill="#2563eb"/></svg><span>erdscope</span><span class="brand-manual">manual</span></span>
   <span class="spacer"></span>
-  <a class="top-link" href="index.html">Live demo</a>
-  <a class="top-link" href="https://github.com/orapli/erdscope">GitHub</a>
+  <a class="top-link optional" href="#quickstart">Quickstart</a>
+  <a class="top-link optional" href="index.html">Live demo</a>
+  <a class="top-link optional" href="https://github.com/orapli/erdscope">GitHub</a>
   <span class="lang-current">EN</span><span class="lang-sep">|</span><a class="top-link" href="manual.ja.html">日本語</a>
 </nav>
 
 <div class="shell">
 <aside id="toc">
-  <a class="lvl2" href="#what-is-erdscope">What is erdscope</a>
-  <a class="lvl2" href="#installation">Installation &amp; requirements</a>
+  <div class="toc-label">Start</div>
+  <a class="lvl2" href="#what-is-erdscope">Overview</a>
   <a class="lvl2" href="#quickstart">Quickstart</a>
-  <a class="lvl2" href="#cli-reference">CLI reference</a>
+  <a class="lvl2" href="#installation">Install &amp; requirements</a>
+  <div class="toc-label">Inputs &amp; config</div>
+  <a class="lvl2" href="#input-sources">Input sources</a>
   <a class="lvl2" href="#config-file">Config file</a>
   <a class="lvl2" href="#notes">Notes</a>
   <a class="lvl2" href="#groups">Groups</a>
+  <a class="lvl2" href="#cli-reference">CLI reference</a>
+  <div class="toc-label">Explore</div>
   <a class="lvl2" href="#viewer-guide">Viewer guide</a>
   <a class="lvl3" href="#viewer-panes">Panes</a>
   <a class="lvl3" href="#viewer-focus">Focus &amp; exploration</a>
@@ -171,15 +252,47 @@ footer{border-top:1px solid var(--border); padding:20px 34px 60px; font-size:12.
   <a class="lvl3" href="#viewer-shortcuts">Keyboard shortcuts</a>
   <a class="lvl3" href="#viewer-dark">Dark mode</a>
   <a class="lvl3" href="#viewer-print">Print</a>
+  <div class="toc-label">Deliver</div>
   <a class="lvl2" href="#exports">Exports</a>
+  <div class="toc-label">Support</div>
   <a class="lvl2" href="#troubleshooting">Troubleshooting / FAQ</a>
   <a class="lvl2" href="#extending">Extending</a>
 </aside>
 
-<main>
+<main id="main-content" tabindex="-1">
 
 <section id="what-is-erdscope">
-<h1>erdscope <a class="anchor-link" href="#what-is-erdscope">#</a></h1>
+<div class="manual-hero">
+  <p class="hero-kicker">User manual · Python 3.9+</p>
+  <h1>erd<span>scope</span></h1>
+  <p class="hero-lead">Turn a database, application code, config—or any combination—into one interactive, portable schema.</p>
+  <div class="hero-actions">
+    <a class="hero-action primary" href="#quickstart">Start in 30 seconds</a>
+    <a class="hero-action" href="index.html">Open the live demo</a>
+    <a class="hero-action" href="#config-file">Configure a project</a>
+  </div>
+  <div class="hero-command"><strong>$</strong> pip install erdscope &amp;&amp; erdscope demo</div>
+</div>
+
+<figure class="flow-figure"><img src="img/input-flow.svg" alt="Database, application code, and config merge through erdscope into interactive HTML and an optional Excel workbook"></figure>
+<div class="flow-mobile" aria-label="erdscope input and output flow">
+  <div class="mobile-source"><strong>Database</strong><span>MySQL · PostgreSQL · SQLite</span></div>
+  <div class="mobile-source"><strong>Application code</strong><span>Rails · Prisma · Django</span></div>
+  <div class="mobile-source"><strong>Config</strong><span>JSON · YAML</span></div>
+  <div class="mobile-merge">↓ ANY ONE OR COMBINE ↓</div>
+  <div class="mobile-output"><strong>erdscope</strong><span>Interactive HTML · optional Excel workbook</span></div>
+</div>
+
+<p class="route-heading">Choose what you want to do</p>
+<div class="route-grid">
+  <a class="route-card" href="#quickstart"><strong>Try it with no setup</strong><span>Open the bundled shop schema and learn the basic workflow.</span></a>
+  <a class="route-card" href="#input-sources"><strong>Generate from what I have</strong><span>Use a database, Rails, Prisma, Django, config, or several sources together.</span></a>
+  <a class="route-card" href="#viewer-guide"><strong>Explore a generated diagram</strong><span>Search, focus, rearrange, save views, and understand relation types.</span></a>
+  <a class="route-card" href="#exports"><strong>Share or hand off the result</strong><span>Export PNG, SVG, Mermaid, PlantUML, or an Excel definition workbook.</span></a>
+  <a class="route-card wide" href="#troubleshooting"><strong>Something is not working</strong><span>Find connection, relation, display, and large-schema troubleshooting guidance.</span></a>
+</div>
+
+<h2 class="overview-title">How erdscope works</h2>
 <p>
 erdscope generates <strong>interactive ER diagrams and documented schema definitions</strong> — a
 <strong>self-contained ER diagram</strong> and, optionally, an <strong>Excel table-definition
@@ -231,6 +344,58 @@ diagram will be.
 </div>
 </section>
 
+<section id="quickstart">
+<h2>Quickstart <a class="anchor-link" href="#quickstart">#</a></h2>
+<p>No database of your own yet? <code>erdscope demo</code> builds a small sample e-commerce
+SQLite database in a temp directory, generates the diagram, and opens it in your browser
+— nothing to download or set up:</p>
+<pre><code>pip install erdscope
+erdscope demo</code></pre>
+<p>It runs the normal pipeline underneath, so every other flag on this page still applies
+(<code>erdscope demo --excel defs.xlsx</code>, <code>erdscope demo --only 'order*'</code>, ...);
+add <code>--no-open</code> to skip launching the browser. See the <a href="#cli-reference">CLI
+reference</a> below for the full list.</p>
+<pre><code>erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
+
+# enrich with association semantics parsed from application code (optional)
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
+        --models /path/to/rails/app -o erd.html
+
+# also write a table-definition workbook
+erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
+        --excel table_definitions.xlsx -o erd.html
+
+# PostgreSQL: same thing — schema defaults to public, override with ?schema=name
+erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
+
+# SQLite: just point at the file — no server, nothing to install
+erdscope sqlite:///path/to/app.db -o erd.html</code></pre>
+<p>Open the resulting <code>erd.html</code> in any browser — it's a single file with everything
+inlined, so it can be emailed, committed to a wiki, or dropped into a shared drive.</p>
+
+<h3>Passwords</h3>
+<p>Use a <strong>read-only</strong> database account, and leave the password out of the connection
+URL — it would otherwise land in your shell history. erdscope resolves the password in this order:</p>
+<ol>
+<li>Password embedded in the URL (<code>mysql://user:pass@host/db</code>) — avoid this in practice.</li>
+<li>The <code>MYSQL_PWD</code> (MySQL) / <code>PGPASSWORD</code> (PostgreSQL) environment variable, if set.</li>
+<li>Otherwise, if standard input is an interactive terminal, a hidden password prompt
+(never touches <code>argv</code> or shell history).</li>
+</ol>
+<p><code>sqlite://</code> reads a local file, so it needs no account or password — the above applies only to the networked engines.</p>
+<div class="note"><strong>Non-interactive runs (CI, scripts, pipes)</strong>
+erdscope only prompts when stdin is a TTY. In a script or CI job it skips the prompt entirely
+rather than blocking — it just attempts the connection with whatever password it has (possibly
+none), and if that's wrong you get a normal connection-error message, not a hang. Writing
+<code>user:@host/db</code> (an explicit, empty password) also counts as "password provided" and
+skips the prompt. On PostgreSQL, answering the prompt with an empty line leaves
+<code>PGPASSWORD</code> unset, so libpq's own <code>~/.pgpass</code> lookup still applies.</div>
+
+<h3>Behind a bastion / SSH tunnel</h3>
+<pre><code>ssh -N -L 3307:db-host:3306 bastion &amp;
+erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pre>
+</section>
+
 <section id="installation">
 <h2>Installation &amp; requirements <a class="anchor-link" href="#installation">#</a></h2>
 <p>Install from <a href="https://pypi.org/project/erdscope/">PyPI</a> to get the <code>erdscope</code> command:</p>
@@ -278,83 +443,6 @@ verified against:</p>
 <tr><td>Prisma</td><td>the schema language as of Prisma <strong>5 / 6</strong> — <code>@map</code>/<code>@@map</code>, enums, named relations, implicit and explicit m2m, self-relations, composite <code>@@id</code>/<code>@@unique</code>, <code>@@schema</code></td></tr>
 <tr><td>Django</td><td>models as of Django <strong>4.2 / 5.x</strong> — FK / OneToOne / M2M (incl. <code>through=</code>), abstract bases, <code>db_table</code>/<code>db_column</code>, <code>GenericForeignKey</code> (kept as a polymorphic marker); a swappable <code>AUTH_USER_MODEL</code> FK keeps its column and skips the edge</td></tr>
 <tr><td>Python</td><td>3.9+ (<code>requires-python</code>); CI runs the latest CPython 3.x</td></tr>
-</table>
-</section>
-
-<section id="quickstart">
-<h2>Quickstart <a class="anchor-link" href="#quickstart">#</a></h2>
-<p>No database of your own yet? <code>erdscope demo</code> builds a small sample e-commerce
-SQLite database in a temp directory, generates the diagram, and opens it in your browser
-— nothing to download or set up:</p>
-<pre><code>erdscope demo</code></pre>
-<p>It runs the normal pipeline underneath, so every other flag on this page still applies
-(<code>erdscope demo --excel defs.xlsx</code>, <code>erdscope demo --only 'order*'</code>, ...);
-add <code>--no-open</code> to skip launching the browser. See the <a href="#cli-reference">CLI
-reference</a> below for the full list.</p>
-<pre><code>erdscope mysql://readonly@127.0.0.1:3306/myapp_production -o erd.html
-
-# enrich with association semantics parsed from application code (optional)
-erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
-        --models /path/to/rails/app -o erd.html
-
-# also write a table-definition workbook
-erdscope mysql://readonly@127.0.0.1:3306/myapp_production \
-        --excel table_definitions.xlsx -o erd.html
-
-# PostgreSQL: same thing — schema defaults to public, override with ?schema=name
-erdscope postgres://readonly@127.0.0.1:5432/myapp_production -o erd.html
-
-# SQLite: just point at the file — no server, nothing to install
-erdscope sqlite:///path/to/app.db -o erd.html</code></pre>
-<p>Open the resulting <code>erd.html</code> in any browser — it's a single file with everything
-inlined, so it can be emailed, committed to a wiki, or dropped into a shared drive.</p>
-
-<h3>Passwords</h3>
-<p>Use a <strong>read-only</strong> database account, and leave the password out of the connection
-URL — it would otherwise land in your shell history. erdscope resolves the password in this order:</p>
-<ol>
-<li>Password embedded in the URL (<code>mysql://user:pass@host/db</code>) — avoid this in practice.</li>
-<li>The <code>MYSQL_PWD</code> (MySQL) / <code>PGPASSWORD</code> (PostgreSQL) environment variable, if set.</li>
-<li>Otherwise, if standard input is an interactive terminal, a hidden password prompt
-(never touches <code>argv</code> or shell history).</li>
-</ol>
-<p><code>sqlite://</code> reads a local file, so it needs no account or password — the above applies only to the networked engines.</p>
-<div class="note"><strong>Non-interactive runs (CI, scripts, pipes)</strong>
-erdscope only prompts when stdin is a TTY. In a script or CI job it skips the prompt entirely
-rather than blocking — it just attempts the connection with whatever password it has (possibly
-none), and if that's wrong you get a normal connection-error message, not a hang. Writing
-<code>user:@host/db</code> (an explicit, empty password) also counts as "password provided" and
-skips the prompt. On PostgreSQL, answering the prompt with an empty line leaves
-<code>PGPASSWORD</code> unset, so libpq's own <code>~/.pgpass</code> lookup still applies.</div>
-
-<h3>Behind a bastion / SSH tunnel</h3>
-<pre><code>ssh -N -L 3307:db-host:3306 bastion &amp;
-erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pre>
-</section>
-
-<section id="cli-reference">
-<h2>CLI reference <a class="anchor-link" href="#cli-reference">#</a></h2>
-<p>This table is verified against <code>erd.py</code>'s <code>argparse</code> definitions — run
-<code>erdscope --help</code> yourself any time to confirm it against the copy you're running.</p>
-<pre><code>erdscope [mysql://user@host/db | postgres://user@host/db | sqlite:///file.db | demo] [options]</code></pre>
-<table>
-<tr><th>Argument</th><th>Description</th></tr>
-<tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL/SQLite can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there; for <code>engine: sqlite</code>, <code>database</code> is a file path and <code>host</code>/<code>port</code>/<code>user</code> don't apply — see <a href="#config-file">Config file</a>).</td></tr>
-<tr><td><code>demo</code></td><td>Positional. Generate from a bundled sample e-commerce database instead of a real one — builds a throwaway SQLite copy in a temp directory, runs the normal pipeline, and opens the result in a browser. Every other option in this table still applies. Config auto-discovery is force-disabled and an explicit <code>--config</code> is ignored with a warning, so the demo always looks the same regardless of the cwd. Default output is <code>erd_demo.html</code> (not <code>erd.html</code>), so it never clobbers a real run's output</td></tr>
-<tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
-<tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, a Django project, or a Rails <code>db/schema.rb</code> file — source auto-detected. For an unambiguous, typed alternative see config <a href="#input-sources"><code>sources:</code></a></td></tr>
-<tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
-<tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
-<tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
-<tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
-<tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
-<tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
-<tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
-<tr><td><code>--infer-fk</code></td><td>Guess relations from <code>*_id</code> column names when no real association/FK backs them. Off by default — see <a href="#faq-infer-fk">Troubleshooting</a></td></tr>
-<tr><td><code>--table-map 'Widget=crm_widgets'</code></td><td>Rails only: override a model's table when static analysis can't determine it. Repeatable; comma-separated lists accepted — see <a href="#faq-table-map">Troubleshooting</a></td></tr>
-<tr><td><code>--config PATH</code></td><td>Load defaults from a config file. Auto-discovered as <code>.erdscope.json</code>/<code>.yml</code>/<code>.yaml</code> in the current directory if not given</td></tr>
-<tr><td><code>--no-config</code></td><td>Skip config auto-discovery even if <code>.erdscope.*</code> exists in the cwd</td></tr>
-<tr><td><code>--no-open</code></td><td>Skip automatically opening a browser after generating. Only relevant to <code>demo</code> (which opens one by default); accepted but has no effect on a normal run</td></tr>
 </table>
 </section>
 
@@ -711,6 +799,32 @@ same as a design note whose target didn't survive.
 <code>write_excel</code> accepts the same resolved groups as the HTML viewer, so the data already
 exists in the shape a future sheet would need — but this release doesn't write one. Passing
 <code>groups:</code> in your config has no effect on the <code>--excel</code> workbook today.</div>
+</section>
+
+<section id="cli-reference">
+<h2>CLI reference <a class="anchor-link" href="#cli-reference">#</a></h2>
+<p>This table is verified against <code>erd.py</code>'s <code>argparse</code> definitions — run
+<code>erdscope --help</code> yourself any time to confirm it against the copy you're running.</p>
+<pre><code>erdscope [mysql://user@host/db | postgres://user@host/db | sqlite:///file.db | demo] [options]</code></pre>
+<table>
+<tr><th>Argument</th><th>Description</th></tr>
+<tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL/SQLite can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there; for <code>engine: sqlite</code>, <code>database</code> is a file path and <code>host</code>/<code>port</code>/<code>user</code> don't apply — see <a href="#config-file">Config file</a>).</td></tr>
+<tr><td><code>demo</code></td><td>Positional. Generate from a bundled sample e-commerce database instead of a real one — builds a throwaway SQLite copy in a temp directory, runs the normal pipeline, and opens the result in a browser. Every other option in this table still applies. Config auto-discovery is force-disabled and an explicit <code>--config</code> is ignored with a warning, so the demo always looks the same regardless of the cwd. Default output is <code>erd_demo.html</code> (not <code>erd.html</code>), so it never clobbers a real run's output</td></tr>
+<tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
+<tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, a Django project, or a Rails <code>db/schema.rb</code> file — source auto-detected. For an unambiguous, typed alternative see config <a href="#input-sources"><code>sources:</code></a></td></tr>
+<tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
+<tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
+<tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
+<tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
+<tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
+<tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
+<tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
+<tr><td><code>--infer-fk</code></td><td>Guess relations from <code>*_id</code> column names when no real association/FK backs them. Off by default — see <a href="#faq-infer-fk">Troubleshooting</a></td></tr>
+<tr><td><code>--table-map 'Widget=crm_widgets'</code></td><td>Rails only: override a model's table when static analysis can't determine it. Repeatable; comma-separated lists accepted — see <a href="#faq-table-map">Troubleshooting</a></td></tr>
+<tr><td><code>--config PATH</code></td><td>Load defaults from a config file. Auto-discovered as <code>.erdscope.json</code>/<code>.yml</code>/<code>.yaml</code> in the current directory if not given</td></tr>
+<tr><td><code>--no-config</code></td><td>Skip config auto-discovery even if <code>.erdscope.*</code> exists in the cwd</td></tr>
+<tr><td><code>--no-open</code></td><td>Skip automatically opening a browser after generating. Only relevant to <code>demo</code> (which opens one by default); accepted but has no effect on a normal run</td></tr>
+</table>
 </section>
 
 <section id="viewer-guide">
@@ -1103,15 +1217,25 @@ erdscope is MIT-licensed. Source, issues, and the live demo live at
 (function(){
   var btn = document.getElementById('nav-toggle');
   var toc = document.getElementById('toc');
+  function closeToc(returnFocus){
+    toc.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+    if(returnFocus) btn.focus();
+  }
   btn.addEventListener('click', function(){
     var open = toc.classList.toggle('open');
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   });
   toc.addEventListener('click', function(e){
     if(e.target.tagName === 'A' && window.innerWidth <= 860){
-      toc.classList.remove('open');
-      btn.setAttribute('aria-expanded', 'false');
+      closeToc(false);
     }
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && toc.classList.contains('open')) closeToc(true);
+  });
+  document.addEventListener('click', function(e){
+    if(window.innerWidth <= 860 && toc.classList.contains('open') && !toc.contains(e.target) && !btn.contains(e.target)) closeToc(false);
   });
 
   var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
