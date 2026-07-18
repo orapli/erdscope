@@ -48,6 +48,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Mermaid column's type is free text jotted down while sketching. MVP
   scope: a single standalone `.mmd`/`.mermaid` file, no Markdown-fence
   extraction yet.
+- **Viewer: Align Right / Align Bottom** (backlog V1) — the multi-select
+  panel's Align section gains two buttons alongside the existing Left/Top/
+  Center/Middle ones.
+- **Viewer: promote an auto-expanded table to an explicit selection**
+  (backlog V2) — a table shown only because auto-expand pulled it in as a
+  neighbor (dashed border, its list checkbox previously locked) can now be
+  promoted to an explicit root: a new ＋ button on the node header, and the
+  list checkbox itself unlocks for this specific case (still locked while
+  focused, where checkboxes are ignored for visibility entirely).
+- **Viewer: groups as an auto-layout obstacle** (backlog V3) — gridLayout
+  and the incremental single-table-placement path now nudge a freshly
+  auto-placed table clear of any other group's frame it would otherwise
+  land inside, instead of leaving it to visually overlap the group. Never
+  touches an already-positioned table (a manual drag is never overridden);
+  a schema with no groups configured is completely unaffected.
 
 ## [0.7.2] - 2026-07-18
 

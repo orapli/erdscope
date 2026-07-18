@@ -648,6 +648,92 @@ class TestGroups(unittest.TestCase):
         }''')
         self.assertLessEqual(res['chipRight'], res['viewRight'] + 0.5)
 
+    # ── V3: groups as an auto-layout obstacle ──────────────────────────────
+    def test_resolve_group_obstacles_nudges_an_overlapping_non_member(self):
+        # manufacture the conflict directly rather than relying on gridLayout's
+        # own row-packing to happen to produce one (siblings in the same BFS
+        # row never overlap by construction — see resolveGroupObstacles'
+        # module comment): park 'audit_logs' (not a "content" member)
+        # exactly on top of where posts/comments already sit.
+        before = self.page.evaluate('''() => {
+            const bbox = groupFrameBBox(GROUPS[0].tables, new Set(Object.keys(nodePos)));
+            nodePos.audit_logs = {x: (bbox.x0 + bbox.x1) / 2, y: (bbox.y0 + bbox.y1) / 2};
+            return bbox;
+        }''')
+        self.page.evaluate("resolveGroupObstacles(['audit_logs'])")
+        after = self.page.evaluate('''() => {
+            const s = nodeSize.audit_logs;
+            const p = nodePos.audit_logs;
+            return {x0: p.x - s.w/2, y0: p.y - s.h/2, x1: p.x + s.w/2, y1: p.y + s.h/2};
+        }''')
+        overlaps = (after['x0'] < before['x1'] and after['x1'] > before['x0']
+                    and after['y0'] < before['y1'] and after['y1'] > before['y0'])
+        self.assertFalse(overlaps, 'audit_logs should no longer overlap the group frame')
+        self.assertGreaterEqual(after['y0'], before['y1'],
+                                 'the nudged table should land below the frame, not sideways/above')
+
+    def test_resolve_group_obstacles_ignores_a_stale_departed_members_position(self):
+        # Opus review finding: nothing prunes nodePos when a table leaves
+        # the display set (e.g. its checkbox gets unchecked), so a stale
+        # entry can briefly outlive its table's membership in
+        # getDisplayTables(). The obstacle frame must be computed from
+        # getDisplayTables() (matching drawGroups exactly), never from
+        # Object.keys(nodePos), or a departed member's old position would
+        # inflate the frame beyond what's actually drawn on screen.
+        setup = self.page.evaluate('''() => {
+            const realBbox = groupFrameBBox(GROUPS[0].tables, new Set(getDisplayTables()));
+            // 'comments' leaves the display set but keeps a stale, far-away
+            // nodePos entry — exactly the window the fix guards against
+            excludedTables.add('comments');
+            nodePos.comments = {x: realBbox.x1 + 500, y: realBbox.y0};
+            // place audit_logs where it would overlap the INFLATED
+            // (stale-inclusive) frame but NOT the real, currently-drawn one
+            nodePos.audit_logs = {x: realBbox.x1 + 500, y: realBbox.y0};
+            return realBbox;
+        }''')
+        self.page.evaluate("resolveGroupObstacles(['audit_logs'])")
+        after = self.page.evaluate("({...nodePos.audit_logs})")
+        self.assertEqual(after['x'], setup['x1'] + 500,
+                          'audit_logs must not be nudged — it never overlapped the real, '
+                          'currently-displayed group frame, only a stale-inflated one')
+
+    def test_resolve_group_obstacles_never_moves_a_member(self):
+        # a group's own member contributes to its OWN frame's bbox, so it can
+        # never be "outside" it by construction — but guard the memberSet
+        # skip explicitly in case the bbox calc ever changes
+        before = self.page.evaluate("({...nodePos.posts})")
+        self.page.evaluate("resolveGroupObstacles(['posts'])")
+        after = self.page.evaluate("({...nodePos.posts})")
+        self.assertEqual(before, after, "a group's own member must never be nudged")
+
+    def test_resolve_group_obstacles_noop_with_no_groups(self):
+        page = self.browser.new_page()
+        page.goto(_build_html().as_uri())  # no groups configured at all
+        page.wait_for_function('typeof nodePos.users !== "undefined"')
+        before = page.evaluate("({...nodePos.audit_logs})")
+        page.evaluate("resolveGroupObstacles(Object.keys(nodePos))")
+        after = page.evaluate("({...nodePos.audit_logs})")
+        page.close()
+        self.assertEqual(before, after, 'a schema with no groups must be a complete no-op')
+
+    def test_relayout_button_invokes_group_obstacle_resolution(self):
+        # confirms the real ↺ (re-layout) entry point actually calls
+        # resolveGroupObstacles — not just that the function works in
+        # isolation (the two tests above)
+        self.page.evaluate('''() => {
+            window.__origResolve = resolveGroupObstacles;
+            window.__resolveCalls = 0;
+            resolveGroupObstacles = function(...args) {
+                window.__resolveCalls++;
+                return window.__origResolve(...args);
+            };
+        }''')
+        self.page.click('#btn-reset')
+        self.page.wait_for_timeout(100)
+        calls = self.page.evaluate('window.__resolveCalls')
+        self.assertGreaterEqual(calls, 1,
+                                 '↺ (re-layout) should call resolveGroupObstacles via gridLayout')
+
 
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestClientJS(unittest.TestCase):

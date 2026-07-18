@@ -4824,6 +4824,7 @@ function gridLayout(tables, preferredHub) {
       sy+=s.h+gapY;
     });
   }
+  resolveGroupObstacles(tables); // V3: keep group frames clear of other tables
 }
 
 // viewport aspect ratio (w/h), clamped — wide screens spread layouts sideways
@@ -5008,6 +5009,7 @@ function layoutAll(tables, edges) {
       });
     });
   });
+  resolveGroupObstacles(newTables); // V3: keep group frames clear of other tables
 }
 
 // ── Focus mode position management ────────────────────────────────────────
@@ -5158,14 +5160,65 @@ function updateInfoBar(shown) {
 // ── Groups (groups Phase 1) — visual table grouping ─────────────────────────
 // A group frame is a rounded rect drawn behind whichever of the group's
 // members are CURRENTLY displayed, sized to their live nodePos/nodeSize —
-// this is layered on top of whatever layout already placed the nodes
-// (DESIGN_ROADMAP §P2: no layout affinity in Phase 1), so a frame just
-// tracks its members wherever they already are, and disappears the moment
-// zero members remain on screen (e.g. --only/--exclude, hidden tables, or
-// focus mode having pulled the display set down to something disjoint from
-// this group).
+// layered on top of whatever layout already placed the nodes. Full layout
+// AFFINITY (gridLayout clustering a group's members near each other) is
+// still out of scope (DESIGN_ROADMAP §P2's Phase 1 note) — that would mean
+// threading group membership through the BFS depth/row assignment itself,
+// a much larger and riskier change. What IS in scope (V3): a group's frame
+// acts as an OBSTACLE for auto-layout, so an unrelated table an ordinary
+// BFS/incremental placement would otherwise drop visually inside someone
+// else's group frame gets nudged clear of it instead — see
+// resolveGroupObstacles below, called from gridLayout and layoutAll's
+// incremental placement path.
 const GROUP_PAD = 16;
 const GROUP_DEFAULT_COLOR = '#64748b'; // slate — used when a group has no configured color
+
+// V3: obstacle avoidance for auto-layout (not full layout affinity — see
+// the comment above). `placedTables` is whatever gridLayout/layoutAll just
+// finished assigning fresh positions to; a table already sitting somewhere
+// else (a previous auto-layout, or a manual drag) is never touched here —
+// only the tables THIS pass just placed can be nudged. A no-op whenever
+// there are no groups at all, so any group-less schema's layout stays
+// exactly as it already was (byte-for-byte), which is the overwhelming
+// majority of schemas/tests.
+//
+// Deliberately bounded, not a general collision solver: at most 3 passes,
+// and each conflict is resolved by pushing the non-member table straight
+// down past the frame (the same direction gridLayout already grows the
+// diagram in, so it reads as "the next row down" rather than an arbitrary
+// jump) — never sideways, never by rearranging anything else. A pushed
+// table can in principle end up overlapping some other unrelated node;
+// that residual risk is accepted the same way gridLayout's own placement
+// heuristics already accept it elsewhere (see overlapsPlaced's callers) —
+// perfect collision-free packing is not this pass's job, only keeping
+// tables out of OTHER tables' group frames.
+function resolveGroupObstacles(placedTables){
+  if(!GROUPS.length || !placedTables.length) return;
+  // must match drawGroups/updateGroupFrames' own displayTables set exactly
+  // (getDisplayTables(), NOT Object.keys(nodePos)) — nodePos is a superset
+  // that can still hold a stale entry for a table that just left the
+  // display set (nothing prunes it), which would make the obstacle frame
+  // computed here larger than the frame actually painted on screen.
+  const displayed=new Set(getDisplayTables());
+  for(let pass=0; pass<3; pass++){
+    let moved=false;
+    GROUPS.forEach(g=>{
+      const bbox=groupFrameBBox(g.tables, displayed);
+      if(!bbox) return;
+      const memberSet=new Set(g.tables);
+      placedTables.forEach(t=>{
+        if(memberSet.has(t)) return;
+        const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+        if(!p) return;
+        const x0=p.x-s.w/2, y0=p.y-s.h/2, x1=p.x+s.w/2, y1=p.y+s.h/2;
+        if(!(x0<bbox.x1 && x1>bbox.x0 && y0<bbox.y1 && y1>bbox.y0)) return;
+        nodePos[t]={x:p.x, y:bbox.y1+20+s.h/2};
+        moved=true;
+      });
+    });
+    if(!moved) break;
+  }
+}
 // Compute the padded bounding box of a group's currently-displayed members,
 // or null if none of them are on screen right now. `displayTables` is a Set
 // (the same shape getDisplayTables() returns via new Set(...) at call sites)
