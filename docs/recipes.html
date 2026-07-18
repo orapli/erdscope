@@ -166,8 +166,13 @@ footer{border-top:1px solid var(--border); margin:0 auto; padding:20px 34px 60px
     <strong>Feed your schema to an AI</strong>
     <span>Let an AI implement and review with real schema context, token-efficiently.</span>
   </a>
+  <a class="route-card" href="#r4">
+    <span class="route-num">RECIPE 4</span>
+    <strong>Wire it into CI/CD</strong>
+    <span>Auto-refresh schema docs, and stop unexpected changes with a drift gate.</span>
+  </a>
 </div>
-<p class="cap">More recipes are planned: database × code reconciliation, Excel table-definition workbooks, CI drift detection, dbdiagram.io round-trips, and more.</p>
+<p class="cap">More recipes are planned: database × code reconciliation, Excel table-definition workbooks, dbdiagram.io round-trips, and more.</p>
 
 <!-- ══════════════════════ R1 ══════════════════════ -->
 <section id="r1">
@@ -295,8 +300,76 @@ answers from <b>declared intent</b> instead of guessing.</div>
 <div class="next"><strong>Take it further</strong>
 <ul>
   <li>Take a snapshot (<code>--emit-json schema.json</code>) and run <code>--diff schema.json</code>
-  in CI — a drift gate that fails when the database strays from the baseline.</li>
+  in CI — a drift gate that fails when the database strays from the baseline → <a href="#r4">Recipe 4</a></li>
   <li>Generate a digest before and after a migration and ask the AI what the change impacts.</li>
+</ul></div>
+</section>
+
+<!-- ══════════════════════ R4 ══════════════════════ -->
+<section id="r4">
+<h2>Recipe 4 — Wire it into CI/CD: auto-refreshed docs and a drift gate <a class="anchor-link" href="#r4">#</a></h2>
+
+<div class="scene"><strong>Scene:</strong> ER diagrams and table definitions start rotting the moment
+they are written, and manual updates always get forgotten. Let a machine keep the docs fresh — and
+let CI stop schema changes nobody signed off on.</div>
+
+<h3>Auto-refresh your schema docs</h3>
+<p>erdscope is built for CI — the output is <b>one self-contained file</b>, so you can drop it
+straight onto GitHub Pages or an internal portal. The <code>--emit-digest</code> Markdown works as a
+build-time component too: <b>generate it during the build and embed it as the "data model" chapter
+of your product manual</b>.</p>
+
+<pre><code># Generate the HTML and the Markdown digest as build artifacts
+erdscope "$DB_URL" -o site/schema.html --no-open --emit-digest site/schema.md</code></pre>
+
+<h3>The drift gate</h3>
+<p>Commit a baseline snapshot to the repository and compare the live database against it in CI.
+Exit codes: <b>0 = identical / 1 = differences / 2 = error</b> — a drift fails the job on its own.</p>
+
+<pre><code># Create the baseline and commit it (update it when a schema change is intended)
+erdscope "$DB_URL" --emit-json schema.lock.json --no-open
+
+# In CI: exit 1 when the database strays from the baseline (differences are human-readable)
+erdscope "$DB_URL" --diff schema.lock.json</code></pre>
+
+<p>A minimal GitHub Actions template:</p>
+
+<pre><code>name: schema-docs
+on:
+  push: { branches: [main] }
+  schedule:
+    - cron: '0 6 * * 1'   # weekly freshness check
+jobs:
+  schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install erdscope pymysql
+      - name: Generate schema docs (HTML + digest)
+        run: erdscope "$DB_URL" -o site/schema.html --no-open --emit-digest site/schema.md
+        env:
+          DB_URL: ${{ secrets.READONLY_DB_URL }}
+      - name: Schema drift gate
+        run: erdscope "$DB_URL" --diff schema.lock.json
+        env:
+          DB_URL: ${{ secrets.READONLY_DB_URL }}
+      # add a step here publishing site/ to Pages / as an artifact</code></pre>
+
+<div class="warn"><strong>Keep credentials in secrets</strong>
+The connection URL CI uses should be a read-only user (same as <a href="#r1">Recipe 1</a>).
+Always store it as a secret and keep it out of logs.</div>
+
+<h3>Details that matter</h3>
+<ul>
+  <li>Want the report without failing the job? <code>--diff-exit-zero</code>. Machine-processing the result? <code>--diff-format json</code>.</li>
+  <li>Update <code>schema.lock.json</code> in the same PR as the migration — then the only thing that can
+  move the baseline is a reviewed, intended change.</li>
+</ul>
+
+<div class="next"><strong>Take it further</strong>
+<ul>
+  <li>Attach <code>schema.html</code> to every PR as an artifact — an up-to-date diagram during review, always.</li>
+  <li>Commit the digest (<code>schema.md</code>) and make it your coding agent's standing knowledge → <a href="#r3">Recipe 3</a></li>
 </ul></div>
 </section>
 

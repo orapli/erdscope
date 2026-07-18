@@ -166,8 +166,13 @@ footer{border-top:1px solid var(--border); margin:0 auto; padding:20px 34px 60px
     <strong>AI にスキーマを読ませる</strong>
     <span>DB構造を踏まえた実装・レビューを AI にさせる。トークン効率よく。</span>
   </a>
+  <a class="route-card" href="#r4">
+    <span class="route-num">RECIPE 4</span>
+    <strong>CI/CD に組み込む</strong>
+    <span>スキーマドキュメントを自動更新し、想定外の変更はドリフト検知で止める。</span>
+  </a>
 </div>
-<p class="cap">レシピは今後追加予定です（DB×コードの突き合わせ、Excel定義書、CIでのドリフト検知、dbdiagram.io 連携など）。</p>
+<p class="cap">レシピは今後追加予定です（DB×コードの突き合わせ、Excel定義書、dbdiagram.io 連携など）。</p>
 
 <!-- ══════════════════════ R1 ══════════════════════ -->
 <section id="r1">
@@ -295,8 +300,74 @@ Rel: belongs_to categories as parent fk=parent_id
 <div class="next"><strong>発展アイデア</strong>
 <ul>
   <li>スナップショットを撮って（<code>--emit-json schema.json</code>）、CI で
-  <code>--diff schema.json</code> — 「DBが基準からズレたら落とす」ドリフト検知ゲートに。</li>
+  <code>--diff schema.json</code> — 「DBが基準からズレたら落とす」ドリフト検知ゲートに → <a href="#r4">Recipe 4</a></li>
   <li>マイグレーション前後で digest を2回生成して AI に差分の影響を聞く。</li>
+</ul></div>
+</section>
+
+<!-- ══════════════════════ R4 ══════════════════════ -->
+<section id="r4">
+<h2>Recipe 4 — CI/CD に組み込む: ドキュメント自動更新とドリフト検知 <a class="anchor-link" href="#r4">#</a></h2>
+
+<div class="scene"><strong>場面:</strong> ER図や定義書は作った瞬間から腐り始める。手動更新は必ず忘れられる。
+最新のドキュメントは機械に作らせて、想定外のスキーマ変更は CI で止めたい。</div>
+
+<h3>スキーマドキュメントを自動更新する</h3>
+<p>erdscope は CI 向きにできています — 生成物は<b>自己完結の1ファイル</b>なので、
+そのまま GitHub Pages や社内ポータルに置けます。<code>--emit-digest</code> の Markdown は、
+ビルド時に生成して<b>プロダクトのマニュアルの「データモデル」章として組み込む</b>部品にもなります。</p>
+
+<pre><code># HTML と Markdown ダイジェストをビルド成果物として生成
+erdscope "$DB_URL" -o site/schema.html --no-open --emit-digest site/schema.md</code></pre>
+
+<h3>ドリフト検知ゲート</h3>
+<p>基準スナップショットをリポジトリにコミットしておき、CI で現在のDBと照合します。
+exit code は <b>0 = 一致 / 1 = 差分あり / 2 = エラー</b> — 差分があればジョブがそのまま落ちます。</p>
+
+<pre><code># 基準を作ってコミット（意図したスキーマ変更を取り込むときに更新）
+erdscope "$DB_URL" --emit-json schema.lock.json --no-open
+
+# CI 側: 基準からズレていたら exit 1（差分は人間可読で表示）
+erdscope "$DB_URL" --diff schema.lock.json</code></pre>
+
+<p>GitHub Actions の最小テンプレート:</p>
+
+<pre><code>name: schema-docs
+on:
+  push: { branches: [main] }
+  schedule:
+    - cron: '0 6 * * 1'   # 毎週月曜、鮮度チェック
+jobs:
+  schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install erdscope pymysql
+      - name: Generate schema docs (HTML + digest)
+        run: erdscope "$DB_URL" -o site/schema.html --no-open --emit-digest site/schema.md
+        env:
+          DB_URL: ${{ secrets.READONLY_DB_URL }}
+      - name: Schema drift gate
+        run: erdscope "$DB_URL" --diff schema.lock.json
+        env:
+          DB_URL: ${{ secrets.READONLY_DB_URL }}
+      # site/ を Pages / artifact として公開する step をここに</code></pre>
+
+<div class="warn"><strong>接続情報は secrets に</strong>
+CI から渡す接続URLも読み取り専用ユーザーで（<a href="#r1">Recipe 1</a> と同じ）。
+URL は必ず secrets に入れ、ログに出さないでください。</div>
+
+<h3>ポイント</h3>
+<ul>
+  <li>レポートだけ欲しい（落としたくない）ときは <code>--diff-exit-zero</code>。機械処理するなら <code>--diff-format json</code>。</li>
+  <li>「意図した変更」はマイグレーションと同じ PR で <code>schema.lock.json</code> を更新する運用にすると、
+  基準を動かせるのはレビューを通った変更だけになります。</li>
+</ul>
+
+<div class="next"><strong>発展アイデア</strong>
+<ul>
+  <li>PR ごとに <code>schema.html</code> を artifact に添付 — レビュー中いつでも最新の図が見られる。</li>
+  <li><code>schema.md</code>（digest）をリポジトリにコミットして、コーディングエージェントの常備知識にする → <a href="#r3">Recipe 3</a></li>
 </ul></div>
 </section>
 
