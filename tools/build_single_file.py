@@ -47,6 +47,7 @@ MODULES = [
     'emit.py',        # --emit-json (canonical schema + fingerprint) and --emit-config
                       # (config-authoring YAML/JSON projection, level1 round trip)
     'diff.py',        # --diff (backlog #2): level1 schema diff / CI drift gate
+    'digest.py',      # --emit-digest (backlog #3): token-efficient Markdown digest for LLMs
     'cli.py',         # argparse main, serialize_for_viewer, _finish
 ]
 

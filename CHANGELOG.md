@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-18
+
+### Added
+
+- **`--emit-digest FILE.md`** (backlog #3) — writes a token-efficient Markdown
+  digest of the final schema, with design notes, meant for pasting into or
+  reading by an LLM/agent instead of the raw schema or the full `--emit-json`
+  snapshot (`-` for stdout; the HTML is still generated either way). Projects
+  the same canonical schema `--emit-json` does (same deterministic ordering,
+  same dangling-association pruning), but drops provenance/`sources` and, by
+  default, a column's `nullable`/`default`/`sql_type` to spend the token
+  budget on meaning rather than every DB-level nuance (`--digest-verbose`
+  adds those three back). Global/table/relation notes — the one thing a
+  digest carries that the raw schema can't — render inline: a global note as
+  an intro paragraph, a table note under its table's heading, a relation note
+  appended to the association line it targets. `groups` is intentionally
+  never rendered (a viewer layout aid, not schema meaning). Each table
+  becomes a heading, one bullet per column, and one compressed `Rel:` line
+  summarizing its associations; a table with no associations omits that
+  line. Deterministic: the same schema always renders the same Markdown.
+  Purely additive: existing HTML/Excel/`--emit-json`/`--emit-config` output
+  is untouched; not combinable with `--diff` (a usage error, exit 2), same as
+  every other output-generating flag.
+
 ## [0.7.0] - 2026-07-18
 
 ### Added

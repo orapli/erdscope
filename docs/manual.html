@@ -817,10 +817,12 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
 <tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
 <tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>Also write the final schema as a config-authoring file, re-importable via <code>--config</code> — see <a href="#emit-config">Exports</a>. Extension picks the format (<code>-</code> for stdout, always JSON). The HTML is still generated</td></tr>
-<tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--excel</code></td></tr>
+<tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--excel</code></td></tr>
 <tr><td><code>--diff-provenance</code></td><td>With <code>--diff</code>, also compare association provenance/sources (ignored by default)</td></tr>
 <tr><td><code>--diff-exit-zero</code></td><td>With <code>--diff</code>, exit 0 even when a difference is found</td></tr>
 <tr><td><code>--diff-format text|json</code></td><td>With <code>--diff</code>, render as human-readable text (default) or deterministic JSON</td></tr>
+<tr><td><code>--emit-digest FILE.md</code></td><td>Also write a token-efficient Markdown digest of the schema, with design notes, for LLMs/agents — see <a href="#emit-digest">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
+<tr><td><code>--digest-verbose</code></td><td>With <code>--emit-digest</code>, also include nullable/default/sql_type per column (omitted by default)</td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
@@ -1108,9 +1110,10 @@ cannot detect.</p>
 <h3 id="diff">Schema diff / drift gate</h3>
 <p><code>--diff SNAPSHOT.json</code> compares this run against a previously-saved
 <code>--emit-json</code> snapshot and reports the difference instead of generating any
-output — no HTML, Excel, JSON snapshot, or config file is written for a <code>--diff</code>
-run, and it can't be combined with <code>--emit-json</code>/<code>--emit-config</code>/
-<code>--excel</code> (a usage error, exit 2). It compares at <strong>level1</strong> — the
+output — no HTML, Excel, JSON snapshot, config file, or digest is written for a
+<code>--diff</code> run, and it can't be combined with <code>--emit-json</code>/
+<code>--emit-config</code>/<code>--emit-digest</code>/<code>--excel</code> (a usage error,
+exit 2). It compares at <strong>level1</strong> — the
 same "materially the same schema" notion <a href="#emit-config">Config export</a> defines —
 not byte-for-byte: <code>added</code> means present in <em>this run</em> only, <code>removed</code>
 means present in the <em>snapshot</em> only, at every level (tables, then within each common
@@ -1133,6 +1136,28 @@ json</code> prints the same structure as deterministic JSON for scripting. As wi
 <code>--emit-config</code>, no provider distinguishes an empty-string column default from no
 default at all, so <code>--diff</code> cannot detect that one specific change either — a
 known level1 limit, not something worth adding a special case for.</p>
+
+<h3 id="emit-digest">Markdown digest for LLMs/agents</h3>
+<p><code>--emit-digest FILE.md</code> (use <code>-</code> for stdout) writes a token-efficient
+Markdown rendering of the final schema alongside the HTML, meant to be pasted into or read by
+an LLM/agent instead of the raw schema or the full JSON snapshot. It projects the same
+canonical schema <a href="#emit-json">JSON snapshot</a> does, so it inherits the same
+deterministic ordering and dangling-association pruning, but changes what's kept: provenance,
+<code>sources</code>, and — by default — a column's <code>nullable</code>/<code>default</code>/
+<code>sql_type</code> are all dropped to keep the token cost on the shape of the schema rather
+than every DB-level nuance (pass <code>--digest-verbose</code> to add those three back).
+<strong>Design notes are the one thing a digest can carry that the raw schema can't</strong> —
+global, table, and relation notes (<a href="#notes">Notes</a>) all render inline: a global note
+as an intro paragraph, a table note under its table's heading, and a relation note appended to
+the specific association line it targets. <code>groups</code> (<a href="#groups">Groups</a>)
+is the one canonical-schema field that never appears in a digest — it's a viewer layout aid
+(which tables get drawn inside a shared frame), not schema meaning an LLM reading this file
+would need. Each table renders as a heading (plus its comment), one bullet per column
+(<code>name: type</code>, plus <code>pk</code>/<code>fk→target</code>/a quoted comment where
+they apply), and one compressed <code>Rel:</code> line summarizing its associations
+(<code>type target[ as name][ fk=…][ through …][ (poly)]</code>); a table with no associations
+simply omits the <code>Rel:</code> line. Like the JSON snapshot, the same schema always
+renders the same Markdown byte-for-byte.</p>
 </section>
 
 <section id="troubleshooting">
