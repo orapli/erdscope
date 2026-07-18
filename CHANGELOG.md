@@ -7,8 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-18
+
 ### Added
 
+- **notes (Phase 1)** — a new config `notes:` list attaches design decisions,
+  operational rules, and ADR links to a table, a relationship, or the whole
+  diagram. A pure sidecar: it never touches physical schema, merge precedence,
+  or association provenance. Two-stage validation (syntax at load, semantics
+  against the final merged IR); every error names the offending note id.
+  Plain-text only, HTML-escaped, with link URLs restricted to http(s). The
+  viewer shows table/relation notes in the detail panel and a global note in
+  the legend, and folds note text into both the filter and the Highlight
+  search; hidden tables suppress their notes. `--only`/`--exclude` drop any
+  note whose endpoint table(s) didn't survive. A notes-free config stays
+  byte-for-byte identical (no `notes` key), so the sidecar is inert for
+  existing use.
+- **groups (Phase 1)** — a new config `groups:` list (`{id, title?, tables,
+  color?}`) draws a labeled, rounded frame behind a set of related tables,
+  mirroring notes end to end as a pure sidecar. Two-stage validation (unique
+  id, non-empty `tables`, no within-group duplicate, hex `color`; every member
+  exists in the merged IR; no table may belong to two groups). The viewer
+  draws backmost frames sized to their displayed members and follows node
+  drags live; drag a group by its title chip to move every member at once;
+  a toolbar toggle shows/hides all frames; PNG/SVG export includes them.
+  `--only`/`--exclude` trims membership and drops any group left empty. A
+  groups-free config stays byte-for-byte identical (no `groups` key).
 - Typed `sources[]` entries that parse **nothing** (e.g. a Prisma project declared as
   `rails.models`) are now a hard error naming the source id and the layout the type
   expected, instead of a silently empty success. A new per-source `allow_empty: true`
