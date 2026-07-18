@@ -169,9 +169,15 @@ NOTES = [
 # Visual groups (groups Phase 1) — one illustrative group so the live demo
 # shows the feature: the order-fulfillment tables boxed together. Every table
 # here belongs to exactly ONE group (Phase 1 forbids overlapping membership).
+# Phase 1 has no layout affinity yet (DESIGN_ROADMAP §P2 follow-up), so a
+# group frame just wraps its members wherever the layout already placed them —
+# a group whose members are scattered would balloon into a frame that also
+# encloses unrelated tables. The catalog trio (products + its category join +
+# categories) lands as a tight vertical cluster under the default layout, so it
+# frames cleanly. Revisit once layout affinity keeps members together.
 GROUPS = [
-    {'id': 'orders-domain', 'title': 'Orders',
-     'tables': ['orders', 'order_items', 'payments', 'shipments', 'order_coupons']},
+    {'id': 'catalog', 'title': 'Catalog',
+     'tables': ['products', 'product_categories', 'categories']},
 ]
 
 tables = erd.mysql_ir(T, C, FK, IX)

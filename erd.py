@@ -5109,13 +5109,18 @@ function drawGroups(parent, displayTables){
     }));
     parent.appendChild(frame);
 
-    // title chip: small background pill + label, top-left of the frame.
-    // Only the chip has pointer-events (CSS: .grp-rect is none, .grp-chip is
-    // auto) — it's the drag handle for moving the whole group (§5.4), and
-    // the frame body must never steal a click meant for the node/pan below.
+    // title chip: small background pill + label, sitting as a TAB just ABOVE
+    // the frame's top-left edge — not inside it. A member node's top is only
+    // GROUP_PAD below the frame top, and nodes render in the layer above this
+    // one, so a chip drawn inside the frame gets covered by the topmost member
+    // (reported on the live demo). Placing it above the top edge keeps it
+    // clear of every member node. Only the chip has pointer-events (CSS:
+    // .grp-rect is none, .grp-chip is auto) — it's the drag handle for moving
+    // the whole group (§5.4); the frame body must never steal a click meant
+    // for the node/pan below.
     const label = g.title || g.id;
     const chip = svgEl('g', {class:'grp-chip', 'data-group':g.id});
-    const chipText = svgEl('text', {x:x0+10, y:y0+16, class:'grp-label-text'});
+    const chipText = svgEl('text', {x:x0+9, y:y0-6, class:'grp-label-text'});
     chipText.textContent = label;
     chip.appendChild(chipText);
     frame.appendChild(chip);
@@ -5124,7 +5129,7 @@ function drawGroups(parent, displayTables){
     // behind it sized to fit
     const tw = chipText.getBBox().width;
     const chipBg = svgEl('rect', {
-      x:x0+4, y:y0+2, width:tw+12, height:20, rx:6, ry:6,
+      x:x0, y:y0-19, width:tw+18, height:18, rx:6, ry:6,
       class:'grp-label-bg', style:`fill:${color};stroke:${color}`,
     });
     chip.insertBefore(chipBg, chipText);
