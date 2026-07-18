@@ -37,6 +37,12 @@ def main():
                    help='Also write a canonical JSON schema snapshot (with provenance and '
                         'a content fingerprint) alongside the HTML; use - for stdout. The '
                         'HTML is still generated')
+    p.add_argument('--emit-config', metavar='FILE.(yml|yaml|json)', default=argparse.SUPPRESS,
+                   help='Also write the final merged schema as a config-authoring file, '
+                        're-importable via --config for a semantically-equivalent (not '
+                        'byte-identical) round trip; dispatches on extension — .yml/.yaml '
+                        'for YAML (needs PyYAML installed) or .json for JSON; use - for '
+                        'stdout, which is always JSON. The HTML is still generated')
     p.add_argument('--excel-template', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help="Override the workbook's colors/fonts/borders from a template "
                         '.xlsx — see excel-template.xlsx and its Styles sheet for the '
@@ -317,12 +323,19 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     # `global` notes are diagram-wide (legend/overview), not tied to any one
     # table, so they always survive. A no-op when --only/--exclude weren't
     # passed: `tables` is then the unfiltered set, so every endpoint is present.
+    #
+    # Sol relaxation #3 (second half): a polymorphic relation note's `target`
+    # is a SYNTHETIC, tableless name (see validate_config_references above) —
+    # it can never be "in tables" the way a real target can, so requiring
+    # that for a polymorphic note would silently drop every one of them.
+    # Source survival is still required (the note is meaningless with no
+    # source table left to attach to); the target check is skipped instead.
     if notes_data:
         notes_data = [n for n in notes_data
                       if n['scope'] == 'global'
                       or (n['scope'] == 'table' and n['table'] in tables)
                       or (n['scope'] == 'relation' and n['source_table'] in tables
-                          and n['target'] in tables)]
+                          and (n.get('polymorphic') or n['target'] in tables))]
 
     # groups Phase 1: narrow each group's membership to the tables that
     # survived --only/--exclude, then drop any group left with zero members —
@@ -340,6 +353,7 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     _seen_out = {}
     for _flag, _val in (('-o/--output', getattr(args, 'output', None)),
                         ('--emit-json', getattr(args, 'emit_json', None)),
+                        ('--emit-config', getattr(args, 'emit_config', None)),
                         ('--excel', getattr(args, 'excel', None))):
         if not _val or _val == '-':
             continue
@@ -357,6 +371,39 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     # deep-copies internally, so this never affects the HTML/Excel below.
     emit_json_doc = (emit_json_document(tables, notes_data, groups_data)
                      if getattr(args, 'emit_json', None) is not None else None)
+
+    # --emit-config (backlog #1): same provenance-preserving-IR timing as
+    # --emit-json above (built before serialize_for_viewer). Extension
+    # dispatch (Sol relaxation #6): .yml/.yaml -> YAML (PyYAML required — a
+    # hard error here, no silent JSON fallback, since a script asking for
+    # YAML would otherwise get a different format without any indication);
+    # .json -> JSON; '-' (stdout) -> JSON always (no extension to read).
+    emit_config_val = getattr(args, 'emit_config', None)
+    emit_config_fmt = None
+    if emit_config_val is not None:
+        if emit_config_val == '-':
+            emit_config_fmt = 'json'
+        else:
+            _suffix = Path(emit_config_val).suffix.lower()
+            if _suffix in ('.yml', '.yaml'):
+                emit_config_fmt = 'yaml'
+            elif _suffix == '.json':
+                emit_config_fmt = 'json'
+            else:
+                sys.exit(f'Error: --emit-config {emit_config_val!r} must end in .yml, '
+                         '.yaml, or .json (or be "-" for stdout, which is always JSON)')
+        if emit_config_fmt == 'yaml':
+            try:
+                import yaml  # noqa: F401 — existence check only; config_yaml_text imports it again
+            except ImportError:
+                sys.exit(f'Error: --emit-config {emit_config_val} is YAML but PyYAML is '
+                         'not installed (pip install pyyaml, or use a .json extension '
+                         'instead)')
+    emit_config_text = None
+    if emit_config_val is not None:
+        emit_config_doc = config_document(tables, notes_data, groups_data, title=title_name)
+        emit_config_text = (config_yaml_text(emit_config_doc) if emit_config_fmt == 'yaml'
+                            else config_json_text(emit_config_doc))
 
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
@@ -391,6 +438,13 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
         else:
             Path(args.emit_json).write_text(emit_json_doc, encoding='utf-8')
             print(f'Generated: {args.emit_json}', file=sys.stderr)
+
+    if emit_config_text is not None:
+        if emit_config_val == '-':
+            sys.stdout.write(emit_config_text)
+        else:
+            Path(emit_config_val).write_text(emit_config_text, encoding='utf-8')
+            print(f'Generated: {emit_config_val}', file=sys.stderr)
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,

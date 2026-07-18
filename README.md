@@ -160,6 +160,7 @@ explicit CLI argument wins.
 | `--models PATH` | Override config `models` with Rails, Prisma, or Django input; repeatable |
 | `--excel FILE.xlsx` | Also generate a table-definition workbook |
 | `--emit-json FILE.json` | Also write a canonical JSON schema snapshot with a content fingerprint (`-` for stdout) |
+| `--emit-config FILE.yml\|.json` | Also write the schema as a config-authoring file, re-importable via `--config` (`-` for stdout, always JSON) |
 | `--only 'user*,order*'` | Generate only matching tables |
 | `--exclude '*_logs'` | Leave matching tables out |
 | `--infer-fk` | Add clearly marked relation guesses from `*_id` columns |

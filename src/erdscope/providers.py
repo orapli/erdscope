@@ -130,12 +130,24 @@ def validate_config_references(config_tables, tables, label):
             if a.get('drop') is True:
                 continue
             target = a.get('target')
-            if target and target not in tables:
+            # Sol relaxation #3: a polymorphic belongs_to's target is a
+            # SYNTHETIC, tableless name (Django's pluralized model name,
+            # Rails' association name) — never a real table, by design (see
+            # emit.py's _canonical_associations docstring on the same
+            # exemption for --emit-json). Only a non-polymorphic association
+            # needs its target to actually exist.
+            if target and not a.get('polymorphic') and target not in tables:
                 sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
                          f"references unknown target table {target!r}")
             # a declared foreign_key must name a real column on the SOURCE table
+            # — except a schema_missing table (Rails-only: no DB columns at
+            # all, per merge.py's schema_missing derivation), where a
+            # foreign_key is Rails' *convention* column, not a real one this
+            # release ever observes (Sol relaxation #4: --emit-config's
+            # round trip of a Rails-only belongs_to must not be rejected for
+            # naming a column that was never going to appear).
             fk = a.get('foreign_key')
-            if fk and fk not in col_names:
+            if fk and fk not in col_names and not tables[tname].get('schema_missing'):
                 sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
                          f"declares foreign_key {fk!r} which does not exist in "
                          f"{tname!r}'s merged columns")
@@ -185,30 +197,39 @@ def resolve_and_validate_notes(notes, tables, label):
                 sys.exit(f"Error: {label} note {note_id!r}: unknown source_table {src!r} "
                          "(not in the final schema)")
             cands = [a for a in tables[src]['associations'] if a['target'] == tgt]
-            fk = target.get('foreign_key')
-            if fk is not None:
-                cands = [a for a in cands if a.get('foreign_key') == fk]
-            name = target.get('name')
-            if name is not None:
-                cands = [a for a in cands if a['name'] == name]
-            through = target.get('through')
-            if through is not None:
-                cands = [a for a in cands if a.get('through') == through]
+            # Sol relaxation #2: an OMITTED key is a wildcard (don't narrow on
+            # it at all); an explicit `null` narrows to "this field is
+            # absent on the match" — `a.get(key)` is already None for an
+            # association that never carries that optional key, so testing
+            # `'key' in target` (not `target.get(key) is not None`) is what
+            # makes the two cases distinguishable. This is what lets
+            # --emit-config's reverse note mapping (which always emits every
+            # one of these keys, explicit-null where the resolved
+            # association has no value) reimport back to exactly the one
+            # association it came from, instead of the null being silently
+            # read as "don't care" and re-widening the match.
+            if 'foreign_key' in target:
+                cands = [a for a in cands if a.get('foreign_key') == target['foreign_key']]
+            if 'name' in target:
+                cands = [a for a in cands if a['name'] == target['name']]
+            if 'through' in target:
+                cands = [a for a in cands if a.get('through') == target['through']]
             # Sol finding #5: narrow by association TYPE (has_many/belongs_to/
             # has_one/has_and_belongs_to_many) — lets a note pick out e.g. a
             # has_many among a has_many/has_one pair that otherwise share name
             # and target. Config key is `assoc_type` (not `type` — that name is
             # already the note's own target-kind discriminator), but it
             # narrows against the association's real `type` field.
-            atype = target.get('assoc_type')
-            if atype is not None:
-                cands = [a for a in cands if a['type'] == atype]
-            # `polymorphic` is tri-state: None = don't care, True/False both
+            if 'assoc_type' in target:
+                cands = [a for a in cands if a['type'] == target['assoc_type']]
+            # `polymorphic` is tri-state: absent = don't care, True/False both
             # narrow (previously only `is True` narrowed, so `polymorphic:
             # false` was silently ignored as a filter — Sol finding #5).
-            poly = target.get('polymorphic')
-            if poly is not None:
-                cands = [a for a in cands if bool(a.get('polymorphic')) == poly]
+            # config.py's syntactic check rejects `polymorphic: null` outright
+            # (it must be a real bool when the key is present at all), so
+            # `'polymorphic' in target` never sees an explicit null here.
+            if 'polymorphic' in target:
+                cands = [a for a in cands if bool(a.get('polymorphic')) == target['polymorphic']]
             if not cands:
                 sys.exit(f"Error: {label} note {note_id!r}: no relation from {src!r} to "
                          f"{tgt!r} matches (check source_table/target_table/foreign_key/"

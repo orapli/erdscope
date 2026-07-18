@@ -162,6 +162,7 @@ python3 erd.py demo
 | `--models PATH` | 設定ファイルの`models`をRails、Prisma、Django入力で上書き。複数指定可能 |
 | `--excel FILE.xlsx` | テーブル定義のExcelワークブックも生成する |
 | `--emit-json FILE.json` | スキーマの正規JSONスナップショット（内容フィンガープリント付き）も書き出す（`-`で標準出力） |
+| `--emit-config FILE.yml\|.json` | スキーマを設定ファイル形式でも書き出す。`--config`で再取込可能（`-`で標準出力、常にJSON） |
 | `--only 'user*,order*'` | 一致するテーブルだけを生成する |
 | `--exclude '*_logs'` | 一致するテーブルを除外する |
 | `--infer-fk` | `*_id`カラムから推測したリレーションを、明確に区別して追加する |

@@ -170,10 +170,25 @@ class TestColumnFragmentAndDrop(unittest.TestCase):
 
 
 class TestIndexFragmentAndDrop(unittest.TestCase):
-    def test_index_requires_name(self):
+    # Sol relaxation #1 (backlog #1, full-fidelity --emit-config): a non-drop
+    # index no longer requires `name` — a DB-sourced unnamed index has no
+    # name to re-emit, and merge.py already supports unnamed-index identity
+    # by column tuple. An index DROP still requires `name` (merge.py matches
+    # drops by name only).
+    def test_unnamed_index_is_now_accepted(self):
+        cfg = _load({'tables': {'t': {'indexes': [{'columns': ['email']}]}}})
+        ix = cfg['tables']['t']['indexes'][0]
+        self.assertNotIn('name', ix)
+        self.assertEqual(ix['columns'], ['email'])
+
+    def test_index_drop_still_requires_name(self):
         with self.assertRaises(SystemExit) as cm:
-            _load({'tables': {'t': {'indexes': [{'columns': ['email']}]}}})
+            _load({'tables': {'t': {'indexes': [{'columns': ['email'], 'drop': True}]}}})
         self.assertIn('name', str(cm.exception))
+
+    def test_index_name_must_be_non_empty_string_when_given(self):
+        with self.assertRaises(SystemExit):
+            _load({'tables': {'t': {'indexes': [{'name': '', 'columns': ['a']}]}}})
 
     def test_index_requires_columns(self):
         with self.assertRaises(SystemExit) as cm:
@@ -200,6 +215,31 @@ class TestIndexFragmentAndDrop(unittest.TestCase):
                 {'name': 'idx', 'columns': ['a']},
                 {'name': 'idx', 'columns': ['b']}]}}})
         self.assertIn('duplicate', str(cm.exception).lower())
+
+    def test_duplicate_unnamed_index_same_columns_and_unique_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'tables': {'t': {'indexes': [
+                {'columns': ['a'], 'unique': True},
+                {'columns': ['a'], 'unique': True}]}}})
+        self.assertIn('duplicate', str(cm.exception).lower())
+
+    def test_unnamed_indexes_same_columns_rejected_regardless_of_unique(self):
+        # Identity is the column tuple ALONE, matching merge.py's unnamed-index
+        # key (which deliberately excludes `unique`). Two unnamed indexes on
+        # the same columns cannot coexist in the merged IR — merge collapses
+        # them with an arbitrary-winner warning — so config load rejects the
+        # pair up front rather than accept a config that can't round-trip.
+        with self.assertRaises(SystemExit) as cm:
+            _load({'tables': {'t': {'indexes': [
+                {'columns': ['a'], 'unique': True},
+                {'columns': ['a'], 'unique': False}]}}})
+        self.assertIn('duplicate', str(cm.exception).lower())
+
+    def test_named_and_unnamed_index_on_same_columns_coexist(self):
+        cfg = _load({'tables': {'t': {'indexes': [
+            {'name': 'idx_a', 'columns': ['a']},
+            {'columns': ['a']}]}}})
+        self.assertEqual(len(cfg['tables']['t']['indexes']), 2)
 
 
 class TestAssociationFragmentAndDrop(unittest.TestCase):

@@ -2824,12 +2824,24 @@ def validate_config_references(config_tables, tables, label):
             if a.get('drop') is True:
                 continue
             target = a.get('target')
-            if target and target not in tables:
+            # Sol relaxation #3: a polymorphic belongs_to's target is a
+            # SYNTHETIC, tableless name (Django's pluralized model name,
+            # Rails' association name) — never a real table, by design (see
+            # emit.py's _canonical_associations docstring on the same
+            # exemption for --emit-json). Only a non-polymorphic association
+            # needs its target to actually exist.
+            if target and not a.get('polymorphic') and target not in tables:
                 sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
                          f"references unknown target table {target!r}")
             # a declared foreign_key must name a real column on the SOURCE table
+            # — except a schema_missing table (Rails-only: no DB columns at
+            # all, per merge.py's schema_missing derivation), where a
+            # foreign_key is Rails' *convention* column, not a real one this
+            # release ever observes (Sol relaxation #4: --emit-config's
+            # round trip of a Rails-only belongs_to must not be rejected for
+            # naming a column that was never going to appear).
             fk = a.get('foreign_key')
-            if fk and fk not in col_names:
+            if fk and fk not in col_names and not tables[tname].get('schema_missing'):
                 sys.exit(f"Error: {label} association {a.get('name')!r} on {tname!r} "
                          f"declares foreign_key {fk!r} which does not exist in "
                          f"{tname!r}'s merged columns")
@@ -2879,30 +2891,39 @@ def resolve_and_validate_notes(notes, tables, label):
                 sys.exit(f"Error: {label} note {note_id!r}: unknown source_table {src!r} "
                          "(not in the final schema)")
             cands = [a for a in tables[src]['associations'] if a['target'] == tgt]
-            fk = target.get('foreign_key')
-            if fk is not None:
-                cands = [a for a in cands if a.get('foreign_key') == fk]
-            name = target.get('name')
-            if name is not None:
-                cands = [a for a in cands if a['name'] == name]
-            through = target.get('through')
-            if through is not None:
-                cands = [a for a in cands if a.get('through') == through]
+            # Sol relaxation #2: an OMITTED key is a wildcard (don't narrow on
+            # it at all); an explicit `null` narrows to "this field is
+            # absent on the match" — `a.get(key)` is already None for an
+            # association that never carries that optional key, so testing
+            # `'key' in target` (not `target.get(key) is not None`) is what
+            # makes the two cases distinguishable. This is what lets
+            # --emit-config's reverse note mapping (which always emits every
+            # one of these keys, explicit-null where the resolved
+            # association has no value) reimport back to exactly the one
+            # association it came from, instead of the null being silently
+            # read as "don't care" and re-widening the match.
+            if 'foreign_key' in target:
+                cands = [a for a in cands if a.get('foreign_key') == target['foreign_key']]
+            if 'name' in target:
+                cands = [a for a in cands if a['name'] == target['name']]
+            if 'through' in target:
+                cands = [a for a in cands if a.get('through') == target['through']]
             # Sol finding #5: narrow by association TYPE (has_many/belongs_to/
             # has_one/has_and_belongs_to_many) — lets a note pick out e.g. a
             # has_many among a has_many/has_one pair that otherwise share name
             # and target. Config key is `assoc_type` (not `type` — that name is
             # already the note's own target-kind discriminator), but it
             # narrows against the association's real `type` field.
-            atype = target.get('assoc_type')
-            if atype is not None:
-                cands = [a for a in cands if a['type'] == atype]
-            # `polymorphic` is tri-state: None = don't care, True/False both
+            if 'assoc_type' in target:
+                cands = [a for a in cands if a['type'] == target['assoc_type']]
+            # `polymorphic` is tri-state: absent = don't care, True/False both
             # narrow (previously only `is True` narrowed, so `polymorphic:
             # false` was silently ignored as a filter — Sol finding #5).
-            poly = target.get('polymorphic')
-            if poly is not None:
-                cands = [a for a in cands if bool(a.get('polymorphic')) == poly]
+            # config.py's syntactic check rejects `polymorphic: null` outright
+            # (it must be a real bool when the key is present at all), so
+            # `'polymorphic' in target` never sees an explicit null here.
+            if 'polymorphic' in target:
+                cands = [a for a in cands if bool(a.get('polymorphic')) == target['polymorphic']]
             if not cands:
                 sys.exit(f"Error: {label} note {note_id!r}: no relation from {src!r} to "
                          f"{tgt!r} matches (check source_table/target_table/foreign_key/"
@@ -7720,22 +7741,41 @@ def _check_config_indexes(indexes, path, where):
             sys.exit(f'Error: {path} `{iw}` must be an object')
         _reject_unknown_keys(ix, _CONFIG_INDEX_KEYS, path, iw)
         _check_bool(ix.get('drop'), 'drop' in ix, path, f'{iw}.drop')
-        # Config indexes are name-mandatory (§7.4) — the name is the identity
-        # key for both fragment and drop (§4.3: IndexFragment / IndexDrop)
         name = ix.get('name')
-        if not isinstance(name, str) or not name:
-            sys.exit(f'Error: {path} `{iw}` needs a non-empty string `name` '
-                     '(config indexes must be named)')
-        if name in seen:
-            sys.exit(f'Error: {path} `{where}.indexes` has a duplicate index name {name!r}')
-        seen.add(name)
+        if 'name' in ix and (not isinstance(name, str) or not name):
+            sys.exit(f'Error: {path} `{iw}.name` must be a non-empty string when given')
         if ix.get('drop') is True:
-            continue  # IndexDrop = { name, drop: true }
+            # IndexDrop = { name, drop: true } — a drop is still name-
+            # mandatory (§7.4): merge.py matches drops by name only, and an
+            # unnamed index has no stable cross-layer identity to drop by.
+            if not name:
+                sys.exit(f'Error: {path} `{iw}` needs a non-empty string `name` '
+                         '(an index drop must be named)')
+            if name in seen:
+                sys.exit(f'Error: {path} `{where}.indexes` has a duplicate index name {name!r}')
+            seen.add(name)
+            continue
         cols = ix.get('columns')
         if (not isinstance(cols, list) or not cols
                 or any(not isinstance(c, str) for c in cols)):
             sys.exit(f'Error: {path} `{iw}.columns` must be a non-empty list of strings')
         _check_bool(ix.get('unique'), 'unique' in ix, path, f'{iw}.unique')
+        # A non-drop (add/override) index is name-OPTIONAL (Sol relaxation
+        # #1 / full-fidelity --emit-config round trip: a DB-sourced unnamed
+        # index has no name to re-emit, and merge.py already supports
+        # unnamed-index identity by column tuple). Identity for THIS
+        # config-internal duplicate check is the given name when present,
+        # else the column tuple ALONE — matching merge.py's own unnamed-index
+        # key (`tuple(columns)`, deliberately NOT including `unique`, §7.4).
+        # Keying on (columns, unique) here would let a unique + non-unique
+        # unnamed pair on the same columns pass load only to be silently
+        # collapsed into one at merge (conflicting-value warning, arbitrary
+        # winner) — so we reject that pair up front instead.
+        identity = name if name else tuple(cols)
+        if identity in seen:
+            sys.exit(f'Error: {path} `{where}.indexes` has a duplicate index '
+                     f'{"name" if name else "columns"} {identity!r}')
+        seen.add(identity)
 
 def _config_assoc_identity(a):
     """Stable identity for an association fragment/drop, used only for
@@ -8333,6 +8373,187 @@ def emit_json_document(tables, notes_data, groups_data):
     document = {'format': 1, 'fingerprint': snapshot_fingerprint(schema), 'schema': schema}
     return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True,
                       allow_nan=False) + '\n'
+
+
+# ---------------------------------------------------------------------------
+# --emit-config — config-authoring (YAML/JSON) projection of the final merged
+# IR (backlog #1). Reuses every canonical_schema helper above for identical
+# dangling-pruning, deterministic sort, and falsy-omission rules — the two
+# emitters diverge only in OUTPUT SHAPE, not in which data survives:
+#   - columns/indexes: byte-identical projection to --emit-json's own
+#     (_canonical_column / _canonical_indexes, reused verbatim).
+#   - associations: same pruning + sort as --emit-json's
+#     (_canonical_associations, reused), minus provenance/sources — a
+#     config-only reimport can never carry either (merge_ir always assigns
+#     config-kind associations 'manual' provenance; the config association
+#     input format has no field for provenance/sources at all).
+#   - composite primary keys (P1/E-2): re-derived here from column.primary
+#     IN COLUMN ORDER, never from the IR's own `primary_key` field — a
+#     DB-sourced composite PK's `primary_key` names only its FIRST column
+#     (merge.py:312's _normalize_primary_key docstring), so reading it here
+#     would silently truncate the PK on reimport. A single-column PK stays a
+#     plain column `primary: true`; only 2+ primary columns promote to a
+#     table-level `primary_key: [...]`.
+#
+# This is intentionally NOT a full round trip: provenance, `sources`, the
+# legacy db_fk/inferred/manual/schema_fk flags, and the config drop/*_mode
+# OPERATIONS are all gone after one pass through the merged IR — a
+# config-only reimport of this file reaches "level1" (materially the same
+# schema — same tables/columns/types/nullability/defaults, same primary-key
+# COLUMN SETS, same indexes as (columns, unique) sets, same associations as
+# (type, target, foreign_key, through, polymorphic) tuples, same
+# comments/notes/groups), not a byte-identical config source.
+# ---------------------------------------------------------------------------
+
+def _config_associations(associations, survivors):
+    """Config-authoring projection of one table's associations: identical
+    dangling-pruning and deterministic sort to _canonical_associations
+    (reused directly), but WITHOUT provenance/sources — the config
+    association shape (type/target/name?/foreign_key?/through?/
+    polymorphic?) has no field for either, and a config-only reimport
+    resolves every association to 'manual' provenance regardless of what it
+    originally was."""
+    out = []
+    for item in _canonical_associations(associations, survivors):
+        entry = {'type': item['type'], 'target': item['target']}
+        for key in ('name', 'foreign_key', 'through', 'polymorphic'):
+            if key in item:
+                entry[key] = item[key]
+        out.append(entry)
+    return out
+
+
+def _config_table(t, survivors):
+    """One merged-IR table -> its config-authoring TableFragment (the shape
+    config.py's _CONFIG_TABLE_KEYS allow-list accepts on load): comment
+    (falsy-omitted, same rule as _canonical_table), primary_key (ONLY for a
+    genuine composite PK — 2+ columns flagged primary; a single-column PK
+    stays a plain column `primary: true`, per P1/E-2), columns/indexes
+    (byte-identical to --emit-json's own projection), associations (see
+    _config_associations above)."""
+    out = {}
+    comment = t.get('comment')
+    if comment:
+        out['comment'] = comment
+    columns = t.get('columns', [])
+    # Composite-PK detection is column-primary-FLAG based, NOT primary_key-
+    # FIELD based (P1/E-2) — see the module-level comment above.
+    primary_cols = [c['name'] for c in columns if c.get('primary')]
+    if len(primary_cols) >= 2:
+        out['primary_key'] = primary_cols
+    out['columns'] = [_canonical_column(c) for c in columns]
+    out['indexes'] = _canonical_indexes(t.get('indexes'))
+    out['associations'] = _config_associations(t.get('associations'), survivors)
+    return out
+
+
+def _config_note(n):
+    """One resolved (viewer-shape) note -> its config `notes:` INPUT
+    projection — the inverse of providers.resolve_and_validate_notes.
+    global/table targets pass through almost as-is. A relation target
+    re-derives the FULL narrowing key (name/foreign_key/through/assoc_type/
+    polymorphic ALL present, explicit `null` wherever the resolved
+    association carries no value for that field — never simply omitted) so
+    that reimporting resolves back to the exact one association this note
+    came from: resolve_and_validate_notes's null-vs-absent narrowing
+    (providers.py, Sol relaxation #2) treats an explicit `null` here as "the
+    field must be absent on the match" and an OMITTED key as "don't care" —
+    only the former is unambiguous enough for a lossless reimport."""
+    scope = n['scope']
+    if scope == 'global':
+        target = {'type': 'global'}
+    elif scope == 'table':
+        target = {'type': 'table', 'table': n['table']}
+    else:  # relation
+        target = {
+            'type': 'relation',
+            'source_table': n['source_table'],
+            'target_table': n['target'],
+            'name': n['name'],
+            'foreign_key': n.get('foreign_key'),
+            'through': n.get('through'),
+            'assoc_type': n['type'],
+            'polymorphic': bool(n.get('polymorphic')),
+        }
+    entry = {'id': n['id'], 'target': target}
+    if n.get('title'):
+        entry['title'] = n['title']
+    entry['text'] = n['text']
+    if n.get('links'):
+        entry['links'] = n['links']
+    return entry
+
+
+def config_document(tables, notes_data, groups_data, title=None):
+    """Build the --emit-config document: the final merged IR (+ resolved
+    notes/groups), projected to the CONFIG AUTHORING shape (config.py's
+    accepted top-level keys — version/title?/tables/notes?/groups?) instead
+    of --emit-json's read-only snapshot shape. Pure: deep-copies its inputs,
+    never mutates them. `title` is omitted when falsy; `notes`/`groups` are
+    omitted entirely when empty/None, mirroring canonical_schema."""
+    tables = copy.deepcopy(tables)
+    survivors = set(tables)
+    out_tables = {name: _config_table(t, survivors) for name, t in tables.items()}
+    doc = {'version': 1, 'tables': out_tables}
+    if title:
+        doc['title'] = title
+    if notes_data:
+        doc['notes'] = [_config_note(n) for n in _canonical_notes(notes_data)]
+    if groups_data:
+        doc['groups'] = _canonical_groups(groups_data)
+    return doc
+
+
+def config_json_text(document):
+    """--emit-config FILE.json (and `-` stdout, JSON by default) text: same
+    conventions as emit_json_document — indent=2, sort_keys=True,
+    ensure_ascii=False, trailing newline — for a diff-friendly file whose
+    bytes depend only on content, never dict insertion order."""
+    return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True,
+                      allow_nan=False) + '\n'
+
+
+def config_yaml_text(document):
+    """--emit-config FILE.yml/.yaml text (Sol relaxation #6). Deterministic
+    (`default_flow_style=False`, `allow_unicode=True`, `sort_keys=True` — the
+    same "stable regardless of dict insertion order" guarantee as the JSON
+    path's `sort_keys=True`) YAML dump, with a custom string representer
+    that:
+      - forces literal block style (`|`) for any string containing a
+        newline, so long note/comment text stays human-readable instead of
+        PyYAML's default folded-quote style (one value, blank-line-joined);
+      - explicitly quotes any OTHER plain scalar that YAML's own
+        implicit-typing resolver would resolve to a non-string tag — the
+        "Norway problem" (bare no/yes/on/off/true/false -> bool), a
+        leading-zero digit string misread as octal, or any bare
+        numeric-looking string misread as int/float/timestamp — so a config
+        string value is guaranteed, not just incidentally, to round-trip as
+        the SAME string the next time `--config` loads this file (belt and
+        suspenders: PyYAML's own default emitter already avoids most of
+        these by checking the identical resolver before choosing plain
+        style, but doing it here explicitly makes the guarantee independent
+        of that emitter-internal behavior).
+    Requires PyYAML to be importable — the caller (cli.py) checks that up
+    front and exits with a clear, no-fallback error before ever reaching
+    here, per Sol relaxation #6 ("no JSON fallback" for a requested .yml/
+    .yaml path)."""
+    import yaml
+
+    class _ConfigDumper(yaml.SafeDumper):
+        pass
+
+    resolver = yaml.resolver.Resolver()
+
+    def _represent_str(dumper, value):
+        if '\n' in value:
+            return dumper.represent_scalar('tag:yaml.org,2002:str', value, style='|')
+        tag = resolver.resolve(yaml.ScalarNode, value, (True, False))
+        style = None if tag == 'tag:yaml.org,2002:str' else "'"
+        return dumper.represent_scalar('tag:yaml.org,2002:str', value, style=style)
+
+    _ConfigDumper.add_representer(str, _represent_str)
+    return yaml.dump(document, Dumper=_ConfigDumper, default_flow_style=False,
+                     allow_unicode=True, sort_keys=True, width=1 << 20)
 def main():
     p = argparse.ArgumentParser(
         description='Generate an interactive ER diagram (and optional Excel table definitions) '
@@ -8372,6 +8593,12 @@ def main():
                    help='Also write a canonical JSON schema snapshot (with provenance and '
                         'a content fingerprint) alongside the HTML; use - for stdout. The '
                         'HTML is still generated')
+    p.add_argument('--emit-config', metavar='FILE.(yml|yaml|json)', default=argparse.SUPPRESS,
+                   help='Also write the final merged schema as a config-authoring file, '
+                        're-importable via --config for a semantically-equivalent (not '
+                        'byte-identical) round trip; dispatches on extension — .yml/.yaml '
+                        'for YAML (needs PyYAML installed) or .json for JSON; use - for '
+                        'stdout, which is always JSON. The HTML is still generated')
     p.add_argument('--excel-template', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help="Override the workbook's colors/fonts/borders from a template "
                         '.xlsx — see excel-template.xlsx and its Styles sheet for the '
@@ -8652,12 +8879,19 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     # `global` notes are diagram-wide (legend/overview), not tied to any one
     # table, so they always survive. A no-op when --only/--exclude weren't
     # passed: `tables` is then the unfiltered set, so every endpoint is present.
+    #
+    # Sol relaxation #3 (second half): a polymorphic relation note's `target`
+    # is a SYNTHETIC, tableless name (see validate_config_references above) —
+    # it can never be "in tables" the way a real target can, so requiring
+    # that for a polymorphic note would silently drop every one of them.
+    # Source survival is still required (the note is meaningless with no
+    # source table left to attach to); the target check is skipped instead.
     if notes_data:
         notes_data = [n for n in notes_data
                       if n['scope'] == 'global'
                       or (n['scope'] == 'table' and n['table'] in tables)
                       or (n['scope'] == 'relation' and n['source_table'] in tables
-                          and n['target'] in tables)]
+                          and (n.get('polymorphic') or n['target'] in tables))]
 
     # groups Phase 1: narrow each group's membership to the tables that
     # survived --only/--exclude, then drop any group left with zero members —
@@ -8675,6 +8909,7 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     _seen_out = {}
     for _flag, _val in (('-o/--output', getattr(args, 'output', None)),
                         ('--emit-json', getattr(args, 'emit_json', None)),
+                        ('--emit-config', getattr(args, 'emit_config', None)),
                         ('--excel', getattr(args, 'excel', None))):
         if not _val or _val == '-':
             continue
@@ -8692,6 +8927,39 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     # deep-copies internally, so this never affects the HTML/Excel below.
     emit_json_doc = (emit_json_document(tables, notes_data, groups_data)
                      if getattr(args, 'emit_json', None) is not None else None)
+
+    # --emit-config (backlog #1): same provenance-preserving-IR timing as
+    # --emit-json above (built before serialize_for_viewer). Extension
+    # dispatch (Sol relaxation #6): .yml/.yaml -> YAML (PyYAML required — a
+    # hard error here, no silent JSON fallback, since a script asking for
+    # YAML would otherwise get a different format without any indication);
+    # .json -> JSON; '-' (stdout) -> JSON always (no extension to read).
+    emit_config_val = getattr(args, 'emit_config', None)
+    emit_config_fmt = None
+    if emit_config_val is not None:
+        if emit_config_val == '-':
+            emit_config_fmt = 'json'
+        else:
+            _suffix = Path(emit_config_val).suffix.lower()
+            if _suffix in ('.yml', '.yaml'):
+                emit_config_fmt = 'yaml'
+            elif _suffix == '.json':
+                emit_config_fmt = 'json'
+            else:
+                sys.exit(f'Error: --emit-config {emit_config_val!r} must end in .yml, '
+                         '.yaml, or .json (or be "-" for stdout, which is always JSON)')
+        if emit_config_fmt == 'yaml':
+            try:
+                import yaml  # noqa: F401 — existence check only; config_yaml_text imports it again
+            except ImportError:
+                sys.exit(f'Error: --emit-config {emit_config_val} is YAML but PyYAML is '
+                         'not installed (pip install pyyaml, or use a .json extension '
+                         'instead)')
+    emit_config_text = None
+    if emit_config_val is not None:
+        emit_config_doc = config_document(tables, notes_data, groups_data, title=title_name)
+        emit_config_text = (config_yaml_text(emit_config_doc) if emit_config_fmt == 'yaml'
+                            else config_json_text(emit_config_doc))
 
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
@@ -8726,6 +8994,13 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
         else:
             Path(args.emit_json).write_text(emit_json_doc, encoding='utf-8')
             print(f'Generated: {args.emit_json}', file=sys.stderr)
+
+    if emit_config_text is not None:
+        if emit_config_val == '-':
+            sys.stdout.write(emit_config_text)
+        else:
+            Path(emit_config_val).write_text(emit_config_text, encoding='utf-8')
+            print(f'Generated: {emit_config_val}', file=sys.stderr)
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,

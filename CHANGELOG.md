@@ -18,6 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   db_fk/schema_fk/inferred) make the snapshot diff-friendly and stable across
   table/notes/groups/sources reordering — same input, byte-identical output.
   Purely additive: existing HTML/Excel output is untouched.
+- **`--emit-config FILE`** — writes the final merged schema as a
+  config-authoring file (YAML if `.yml`/`.yaml`, JSON if `.json`, `-` for
+  stdout as JSON) that can be re-imported via `--config` for a
+  semantically-equivalent ("level1") round trip: same tables, columns,
+  types/nullability/defaults, primary-key column sets (composite PKs
+  re-derived from column flags, not the possibly-truncated `primary_key`
+  field), indexes as (columns, unique) sets, associations as (type, target,
+  foreign_key, through, polymorphic) tuples, comments, notes, and groups.
+  Not a byte-identical round trip: provenance, `sources`, and config
+  drop/`*_mode` operations don't survive one pass through the merged IR. A
+  handful of config-load/validation rules were relaxed to make the reimport
+  possible: a non-drop index no longer requires a `name`; a relation note's
+  `foreign_key`/`name`/`through`/`assoc_type`/`polymorphic` now distinguish
+  an explicit `null` (must be absent on the match) from an omitted key
+  (wildcard); a polymorphic association's target is no longer required to
+  name a real table, and a polymorphic relation note survives `--only`/
+  `--exclude` filtering as long as its source table does; a Rails-only
+  (`schema_missing`) table's association foreign_key is no longer required
+  to name a real column. The YAML writer is deterministic (sorted keys,
+  literal block style for multi-line note text) and always quotes any plain
+  scalar that YAML's own implicit-typing rules would otherwise misread as a
+  bool/int/float on the next load (the "Norway problem"). Purely additive:
+  existing HTML/Excel/`--emit-json` output is untouched.
 
 ## [0.6.0] - 2026-07-18
 

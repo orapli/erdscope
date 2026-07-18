@@ -816,6 +816,7 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
 <tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
+<tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>Also write the final schema as a config-authoring file, re-importable via <code>--config</code> — see <a href="#emit-config">Exports</a>. Extension picks the format (<code>-</code> for stdout, always JSON). The HTML is still generated</td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
@@ -1060,6 +1061,37 @@ of layers that contributed it. A non-polymorphic association whose target didn't
 <code>fingerprint</code> is a <code>sha256</code> content hash of the schema, stable across
 table/notes/groups/sources reordering — identical input always produces byte-identical
 output, so it's safe to diff two snapshots or gate CI on the fingerprint changing.</p>
+
+<h3 id="emit-config">Config export</h3>
+<p><code>--emit-config FILE</code> writes the final schema as a config-authoring file — one
+that can be fed straight back in via <code>--config</code> — alongside the HTML, which is
+still generated either way. The extension picks the format: <code>.yml</code>/<code>.yaml</code>
+for YAML (PyYAML must be installed — this is a hard error, not a silent fallback to JSON),
+<code>.json</code> for JSON, or <code>-</code> for stdout, which is always JSON since there's no
+extension to read. The document is a normal <code>tables:</code>/<code>notes:</code>/
+<code>groups:</code> config (<a href="#config-file">Config file</a>), so it re-imports with no
+special handling.</p>
+<p>Reimporting this file reaches what the project calls <strong>level1</strong>: materially
+the same schema — same tables, columns, types/nullability/defaults, primary-key column
+<em>sets</em>, indexes as (columns, unique) sets, associations as (type, target, foreign_key,
+through, polymorphic) tuples, comments, notes, and groups — not a byte-identical round trip.
+Provenance, the per-layer <code>sources</code> set, and config-only operations
+(<code>drop</code>/<code>*_mode</code>) don't survive one pass through the merged schema, so a
+reimported association always shows as <code>manual</code>. A composite primary key is
+re-derived from which columns are individually flagged primary, not read back from the
+schema's own <code>primary_key</code> field — a database-sourced composite key only records
+its first column there, so reading it directly would silently truncate the key on reimport.
+A handful of config rules are relaxed specifically to make this round trip possible: an index
+no longer needs a name to be added (only a <em>drop</em> still needs one to identify its
+target); a relation note's narrowing fields distinguish an explicit <code>null</code> (must be
+absent on the match) from an omitted key (matches anything); a polymorphic association's
+target isn't required to name a real table, and a note about one survives <code>--only</code>/
+<code>--exclude</code> filtering as long as its source table does; and a Rails-only table (no
+database backing) isn't required to have a real column behind its foreign key. YAML output is
+deterministic — sorted keys, literal block style for multi-line note text — and quotes any
+plain value that YAML's own type rules would otherwise misread as a boolean, octal, or other
+number on the next load (e.g. a comment that's literally the string <code>no</code>), so a
+string always comes back as the same string.</p>
 </section>
 
 <section id="troubleshooting">

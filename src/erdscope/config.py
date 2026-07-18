@@ -447,22 +447,41 @@ def _check_config_indexes(indexes, path, where):
             sys.exit(f'Error: {path} `{iw}` must be an object')
         _reject_unknown_keys(ix, _CONFIG_INDEX_KEYS, path, iw)
         _check_bool(ix.get('drop'), 'drop' in ix, path, f'{iw}.drop')
-        # Config indexes are name-mandatory (§7.4) — the name is the identity
-        # key for both fragment and drop (§4.3: IndexFragment / IndexDrop)
         name = ix.get('name')
-        if not isinstance(name, str) or not name:
-            sys.exit(f'Error: {path} `{iw}` needs a non-empty string `name` '
-                     '(config indexes must be named)')
-        if name in seen:
-            sys.exit(f'Error: {path} `{where}.indexes` has a duplicate index name {name!r}')
-        seen.add(name)
+        if 'name' in ix and (not isinstance(name, str) or not name):
+            sys.exit(f'Error: {path} `{iw}.name` must be a non-empty string when given')
         if ix.get('drop') is True:
-            continue  # IndexDrop = { name, drop: true }
+            # IndexDrop = { name, drop: true } — a drop is still name-
+            # mandatory (§7.4): merge.py matches drops by name only, and an
+            # unnamed index has no stable cross-layer identity to drop by.
+            if not name:
+                sys.exit(f'Error: {path} `{iw}` needs a non-empty string `name` '
+                         '(an index drop must be named)')
+            if name in seen:
+                sys.exit(f'Error: {path} `{where}.indexes` has a duplicate index name {name!r}')
+            seen.add(name)
+            continue
         cols = ix.get('columns')
         if (not isinstance(cols, list) or not cols
                 or any(not isinstance(c, str) for c in cols)):
             sys.exit(f'Error: {path} `{iw}.columns` must be a non-empty list of strings')
         _check_bool(ix.get('unique'), 'unique' in ix, path, f'{iw}.unique')
+        # A non-drop (add/override) index is name-OPTIONAL (Sol relaxation
+        # #1 / full-fidelity --emit-config round trip: a DB-sourced unnamed
+        # index has no name to re-emit, and merge.py already supports
+        # unnamed-index identity by column tuple). Identity for THIS
+        # config-internal duplicate check is the given name when present,
+        # else the column tuple ALONE — matching merge.py's own unnamed-index
+        # key (`tuple(columns)`, deliberately NOT including `unique`, §7.4).
+        # Keying on (columns, unique) here would let a unique + non-unique
+        # unnamed pair on the same columns pass load only to be silently
+        # collapsed into one at merge (conflicting-value warning, arbitrary
+        # winner) — so we reject that pair up front instead.
+        identity = name if name else tuple(cols)
+        if identity in seen:
+            sys.exit(f'Error: {path} `{where}.indexes` has a duplicate index '
+                     f'{"name" if name else "columns"} {identity!r}')
+        seen.add(identity)
 
 def _config_assoc_identity(a):
     """Stable identity for an association fragment/drop, used only for
