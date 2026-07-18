@@ -166,6 +166,8 @@ python3 erd.py demo
 | `--diff SNAPSHOT.json` | 保存済みの`--emit-json`スナップショットと比較し、出力を生成する代わりに0/1/2で終了する（CIドリフトゲート） |
 | `--emit-digest FILE.md` | 設計メモ付きの、LLM/エージェント向けトークン効率の良いMarkdownダイジェストも書き出す（`-`で標準出力、`--digest-verbose`でnullable/default/sql_typeを追加） |
 | `--emit-dbml FILE.dbml` | スキーマの最小限のDBMLエクスポートも書き出す — テーブル/カラム/インデックス/単一カラムFKのリレーション/テーブルコメント（`-`で標準出力、notes/groups/`TableGroup`は含まない） |
+| `--emit-mermaid FILE.mmd` | スキーマのMermaid `erDiagram`エクスポートも書き出す — テーブル/カラム/PK・FKマーカー/リレーション（`-`で標準出力、notes/groupsは含まない） |
+| `--emit-plantuml FILE.puml` | スキーマのPlantUMLエンティティ関連図エクスポートも書き出す — テーブル/カラム/PK・FKマーカー/リレーション（`-`で標準出力、notes/groupsは含まない） |
 | `--only 'user*,order*'` | 一致するテーブルだけを生成する |
 | `--exclude '*_logs'` | 一致するテーブルを除外する |
 | `--infer-fk` | `*_id`カラムから推測したリレーションを、明確に区別して追加する |

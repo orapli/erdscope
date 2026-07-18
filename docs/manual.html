@@ -817,13 +817,15 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
 <tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
 <tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>Also write the final schema as a config-authoring file, re-importable via <code>--config</code> — see <a href="#emit-config">Exports</a>. Extension picks the format (<code>-</code> for stdout, always JSON). The HTML is still generated</td></tr>
-<tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--excel</code></td></tr>
+<tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--emit-mermaid</code>/<code>--emit-plantuml</code>/<code>--excel</code></td></tr>
 <tr><td><code>--diff-provenance</code></td><td>With <code>--diff</code>, also compare association provenance/sources (ignored by default)</td></tr>
 <tr><td><code>--diff-exit-zero</code></td><td>With <code>--diff</code>, exit 0 even when a difference is found</td></tr>
 <tr><td><code>--diff-format text|json</code></td><td>With <code>--diff</code>, render as human-readable text (default) or deterministic JSON</td></tr>
 <tr><td><code>--emit-digest FILE.md</code></td><td>Also write a token-efficient Markdown digest of the schema, with design notes, for LLMs/agents — see <a href="#emit-digest">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
 <tr><td><code>--digest-verbose</code></td><td>With <code>--emit-digest</code>, also include nullable/default/sql_type per column (omitted by default)</td></tr>
 <tr><td><code>--emit-dbml FILE.dbml</code></td><td>Also write a minimal DBML export of the schema (tables/columns/indexes/single-column-FK relations/table comments) — see <a href="#emit-dbml">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups/<code>TableGroup</code> (deferred). The HTML is still generated</td></tr>
+<tr><td><code>--emit-mermaid FILE.mmd</code></td><td>Also write a Mermaid <code>erDiagram</code> export of the schema (tables/columns/PK-FK markers/relationships) — see <a href="#emit-mermaid">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups. The HTML is still generated</td></tr>
+<tr><td><code>--emit-plantuml FILE.puml</code></td><td>Also write a PlantUML entity-relationship export of the schema (tables/columns/PK-FK markers/relationships) — see <a href="#emit-plantuml">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups. The HTML is still generated</td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
@@ -1199,6 +1201,42 @@ same schema always renders the same DBML text — and purely additive: existing 
 <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code> output is
 untouched, and it isn't combinable with <code>--diff</code> (a usage error, exit 2), same as
 every other output-generating flag.</p>
+
+<h3 id="emit-mermaid">Mermaid diagram export</h3>
+<p><code>--emit-mermaid FILE.mmd</code> (use <code>-</code> for stdout) writes a
+<a href="https://mermaid.js.org/syntax/entityRelationshipDiagram.html" target="_blank" rel="noopener">Mermaid</a>
+<code>erDiagram</code> projection of the final schema alongside the HTML. This is a lightweight
+<strong>diagram</strong> export, not a schema-definition export like <a href="#emit-dbml">DBML
+export</a> above: it carries edge existence, crow's-foot cardinality (one-to-one/one-to-many/
+many-to-many), and per-column name/coarse-type/PK/FK markers only — no indexes, defaults, or
+<code>Ref:</code>-level precision. It's the same content the viewer's own Mermaid Copy/Download
+buttons already produce for whatever subset of tables is currently on screen (hidden/banned
+tables excluded, focus/auto-expand state reflected) — that interactive, "export what I'm looking
+at" behavior is untouched — now available non-interactively over the whole schema (or whatever
+<code>--only</code>/<code>--exclude</code> narrowed it to), for scripting or pasting straight into
+a README/PR. Column types render from the coarse <code>type</code> field (never
+<code>sql_type</code>) since Mermaid is a diagram notation, not a fidelity-first schema format.
+Associations that are purely <code>through</code>/<code>has_and_belongs_to_many</code>-backed
+render as many-to-many; a <code>has_many</code>/<code>belongs_to</code> pair (or either alone)
+renders as one-to-many with the correct side on the "many" end; a <code>has_one</code> renders as
+one-to-one. Deterministic (same schema → same text) and purely additive: existing HTML/Excel/
+other exports are untouched. Does not include notes/groups, and isn't combinable with
+<code>--diff</code> (a usage error, exit 2), same as every other output-generating flag.</p>
+
+<h3 id="emit-plantuml">PlantUML diagram export</h3>
+<p><code>--emit-plantuml FILE.puml</code> (use <code>-</code> for stdout) writes a
+<a href="https://plantuml.com/ie-diagram" target="_blank" rel="noopener">PlantUML</a>
+entity-relationship projection of the final schema alongside the HTML — the same scope and
+lightweight-diagram philosophy as <a href="#emit-mermaid">Mermaid export</a> above (edge
+existence + cardinality + column name/coarse-type/PK/FK only, no indexes/defaults/<code>Ref:</code>
+precision), mirroring the viewer's own PlantUML Copy/Download buttons but non-interactively over
+the whole schema (or whatever <code>--only</code>/<code>--exclude</code> narrowed it to). Table
+names that aren't already valid PlantUML identifiers get a sanitized alias (used consistently in
+both the entity declaration and every relationship line referencing it); a table comment is
+appended to its display name in full-width parentheses (<code>テーブル名（comment）</code>),
+matching the viewer's own Japanese-friendly formatting. Deterministic and purely additive, same
+guarantees as the Mermaid export above. Does not include notes/groups, and isn't combinable with
+<code>--diff</code> (a usage error, exit 2), same as every other output-generating flag.</p>
 </section>
 
 <section id="troubleshooting">

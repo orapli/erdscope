@@ -9499,6 +9499,454 @@ def emit_dbml_document(tables, notes_data, groups_data):
     column-FK Refs/table comments (see module docstring)."""
     schema = canonical_schema(tables, notes_data, groups_data)
     return render_dbml(schema)
+# ---------------------------------------------------------------------------
+# --emit-mermaid — Mermaid erDiagram export of the schema. Reuses emit.py's
+# canonical_schema (same allowlist/pruning/deterministic order every other
+# --emit-* flag already shares) — render_mermaid never re-derives what
+# survives or how tables/columns/associations are ordered, only how the
+# result is RENDERED as Mermaid text.
+#
+# This is a CLI-side, non-interactive counterpart to the viewer's own
+# Mermaid Copy/Download buttons (viewer.html's buildMermaidText/
+# exportToMermaid/downloadMermaidFile). The viewer's version is intentionally
+# left untouched: it renders whatever subset of tables is CURRENTLY ON SCREEN
+# (hidden/banned tables excluded, auto-expand/focus state reflected) — a
+# legitimate "export what I'm looking at" use case no CLI flag can stand in
+# for. This flag instead renders the schema as canonical_schema already
+# resolved it (the whole schema, or whatever --only/--exclude narrowed it
+# to) — the same non-interactive/scriptable gap --emit-json/--emit-config/
+# --emit-digest/--emit-dbml already fill for their formats. The two code
+# paths are NOT unified and are not meant to be; see DESIGN_ROADMAP.md.
+#
+# Semantics are ported from viewer.html's getDisplayEdges()/edgeCard()/
+# buildMermaidText() — read there for the original — reconstructed here
+# against canonical_schema's clean, allowlisted associations (direct
+# foreign_key/type/target/through/polymorphic fields) rather than the
+# viewer's DOM/display-state-flavored inputs. `fk_columns` is NOT reused
+# (canonical_schema deliberately strips that viewer-only derived field) —
+# each table's FK column set is recomputed locally with the exact same rule
+# cli.py's _finish uses to compute it in the first place:
+# `{a['foreign_key'] for a in table_associations if a.get('foreign_key')}`.
+#
+# EDGE AGGREGATION: canonical_schema's associations are one-directional and
+# table-local — a `belongs_to` on `posts` targeting `users` and a `has_many`
+# on `users` targeting `posts` are two separate dicts on two separate
+# tables, not one bidirectional edge. Every table (in name order, for
+# determinism) contributes its own associations to an unordered-pair map,
+# skipping: polymorphic associations (no real target), associations whose
+# target isn't a real table in this schema (defensive — canonical_schema
+# already prunes non-polymorphic dangling targets, but costs nothing to
+# re-check), associations whose `through` names a real table in this schema
+# (the join table itself represents the relation directly, so the implied
+# many-to-many edge would be redundant), and `has_and_belongs_to_many`
+# associations whose sorted-pair join-table name
+# (`'_'.join(sorted([this_table, target]))`) is itself a real table (same
+# redundancy reasoning). Survivors are grouped by the unordered pair
+# `tuple(sorted([this_table, target]))`; every association naming that pair
+# (from either side) is folded into one edge record, each tagged with the
+# table it came from (mirrors the JS `{from:name, ...a}` shape) since
+# cardinality resolution needs to know which side declared what.
+#
+# CARDINALITY (ported from edgeCard()): `direct` = associations on the edge
+# that are neither `through`-based nor `has_and_belongs_to_many` (only these
+# carry real cardinality signal). No direct associations -> many-to-many
+# (`nn`) — only a join table or HABTM link the pair. Else: a `has_many`
+# among them -> one-to-many (`1n`), with `many` = the edge's OTHER table
+# (the has_many's own table is the "one" side: "users has_many posts" means
+# posts is many). Else a `has_one` -> one-to-one (`11`). Else a `belongs_to`
+# -> one-to-many (`1n`), with `many` = the belongs_to's OWN table (opposite
+# of has_many: "posts belongs_to user" means posts itself is many — no
+# flip). Else (unreachable in practice, matching the JS fallback) -> `1n`
+# with `many` = the edge's target-side table.
+#
+# Deterministic output is a hard requirement, same as every other --emit-*
+# flag: edges are rendered in `tuple(sorted(pair))` order, tables in name
+# order, columns in their already-canonical (per-table) order.
+#
+# Mermaid is a lightweight DIAGRAM notation, not a schema-definition
+# language: column types render from the column's coarse `type` field
+# (`'string'`/`'integer'`/...), never `sql_type` — a deliberate departure
+# from dbml.py's fidelity-first `sql_type`-preferred rendering, matching the
+# viewer's own `c.type||'string'`. Do not "fix" this to prefer `sql_type`
+# to bring it in line with dbml.py; the two exports have different jobs.
+#
+# Column names failing `^[A-Za-z0-9_]+$` (pseudo-columns synthesized from
+# expression indexes) are skipped, same as the viewer. The explicit ASCII
+# character class is deliberate, not a style choice: Python's `\w` is
+# Unicode-aware by default and would keep letters JS's (effectively ASCII)
+# `\w` rejects — see dbml.py's own `_IDENT_RE` for the same precedent.
+#
+# Notes and groups are accepted (mirrors emit_dbml_document's signature —
+# cli.py already has both in hand at the call site, and keeping every
+# emit-family builder's signature uniform is simpler than special-casing
+# this one) but never rendered: Mermaid erDiagram output has no notion of
+# either, and the viewer's own buildMermaidText has never drawn them.
+#
+# Pure and non-destructive: render_mermaid/emit_mermaid_document never
+# mutate their input (canonical_schema already deep-copies; nothing here
+# sorts in place).
+#
+# Self-contained by convention: this module does not import from
+# plantuml.py (nor vice versa) even though the two share a structurally
+# similar edge-aggregation/cardinality shape — see dbml.py, which similarly
+# never imports digest.py despite the structural overlap. Names below are
+# prefixed `_mmd_` specifically so they can't collide with (and silently
+# shadow) plantuml.py's own copies once build_single_file.py concatenates
+# every fragment into one flat module/namespace.
+# ---------------------------------------------------------------------------
+
+_MMD_COL_NAME_RE = re.compile(r'[A-Za-z0-9_]+')
+
+
+def _mmd_display_edges(tables):
+    """Aggregate every table's one-directional `associations` into
+    unordered-pair edge records: `{'source', 'target', 'assocs': [...]}`,
+    one per distinct table pair, `assocs` holding every surviving
+    association naming that pair (from either side), each tagged with the
+    table it came from. `source`/`target` are whichever table/target first
+    created the pair's entry, in table-name order (mirrors the JS map's
+    insertion-order semantics) — deterministic since canonical_schema's own
+    table dict is iterated in the fixed `sorted(tables)` order here. Returned
+    as a list ordered by the pair's own sorted-name key, for a second,
+    independent layer of determinism (JS returns Map insertion order; this
+    port additionally sorts so the result never depends on iteration
+    happenstance)."""
+    tset = set(tables)
+    edges = {}
+    for name in sorted(tables):
+        for a in tables[name].get('associations', []):
+            if a.get('polymorphic'):
+                continue
+            target = a.get('target')
+            if target not in tset:
+                continue
+            through = a.get('through')
+            if through and through in tset:
+                continue
+            if a.get('type') == 'has_and_belongs_to_many':
+                join_name = '_'.join(sorted([name, target]))
+                if join_name in tset:
+                    continue
+            key = tuple(sorted([name, target]))
+            if key not in edges:
+                edges[key] = {'source': name, 'target': target, 'assocs': []}
+            edges[key]['assocs'].append({'from': name, **a})
+    return [edges[key] for key in sorted(edges)]
+
+
+def _mmd_edge_card(edge):
+    """One edge's cardinality: `{'kind': 'nn'}`, `{'kind': '11'}`, or
+    `{'kind': '1n', 'many': <table name>}`. See the module docstring's
+    CARDINALITY section for the full rule; ported 1:1 from viewer.html's
+    edgeCard()."""
+    direct = [a for a in edge['assocs']
+             if not a.get('through') and a['type'] != 'has_and_belongs_to_many']
+    if not direct:
+        return {'kind': 'nn'}
+    hm = next((a for a in direct if a['type'] == 'has_many'), None)
+    if hm:
+        many = edge['target'] if hm['from'] == edge['source'] else edge['source']
+        return {'kind': '1n', 'many': many}
+    if any(a['type'] == 'has_one' for a in direct):
+        return {'kind': '11'}
+    bt = next((a for a in direct if a['type'] == 'belongs_to'), None)
+    if bt:
+        return {'kind': '1n', 'many': bt['from']}
+    return {'kind': '1n', 'many': edge['target']}
+
+
+def _mmd_relationship_line(edge):
+    """One edge -> its Mermaid relationship line (no leading/trailing
+    newline). `nn`/`11` render bare crow's-foot tokens; `1n` renders
+    `||--o{` with the endpoints swapped, if needed, so the many side always
+    ends up on the right (Mermaid erDiagram reads left-to-right as
+    one-to-many)."""
+    card = _mmd_edge_card(edge)
+    a, b = edge['source'], edge['target']
+    if card['kind'] == 'nn':
+        rel = '}o--o{'
+    elif card['kind'] == '11':
+        rel = '||--||'
+    else:
+        rel = '||--o{'
+        if card['many'] == a:
+            a, b = b, a
+    label = (edge['assocs'][0].get('name') or '').replace('"', "'")
+    return f'    {a} {rel} {b} : "{label}"'
+
+
+def _mmd_render_table_block(name, t):
+    """One table -> its `{table} {{ ... }}` column block, as a list of
+    lines. Pseudo-columns (expression-index artifacts) are skipped; each
+    surviving column renders as `{type} {name}[ PK| FK]`, PK taking
+    precedence over FK when (hypothetically) a column were both."""
+    fk_cols = {a['foreign_key'] for a in t.get('associations', []) if a.get('foreign_key')}
+    lines = [f'    {name} {{']
+    for c in t.get('columns', []):
+        if not _MMD_COL_NAME_RE.fullmatch(c['name']):
+            continue
+        marker = ' PK' if c.get('primary') else (' FK' if c['name'] in fk_cols else '')
+        ctype = c.get('type') or 'string'
+        lines.append(f'        {ctype} {c["name"]}{marker}')
+    lines.append('    }')
+    return lines
+
+
+def render_mermaid(schema):
+    """Render a canonical `schema` (emit.py's canonical_schema shape:
+    {tables, notes?, groups?}) to Mermaid erDiagram text. `notes`/`groups`,
+    even when present, are never read (see module docstring). Pure and
+    deterministic: the same schema always renders the same text, since
+    canonical_schema's tables/columns/associations are already canonically
+    ordered and this function sorts tables by name itself (as dbml.py's
+    render_dbml also does, since `tables` is a plain name-keyed dict)."""
+    tables = schema.get('tables', {})
+    names = sorted(tables)
+    edges = _mmd_display_edges(tables)
+
+    lines = ['erDiagram']
+    for edge in edges:
+        lines.append(_mmd_relationship_line(edge))
+    for name in names:
+        lines.extend(_mmd_render_table_block(name, tables[name]))
+
+    return '\n'.join(lines) + '\n'
+
+
+def emit_mermaid_document(tables, notes_data, groups_data):
+    """Build the --emit-mermaid document: project the final merged IR
+    through the SAME canonical_schema --emit-json/--emit-config/--emit-
+    digest/--emit-dbml already share, then render it. `notes_data`/
+    `groups_data` are accepted (uniform emit-family builder signature) but
+    intentionally unused — see module docstring."""
+    schema = canonical_schema(tables, notes_data, groups_data)
+    return render_mermaid(schema)
+# ---------------------------------------------------------------------------
+# --emit-plantuml — PlantUML entity-relationship export of the schema.
+# Reuses emit.py's canonical_schema (same allowlist/pruning/deterministic
+# order every other --emit-* flag already shares) — render_plantuml never
+# re-derives what survives or how it's ordered, only how it's RENDERED as
+# PlantUML text.
+#
+# Same CLI-side / non-interactive rationale as mermaid.py — read that
+# module's docstring for the full "why this exists alongside the viewer's
+# own Copy/Download buttons, and why the two are deliberately not unified"
+# reasoning; it applies here unchanged (viewer.html's
+# buildPlantUMLText/exportToPlantUML/downloadPlantUMLFile is the untouched
+# counterpart this flag does not replace).
+#
+# Semantics are ported from viewer.html's getDisplayEdges()/edgeCard()/
+# buildPlantUMLText() — read there for the original. Edge aggregation and
+# cardinality resolution are IDENTICAL in rule to mermaid.py's (same
+# getDisplayEdges()/edgeCard() source); see that module's docstring for the
+# full EDGE AGGREGATION / CARDINALITY writeup. This module deliberately
+# duplicates that ~20-line logic rather than importing mermaid.py — every
+# emit-family module in this codebase is self-contained (dbml.py doesn't
+# import digest.py despite a similar structural overlap); all names below
+# are prefixed `_puml_` specifically so they can't collide with (and
+# silently shadow) mermaid.py's own copies once build_single_file.py
+# concatenates every fragment into one flat module/namespace.
+#
+# `fk_columns` is NOT reused (canonical_schema deliberately strips that
+# viewer-only derived field) — each table's FK column set is recomputed
+# locally with the same rule cli.py's _finish uses:
+# `{a['foreign_key'] for a in table_associations if a.get('foreign_key')}`.
+#
+# ENTITY ALIASING: a PlantUML identifier — used both as an entity's own
+# alias and in every relationship line referencing it — must itself match
+# `^[A-Za-z_][A-Za-z0-9_]*$`. A table name that already matches is used
+# as-is; otherwise every character outside `[A-Za-z0-9_]` is replaced with
+# `_` to build the alias. An entity is declared with an explicit
+# `"name" as alias` form whenever the alias differs from the real name OR
+# the table has a comment; otherwise the bare `entity alias {` form is
+# used. A comment (when present) is appended to the display name as
+# `（comment）` — FULL-WIDTH parentheses, deliberately, matching the
+# viewer's own Japanese-friendly formatting; not a typo. `"` inside a
+# comment or a relationship label is replaced with `'`.
+#
+# Column rendering: primary-key columns first (each `  * {name} : {type}
+# <<PK>>`), then — IF both a PK and a non-PK column exist — a `  --`
+# separator, then non-PK columns (each `  {mark}{name} : {type}{fk}`, where
+# `mark` is `'* '` for a NOT NULL column and empty for nullable, and `fk`
+# is ` <<FK>>` when the column is in the table's locally-recomputed FK set).
+# Same coarse `type` field as mermaid.py (never `sql_type` — see that
+# module's docstring for why this deliberately differs from dbml.py), same
+# pseudo-column skip (`^[A-Za-z0-9_]+$`, explicit ASCII class — Python's
+# `\w` is Unicode-aware by default, unlike JS's effectively-ASCII `\w`).
+#
+# Relationship lines reuse the SAME crow's-foot tokens as Mermaid
+# (`}o--o{`/`||--||`/`||--o{`) — a coincidence the viewer's own
+# buildPlantUMLText comment already calls out, not a deliberate shared
+# format — but reference each table by its ALIAS (never its raw name), and
+# render the label unquoted (`alias_a rel alias_b : label`) when present,
+# with no `:` segment at all when it's empty — unlike Mermaid, which always
+# quotes a (possibly empty) label.
+#
+# Deterministic output is a hard requirement, same as every other --emit-*
+# flag: edges are rendered in `tuple(sorted(pair))` order, tables (and
+# their entity blocks) in name order, columns in their already-canonical
+# (per-table) order.
+#
+# Notes and groups are accepted (mirrors emit_dbml_document/
+# emit_mermaid_document's signature) but never rendered — PlantUML ER
+# output has no notion of either, and the viewer's own buildPlantUMLText has
+# never drawn them.
+#
+# Pure and non-destructive: render_plantuml/emit_plantuml_document never
+# mutate their input (canonical_schema already deep-copies; nothing here
+# sorts in place).
+# ---------------------------------------------------------------------------
+
+_PUML_COL_NAME_RE = re.compile(r'[A-Za-z0-9_]+')
+_PUML_IDENT_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+_PUML_NONWORD_RE = re.compile(r'[^A-Za-z0-9_]')
+
+
+def _puml_alias(name):
+    """A table name -> its PlantUML identifier: itself when it already
+    matches `^[A-Za-z_][A-Za-z0-9_]*$`, else every non-`[A-Za-z0-9_]`
+    character replaced with `_`."""
+    if _PUML_IDENT_RE.fullmatch(name):
+        return name
+    return _PUML_NONWORD_RE.sub('_', name)
+
+
+def _puml_display_edges(tables):
+    """Identical rule to mermaid.py's _mmd_display_edges — see that
+    module's EDGE AGGREGATION docstring section for the full writeup.
+    Duplicated (not imported) per this module's self-containment
+    convention."""
+    tset = set(tables)
+    edges = {}
+    for name in sorted(tables):
+        for a in tables[name].get('associations', []):
+            if a.get('polymorphic'):
+                continue
+            target = a.get('target')
+            if target not in tset:
+                continue
+            through = a.get('through')
+            if through and through in tset:
+                continue
+            if a.get('type') == 'has_and_belongs_to_many':
+                join_name = '_'.join(sorted([name, target]))
+                if join_name in tset:
+                    continue
+            key = tuple(sorted([name, target]))
+            if key not in edges:
+                edges[key] = {'source': name, 'target': target, 'assocs': []}
+            edges[key]['assocs'].append({'from': name, **a})
+    return [edges[key] for key in sorted(edges)]
+
+
+def _puml_edge_card(edge):
+    """Identical rule to mermaid.py's _mmd_edge_card — see that module's
+    CARDINALITY docstring section for the full writeup."""
+    direct = [a for a in edge['assocs']
+             if not a.get('through') and a['type'] != 'has_and_belongs_to_many']
+    if not direct:
+        return {'kind': 'nn'}
+    hm = next((a for a in direct if a['type'] == 'has_many'), None)
+    if hm:
+        many = edge['target'] if hm['from'] == edge['source'] else edge['source']
+        return {'kind': '1n', 'many': many}
+    if any(a['type'] == 'has_one' for a in direct):
+        return {'kind': '11'}
+    bt = next((a for a in direct if a['type'] == 'belongs_to'), None)
+    if bt:
+        return {'kind': '1n', 'many': bt['from']}
+    return {'kind': '1n', 'many': edge['target']}
+
+
+def _puml_relationship_line(edge):
+    """One edge -> its PlantUML relationship line (no leading/trailing
+    newline), referencing each side by its alias. Same crow's-foot tokens
+    and many-side-on-the-right swap rule as mermaid.py's
+    _mmd_relationship_line, but the label (when present) is unquoted and
+    the `:` segment is omitted entirely when there's no label."""
+    card = _puml_edge_card(edge)
+    a, b = edge['source'], edge['target']
+    if card['kind'] == 'nn':
+        rel = '}o--o{'
+    elif card['kind'] == '11':
+        rel = '||--||'
+    else:
+        rel = '||--o{'
+        if card['many'] == a:
+            a, b = b, a
+    label = (edge['assocs'][0].get('name') or '').replace('"', "'")
+    alias_a, alias_b = _puml_alias(a), _puml_alias(b)
+    if label:
+        return f'{alias_a} {rel} {alias_b} : {label}'
+    return f'{alias_a} {rel} {alias_b}'
+
+
+def _puml_render_entity_block(name, t):
+    """One table -> its `entity ... {{ ... }}` block, as a list of lines
+    (the trailing blank-line separator is included, matching the viewer's
+    own one-blank-line-per-entity spacing)."""
+    alias = _puml_alias(name)
+    comment = t.get('comment')
+    needs_alias = bool(comment) or alias != name
+    if needs_alias:
+        suffix = f'（{comment}）'.replace('"', "'") if comment else ''
+        display = name.replace('"', "'") + suffix
+        lines = [f'entity "{display}" as {alias} {{']
+    else:
+        lines = [f'entity {alias} {{']
+
+    cols = [c for c in t.get('columns', []) if _PUML_COL_NAME_RE.fullmatch(c['name'])]
+    fk_cols = {a['foreign_key'] for a in t.get('associations', []) if a.get('foreign_key')}
+    pk_cols = [c for c in cols if c.get('primary')]
+    rest_cols = [c for c in cols if not c.get('primary')]
+
+    for c in pk_cols:
+        ctype = c.get('type') or 'string'
+        lines.append(f'  * {c["name"]} : {ctype} <<PK>>')
+    if pk_cols and rest_cols:
+        lines.append('  --')
+    for c in rest_cols:
+        ctype = c.get('type') or 'string'
+        mark = '' if c.get('nullable', False) else '* '
+        fk = ' <<FK>>' if c['name'] in fk_cols else ''
+        lines.append(f'  {mark}{c["name"]} : {ctype}{fk}')
+
+    lines.append('}')
+    lines.append('')
+    return lines
+
+
+def render_plantuml(schema):
+    """Render a canonical `schema` (emit.py's canonical_schema shape:
+    {tables, notes?, groups?}) to PlantUML entity-relationship text.
+    `notes`/`groups`, even when present, are never read (see module
+    docstring). Pure and deterministic: the same schema always renders the
+    same text, since canonical_schema's tables/columns/associations are
+    already canonically ordered and this function sorts tables by name
+    itself (as dbml.py's/mermaid.py's render functions also do, since
+    `tables` is a plain name-keyed dict)."""
+    tables = schema.get('tables', {})
+    names = sorted(tables)
+    edges = _puml_display_edges(tables)
+
+    lines = ['@startuml', 'hide circle', 'skinparam linetype ortho', '']
+    for name in names:
+        lines.extend(_puml_render_entity_block(name, tables[name]))
+    for edge in edges:
+        lines.append(_puml_relationship_line(edge))
+    lines.append('@enduml')
+
+    return '\n'.join(lines) + '\n'
+
+
+def emit_plantuml_document(tables, notes_data, groups_data):
+    """Build the --emit-plantuml document: project the final merged IR
+    through the SAME canonical_schema --emit-json/--emit-config/--emit-
+    digest/--emit-dbml/--emit-mermaid already share, then render it.
+    `notes_data`/`groups_data` are accepted (uniform emit-family builder
+    signature) but intentionally unused — see module docstring."""
+    schema = canonical_schema(tables, notes_data, groups_data)
+    return render_plantuml(schema)
 def main():
     p = argparse.ArgumentParser(
         description='Generate an interactive ER diagram (and optional Excel table definitions) '
@@ -9557,6 +10005,15 @@ def main():
                         '(tables/columns/indexes/single-column-FK relations/table '
                         'comments) alongside the HTML; use - for stdout. Does not '
                         'include notes/groups/TableGroup (deferred)')
+    p.add_argument('--emit-mermaid', metavar='FILE.mmd', default=argparse.SUPPRESS,
+                   help='Also write a Mermaid erDiagram export of the schema '
+                        '(tables/columns/PK-FK markers/relationships) alongside the '
+                        'HTML; use - for stdout. Does not include notes/groups')
+    p.add_argument('--emit-plantuml', metavar='FILE.puml', default=argparse.SUPPRESS,
+                   help='Also write a PlantUML entity-relationship export of the '
+                        'schema (tables/columns/PK-FK markers/relationships) '
+                        'alongside the HTML; use - for stdout. Does not include '
+                        'notes/groups')
     p.add_argument('--excel-template', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help="Override the workbook's colors/fonts/borders from a template "
                         '.xlsx — see excel-template.xlsx and its Styles sheet for the '
@@ -9947,6 +10404,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
                             ('--emit-config', getattr(args, 'emit_config', None)),
                             ('--emit-digest', getattr(args, 'emit_digest', None)),
                             ('--emit-dbml', getattr(args, 'emit_dbml', None)),
+                            ('--emit-mermaid', getattr(args, 'emit_mermaid', None)),
+                            ('--emit-plantuml', getattr(args, 'emit_plantuml', None)),
                             ('--excel', getattr(args, 'excel', None))):
             if _val:
                 _diff_fail(f'--diff cannot be combined with {_flag} '
@@ -10002,6 +10461,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
                         ('--emit-config', getattr(args, 'emit_config', None)),
                         ('--emit-digest', getattr(args, 'emit_digest', None)),
                         ('--emit-dbml', getattr(args, 'emit_dbml', None)),
+                        ('--emit-mermaid', getattr(args, 'emit_mermaid', None)),
+                        ('--emit-plantuml', getattr(args, 'emit_plantuml', None)),
                         ('--excel', getattr(args, 'excel', None))):
         if not _val or _val == '-':
             continue
@@ -10051,6 +10512,20 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     emit_dbml_val = getattr(args, 'emit_dbml', None)
     emit_dbml_text = (emit_dbml_document(tables, notes_data, groups_data)
                       if emit_dbml_val is not None else None)
+
+    # --emit-mermaid: same provenance-preserving-IR timing as the other
+    # emit-family builders above (built before serialize_for_viewer) —
+    # render_mermaid reads columns/associations straight off
+    # canonical_schema, same as --emit-json/--emit-config/--emit-digest/
+    # --emit-dbml.
+    emit_mermaid_val = getattr(args, 'emit_mermaid', None)
+    emit_mermaid_text = (emit_mermaid_document(tables, notes_data, groups_data)
+                         if emit_mermaid_val is not None else None)
+
+    # --emit-plantuml: same timing/reasoning as --emit-mermaid above.
+    emit_plantuml_val = getattr(args, 'emit_plantuml', None)
+    emit_plantuml_text = (emit_plantuml_document(tables, notes_data, groups_data)
+                          if emit_plantuml_val is not None else None)
 
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
@@ -10106,6 +10581,20 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
         else:
             Path(emit_dbml_val).write_text(emit_dbml_text, encoding='utf-8')
             print(f'Generated: {emit_dbml_val}', file=sys.stderr)
+
+    if emit_mermaid_text is not None:
+        if emit_mermaid_val == '-':
+            sys.stdout.write(emit_mermaid_text)
+        else:
+            Path(emit_mermaid_val).write_text(emit_mermaid_text, encoding='utf-8')
+            print(f'Generated: {emit_mermaid_val}', file=sys.stderr)
+
+    if emit_plantuml_text is not None:
+        if emit_plantuml_val == '-':
+            sys.stdout.write(emit_plantuml_text)
+        else:
+            Path(emit_plantuml_val).write_text(emit_plantuml_text, encoding='utf-8')
+            print(f'Generated: {emit_plantuml_val}', file=sys.stderr)
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,

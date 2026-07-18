@@ -164,6 +164,8 @@ explicit CLI argument wins.
 | `--diff SNAPSHOT.json` | Compare this run against a saved `--emit-json` snapshot and exit 0/1/2 instead of generating output (CI drift gate) |
 | `--emit-digest FILE.md` | Also write a token-efficient Markdown digest of the schema, with design notes, for LLMs/agents (`-` for stdout; `--digest-verbose` adds nullable/default/sql_type) |
 | `--emit-dbml FILE.dbml` | Also write a minimal DBML export of the schema — tables/columns/indexes/single-column-FK relations/table comments (`-` for stdout; no notes/groups/`TableGroup`) |
+| `--emit-mermaid FILE.mmd` | Also write a Mermaid `erDiagram` export of the schema — tables/columns/PK-FK markers/relationships (`-` for stdout; no notes/groups) |
+| `--emit-plantuml FILE.puml` | Also write a PlantUML entity-relationship export of the schema — tables/columns/PK-FK markers/relationships (`-` for stdout; no notes/groups) |
 | `--only 'user*,order*'` | Generate only matching tables |
 | `--exclude '*_logs'` | Leave matching tables out |
 | `--infer-fk` | Add clearly marked relation guesses from `*_id` columns |

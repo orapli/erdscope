@@ -56,6 +56,15 @@ def main():
                         '(tables/columns/indexes/single-column-FK relations/table '
                         'comments) alongside the HTML; use - for stdout. Does not '
                         'include notes/groups/TableGroup (deferred)')
+    p.add_argument('--emit-mermaid', metavar='FILE.mmd', default=argparse.SUPPRESS,
+                   help='Also write a Mermaid erDiagram export of the schema '
+                        '(tables/columns/PK-FK markers/relationships) alongside the '
+                        'HTML; use - for stdout. Does not include notes/groups')
+    p.add_argument('--emit-plantuml', metavar='FILE.puml', default=argparse.SUPPRESS,
+                   help='Also write a PlantUML entity-relationship export of the '
+                        'schema (tables/columns/PK-FK markers/relationships) '
+                        'alongside the HTML; use - for stdout. Does not include '
+                        'notes/groups')
     p.add_argument('--excel-template', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help="Override the workbook's colors/fonts/borders from a template "
                         '.xlsx — see excel-template.xlsx and its Styles sheet for the '
@@ -446,6 +455,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
                             ('--emit-config', getattr(args, 'emit_config', None)),
                             ('--emit-digest', getattr(args, 'emit_digest', None)),
                             ('--emit-dbml', getattr(args, 'emit_dbml', None)),
+                            ('--emit-mermaid', getattr(args, 'emit_mermaid', None)),
+                            ('--emit-plantuml', getattr(args, 'emit_plantuml', None)),
                             ('--excel', getattr(args, 'excel', None))):
             if _val:
                 _diff_fail(f'--diff cannot be combined with {_flag} '
@@ -501,6 +512,8 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
                         ('--emit-config', getattr(args, 'emit_config', None)),
                         ('--emit-digest', getattr(args, 'emit_digest', None)),
                         ('--emit-dbml', getattr(args, 'emit_dbml', None)),
+                        ('--emit-mermaid', getattr(args, 'emit_mermaid', None)),
+                        ('--emit-plantuml', getattr(args, 'emit_plantuml', None)),
                         ('--excel', getattr(args, 'excel', None))):
         if not _val or _val == '-':
             continue
@@ -550,6 +563,20 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     emit_dbml_val = getattr(args, 'emit_dbml', None)
     emit_dbml_text = (emit_dbml_document(tables, notes_data, groups_data)
                       if emit_dbml_val is not None else None)
+
+    # --emit-mermaid: same provenance-preserving-IR timing as the other
+    # emit-family builders above (built before serialize_for_viewer) —
+    # render_mermaid reads columns/associations straight off
+    # canonical_schema, same as --emit-json/--emit-config/--emit-digest/
+    # --emit-dbml.
+    emit_mermaid_val = getattr(args, 'emit_mermaid', None)
+    emit_mermaid_text = (emit_mermaid_document(tables, notes_data, groups_data)
+                         if emit_mermaid_val is not None else None)
+
+    # --emit-plantuml: same timing/reasoning as --emit-mermaid above.
+    emit_plantuml_val = getattr(args, 'emit_plantuml', None)
+    emit_plantuml_text = (emit_plantuml_document(tables, notes_data, groups_data)
+                          if emit_plantuml_val is not None else None)
 
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
@@ -605,6 +632,20 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
         else:
             Path(emit_dbml_val).write_text(emit_dbml_text, encoding='utf-8')
             print(f'Generated: {emit_dbml_val}', file=sys.stderr)
+
+    if emit_mermaid_text is not None:
+        if emit_mermaid_val == '-':
+            sys.stdout.write(emit_mermaid_text)
+        else:
+            Path(emit_mermaid_val).write_text(emit_mermaid_text, encoding='utf-8')
+            print(f'Generated: {emit_mermaid_val}', file=sys.stderr)
+
+    if emit_plantuml_text is not None:
+        if emit_plantuml_val == '-':
+            sys.stdout.write(emit_plantuml_text)
+        else:
+            Path(emit_plantuml_val).write_text(emit_plantuml_text, encoding='utf-8')
+            print(f'Generated: {emit_plantuml_val}', file=sys.stderr)
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--emit-mermaid FILE.mmd`** — writes a
+  [Mermaid](https://mermaid.js.org/syntax/entityRelationshipDiagram.html)
+  `erDiagram` export of the final schema alongside the HTML (`-` for
+  stdout; the HTML is still generated either way): tables, columns (coarse
+  `type`, PK/FK markers), and relationships (crow's-foot cardinality —
+  one-to-one/one-to-many/many-to-many). This is the same lightweight
+  diagram content the viewer's own Mermaid Copy/Download buttons already
+  produce for whatever subset of tables is currently on screen, now
+  available non-interactively for the whole schema (or whatever `--only`/
+  `--exclude` narrowed it to). Does not include notes/groups.
+- **`--emit-plantuml FILE.puml`** — writes a
+  [PlantUML](https://plantuml.com/ie-diagram) entity-relationship export of
+  the final schema alongside the HTML (`-` for stdout; the HTML is still
+  generated either way): entities, columns (coarse `type`, PK/FK markers),
+  and relationships (crow's-foot cardinality), mirroring the viewer's own
+  PlantUML Copy/Download buttons but non-interactively for the whole schema
+  (or whatever `--only`/`--exclude` narrowed it to). Does not include
+  notes/groups.
+
 ## [0.7.2] - 2026-07-18
 
 ### Added
