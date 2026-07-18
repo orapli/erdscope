@@ -486,6 +486,183 @@ def _build_html_with_groups():
     return out
 
 
+def _build_html_demo_grouped():
+    # L (BACKLOG): the same e-commerce schema + column comments +
+    # `Catalog` group docs/gen_demo.py uses for the live demo (docs/index.html)
+    # — copied here rather than imported, since gen_demo.py's top-level code
+    # runs the generation as a side effect the moment it's imported. Column
+    # comments matter: they widen the node boxes enough for a non-member
+    # table to shallowly overlap the Catalog frame's edge, which is exactly
+    # the case resolveGroupObstacles' plain "erd.py demo" (no comments, no
+    # groups) fixture never exercises — see the L design spec's measurements.
+    def c(t, name, dtype, ctype, null='YES', key='', default='', extra='', comment=''):
+        return (t, name, dtype, ctype, null, key, default, extra, comment)
+
+    def pk(t):
+        return c(t, 'id', 'bigint', 'bigint', 'NO', 'PRI', '', 'auto_increment')
+
+    table_rows = [
+        ('users', 'Customer accounts'), ('addresses', 'Shipping / billing addresses'),
+        ('products', 'Sellable products'), ('categories', 'Product category tree'),
+        ('product_categories', 'Join table: products <-> categories'),
+        ('orders', 'Customer orders'), ('order_items', 'Order line items'),
+        ('payments', 'Payment attempts per order'), ('shipments', ''),
+        ('reviews', 'Product reviews written by customers'),
+        ('coupons', 'Discount coupons'), ('order_coupons', 'Join table: orders <-> coupons'),
+        ('activity_logs', 'Append-only audit trail (no FK constraints on purpose)'),
+    ]
+    col_rows = [
+        pk('users'),
+        c('users', 'email', 'varchar', 'varchar(255)', 'NO', 'UNI', comment='Login e-mail, unique'),
+        c('users', 'name', 'varchar', 'varchar(100)', 'NO'),
+        c('users', 'status', 'tinyint', 'tinyint', 'NO', '', '1', '', '1: active, 2: suspended'),
+        c('users', 'created_at', 'datetime', 'datetime', 'NO'),
+        pk('addresses'),
+        c('addresses', 'user_id', 'bigint', 'bigint', 'NO', 'MUL'),
+        c('addresses', 'kind', 'varchar', 'varchar(20)', 'NO', '', 'shipping', '', 'shipping | billing'),
+        c('addresses', 'line1', 'varchar', 'varchar(200)', 'NO'),
+        c('addresses', 'city', 'varchar', 'varchar(100)', 'NO'),
+        c('addresses', 'country', 'char', 'char(2)', 'NO', '', 'JP', '', 'ISO 3166-1 alpha-2'),
+        pk('products'),
+        c('products', 'sku', 'varchar', 'varchar(40)', 'NO', 'UNI', comment='Stock keeping unit'),
+        c('products', 'title', 'varchar', 'varchar(200)', 'NO'),
+        c('products', 'price_cents', 'integer', 'int', 'NO', '', '0', '', 'Price in the smallest currency unit'),
+        c('products', 'stock', 'integer', 'int', 'NO', '', '0'),
+        c('products', 'discontinued', 'tinyint', 'tinyint(1)', 'NO', '', '0'),
+        pk('categories'),
+        c('categories', 'parent_id', 'bigint', 'bigint', comment='Self-reference: parent category'),
+        c('categories', 'name', 'varchar', 'varchar(100)', 'NO'),
+        c('product_categories', 'product_id', 'bigint', 'bigint', 'NO', 'PRI'),
+        c('product_categories', 'category_id', 'bigint', 'bigint', 'NO', 'PRI'),
+        pk('orders'),
+        c('orders', 'user_id', 'bigint', 'bigint', 'NO', 'MUL'),
+        c('orders', 'address_id', 'bigint', 'bigint', 'NO', comment='Ship-to address'),
+        c('orders', 'state', 'varchar', 'varchar(20)', 'NO', '', 'cart', '', 'cart | placed | paid | shipped'),
+        c('orders', 'total_cents', 'integer', 'int', 'NO', '', '0'),
+        c('orders', 'placed_at', 'datetime', 'datetime'),
+        pk('order_items'),
+        c('order_items', 'order_id', 'bigint', 'bigint', 'NO', 'MUL'),
+        c('order_items', 'product_id', 'bigint', 'bigint', 'NO', 'MUL'),
+        c('order_items', 'quantity', 'integer', 'int', 'NO', '', '1'),
+        c('order_items', 'unit_price_cents', 'integer', 'int', 'NO', comment='Price snapshot at purchase time'),
+        pk('payments'),
+        c('payments', 'order_id', 'bigint', 'bigint', 'NO', 'MUL'),
+        c('payments', 'provider', 'varchar', 'varchar(30)', 'NO', '', '', '', 'stripe | paypal | ...'),
+        c('payments', 'amount_cents', 'integer', 'int', 'NO'),
+        c('payments', 'captured_at', 'datetime', 'datetime'),
+        pk('shipments'),
+        c('shipments', 'order_id', 'bigint', 'bigint', 'NO', 'UNI', comment='One shipment per order'),
+        c('shipments', 'carrier', 'varchar', 'varchar(30)', 'NO'),
+        c('shipments', 'tracking_no', 'varchar', 'varchar(60)'),
+        c('shipments', 'shipped_at', 'datetime', 'datetime'),
+        pk('reviews'),
+        c('reviews', 'product_id', 'bigint', 'bigint', 'NO', 'MUL'),
+        c('reviews', 'user_id', 'bigint', 'bigint', 'NO', 'MUL'),
+        c('reviews', 'rating', 'tinyint', 'tinyint', 'NO', '', '', '', '1-5 stars'),
+        c('reviews', 'body', 'text', 'text'),
+        pk('coupons'),
+        c('coupons', 'code', 'varchar', 'varchar(30)', 'NO', 'UNI'),
+        c('coupons', 'discount_cents', 'integer', 'int', 'NO'),
+        c('coupons', 'expires_at', 'datetime', 'datetime'),
+        c('order_coupons', 'order_id', 'bigint', 'bigint', 'NO', 'PRI'),
+        c('order_coupons', 'coupon_id', 'bigint', 'bigint', 'NO', 'PRI'),
+        pk('activity_logs'),
+        c('activity_logs', 'user_id', 'bigint', 'bigint', comment='No FK constraint — edge is inferred from the name'),
+        c('activity_logs', 'order_id', 'bigint', 'bigint'),
+        c('activity_logs', 'action', 'varchar', 'varchar(50)', 'NO'),
+        c('activity_logs', 'created_at', 'datetime', 'datetime', 'NO'),
+    ]
+    fk_rows = [
+        ('addresses', 'user_id', 'users'), ('categories', 'parent_id', 'categories'),
+        ('product_categories', 'product_id', 'products'), ('product_categories', 'category_id', 'categories'),
+        ('orders', 'user_id', 'users'), ('orders', 'address_id', 'addresses'),
+        ('order_items', 'order_id', 'orders'), ('order_items', 'product_id', 'products'),
+        ('payments', 'order_id', 'orders'), ('shipments', 'order_id', 'orders'),
+        ('reviews', 'product_id', 'products'), ('reviews', 'user_id', 'users'),
+        ('order_coupons', 'order_id', 'orders'), ('order_coupons', 'coupon_id', 'coupons'),
+    ]
+    index_rows = [
+        ('users', 'PRIMARY', 0, 1, 'id'), ('users', 'uk_users_email', 0, 1, 'email'),
+        ('shipments', 'uk_shipments_order_id', 0, 1, 'order_id'),
+        ('coupons', 'uk_coupons_code', 0, 1, 'code'),
+    ]
+    groups_cfg = [{'id': 'catalog', 'title': 'Catalog',
+                  'tables': ['products', 'product_categories', 'categories']}]
+
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture', groups=groups_cfg, groups_label='test')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestLTargetedLayout(unittest.TestCase):
+    """L (BACKLOG) — the 2 acceptance cases the layout-obstacle direction
+    fix (resolveGroupObstacles' down/left/right choice) targets, on the
+    demo-equivalent grouped+commented fixture where the bug was actually
+    observed (see _build_html_demo_grouped's docstring: the plain,
+    group-less `erd.py demo` fixture never exercises this at all)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_demo_grouped()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+        self.page.click('#legend-head')
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_case_b_reviews_lands_at_the_same_height_as_products(self):
+        pos = self.page.evaluate("({reviews: nodePos.reviews, products: nodePos.products})")
+        self.assertLess(abs(pos['reviews']['y'] - pos['products']['y']), 30,
+                         'reviews should land at (near) the same y as Catalog/products, '
+                         'not ejected below the group frame')
+
+    def test_case_a_coupons_is_not_ejected_past_the_catalog_frame(self):
+        pos = self.page.evaluate(
+            "({coupons: nodePos.coupons, order_coupons: nodePos.order_coupons, "
+            " products: nodePos.products})")
+        # "near" per the L spec (§4): not pixel-perfect directly-under, but
+        # within about one row of order_coupons and specifically not thrown
+        # all the way down past the (tall) Catalog frame the way the old
+        # down-only push used to.
+        self.assertLess(pos['coupons']['y'], pos['products']['y'] + 180,
+                         'coupons should stay near its natural row, not get ejected '
+                         'to the bottom of the Catalog frame')
+
+    def test_reviews_and_coupons_do_not_overlap_the_catalog_frame(self):
+        overlap = self.page.evaluate('''() => {
+            const bbox = groupFrameBBox(GROUPS[0].tables, new Set(getDisplayTables()));
+            const hits = t => {
+                const p = nodePos[t], s = nodeSize[t];
+                const x0=p.x-s.w/2, y0=p.y-s.h/2, x1=p.x+s.w/2, y1=p.y+s.h/2;
+                return x0 < bbox.x1 && x1 > bbox.x0 && y0 < bbox.y1 && y1 > bbox.y0;
+            };
+            return {reviews: hits('reviews'), coupons: hits('coupons')};
+        }''')
+        self.assertFalse(overlap['reviews'], 'reviews must not overlap the Catalog frame')
+        self.assertFalse(overlap['coupons'], 'coupons must not overlap the Catalog frame')
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestGroups(unittest.TestCase):
     """groups Phase 1 — group-layer frame rendering, drag-following, the
@@ -671,6 +848,28 @@ class TestGroups(unittest.TestCase):
         self.assertFalse(overlaps, 'audit_logs should no longer overlap the group frame')
         self.assertGreaterEqual(after['y0'], before['y1'],
                                  'the nudged table should land below the frame, not sideways/above')
+
+    def test_resolve_group_obstacles_pushes_sideways_for_a_shallow_edge_overlap(self):
+        # L (BACKLOG): a table only shallowly overlapping the frame's LEFT
+        # edge (but centered vertically, so a "down" push would travel the
+        # frame's full height) should be pushed left instead — whichever
+        # direction actually clears the overlap with less travel.
+        setup = self.page.evaluate('''() => {
+            const bbox = groupFrameBBox(GROUPS[0].tables, new Set(getDisplayTables()));
+            const s = nodeSize.audit_logs;
+            // vertically centered on the frame; the box's RIGHT edge pokes
+            // only 5px past the frame's left edge, everything else of the
+            // box sits outside it — a shallow left-edge overlap
+            nodePos.audit_logs = {x: bbox.x0 + 5 - s.w/2, y: (bbox.y0 + bbox.y1) / 2};
+            return bbox;
+        }''')
+        self.page.evaluate("resolveGroupObstacles(['audit_logs'])")
+        after = self.page.evaluate("({...nodePos.audit_logs})")
+        self.assertLess(after['x'], setup['x0'],
+                         'a shallow left-edge overlap should push left (out the near side), '
+                         'not down the full frame height')
+        self.assertAlmostEqual(after['y'], (setup['y0'] + setup['y1']) / 2, delta=1,
+                                msg='a sideways push should leave y essentially unchanged')
 
     def test_resolve_group_obstacles_ignores_a_stale_departed_members_position(self):
         # Opus review finding: nothing prunes nodePos when a table leaves

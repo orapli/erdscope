@@ -5212,7 +5212,25 @@ function resolveGroupObstacles(placedTables){
         if(!p) return;
         const x0=p.x-s.w/2, y0=p.y-s.h/2, x1=p.x+s.w/2, y1=p.y+s.h/2;
         if(!(x0<bbox.x1 && x1>bbox.x0 && y0<bbox.y1 && y1>bbox.y0)) return;
-        nodePos[t]={x:p.x, y:bbox.y1+20+s.h/2};
+        // L (BACKLOG): a frame that's tall and narrow (e.g. several stacked
+        // members) can have a non-member only shallowly overlapping its
+        // left/right edge — pushing straight down in that case travels the
+        // full frame height to clear a few pixels of horizontal overlap.
+        // Push whichever of down/right/left actually clears the overlap
+        // with the least travel instead; "up" is deliberately not a
+        // candidate (gridLayout/layoutAll place rows top-to-bottom, so
+        // anything above this point is already finalized — pushing into it
+        // would create a fresh collision there). Ties resolve down > right
+        // > left, a fixed order (not "whichever Object.values() iterates
+        // first") so repeated layouts of the same schema stay deterministic.
+        const downCost=bbox.y1-y0, leftCost=x1-bbox.x0, rightCost=bbox.x1-x0;
+        if(downCost<=leftCost && downCost<=rightCost){
+          nodePos[t]={x:p.x, y:bbox.y1+20+s.h/2};
+        } else if(rightCost<=leftCost){
+          nodePos[t]={x:bbox.x1+20+s.w/2, y:p.y};
+        } else {
+          nodePos[t]={x:bbox.x0-20-s.w/2, y:p.y};
+        }
         moved=true;
       });
     });
