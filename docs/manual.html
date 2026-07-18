@@ -1058,13 +1058,18 @@ every table is reduced to <code>comment</code> (omitted when empty), <code>colum
 columns and indexes deterministically ordered/sorted, and each association's provenance
 normalized to one of five values (<code>declared</code>, <code>manual</code>,
 <code>db_fk</code>, <code>schema_fk</code>, <code>inferred</code>) plus, where known, the set
-of layers that contributed it. A non-polymorphic association whose target didn't survive
+of layers that contributed it. (Only associations carry provenance — a table, column, or
+index records no "which input won it" marker; the provenance-aware IR is association-limited.)
+A non-polymorphic association whose target didn't survive
 <code>--only</code>/<code>--exclude</code> is pruned rather than left dangling; a polymorphic
 <code>belongs_to</code> has no single target table, so it is always kept (its
 <code>target</code> is a symbolic, tableless name). The
 <code>fingerprint</code> is a <code>sha256</code> content hash of the schema, stable across
 table/notes/groups/sources reordering — identical input always produces byte-identical
-output, so it's safe to diff two snapshots or gate CI on the fingerprint changing.</p>
+output, so it's safe to diff two snapshots or gate CI on the fingerprint changing. The shape
+and fingerprint are the stable <strong>format 1</strong> contract, versioned by the top-level
+<code>format</code> field — a breaking change to the projection bumps it (to <code>format</code>
+2, …) rather than silently altering what existing consumers parse.</p>
 
 <h3 id="emit-config">Config export</h3>
 <p><code>--emit-config FILE</code> writes the final schema as a config-authoring file — one
@@ -1095,7 +1100,10 @@ database backing) isn't required to have a real column behind its foreign key. Y
 deterministic — sorted keys, literal block style for multi-line note text — and quotes any
 plain value that YAML's own type rules would otherwise misread as a boolean, octal, or other
 number on the next load (e.g. a comment that's literally the string <code>no</code>), so a
-string always comes back as the same string.</p>
+string always comes back as the same string. One thing level1 can't preserve either way: an
+empty-string column default (<code>DEFAULT ''</code>) and no default at all look identical to
+every provider on read, so neither survives the round trip — the same limit <code>--diff</code>
+cannot detect.</p>
 
 <h3 id="diff">Schema diff / drift gate</h3>
 <p><code>--diff SNAPSHOT.json</code> compares this run against a previously-saved

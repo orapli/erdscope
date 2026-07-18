@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-18
+
 ### Added
 
 - **`--emit-json FILE.json`** — writes a canonical, machine-readable JSON
@@ -59,6 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty-string default vs. no default at all isn't distinguished by any
   provider, so it's the one change `--diff` can't detect — a known level1
   limit, called out in `--diff --help` and the manual.
+- The `--emit-json` snapshot shape and its `sha256` fingerprint are the stable
+  **format 1** contract, versioned by the top-level `format` field — a breaking
+  change to the projection bumps it (to `format` 2, …) rather than silently
+  altering what existing consumers parse. Two properties of that contract worth
+  stating outright: provenance is **association-limited** (a table, column, or
+  index records no "which input won it" marker — only associations do); and an
+  empty-string column default and no default at all are indistinguishable to
+  every provider on read, so that one difference round-trips through neither
+  `--emit-config` nor `--diff`.
 
 ## [0.6.0] - 2026-07-18
 
