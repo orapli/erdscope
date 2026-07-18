@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="168" viewBox="0 0 760 168" role="img" aria-labelledby="title desc">
+  <title id="title">erdscope</title>
+  <desc id="desc">erdscope logo: connected schema cards inside a scope</desc>
+  <defs>
+    <linearGradient id="scope" x1="22" y1="18" x2="145" y2="148" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="#0F172A" flood-opacity=".16"/>
+    </filter>
+  </defs>
+  <g transform="translate(10 4)" filter="url(#shadow)">
+    <circle cx="76" cy="76" r="62" fill="#F8FAFC" stroke="url(#scope)" stroke-width="10"/>
+    <path d="M120 120l32 32" fill="none" stroke="#2563EB" stroke-width="12" stroke-linecap="round"/>
+    <path d="M52 57h48M52 74h24M72 74v22M72 96h34" fill="none" stroke="#94A3B8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="37" y="42" width="30" height="30" rx="7" fill="#0F172A"/>
+    <rect x="85" y="42" width="30" height="30" rx="7" fill="#14B8A6"/>
+    <rect x="57" y="88" width="30" height="30" rx="7" fill="#2563EB"/>
+    <path d="M44 51h16M44 57h16M44 63h10M92 51h16M92 57h16M92 63h10M64 97h16M64 103h16M64 109h10" stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".92"/>
+  </g>
+  <text x="188" y="106" fill="#0F172A" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="84" font-weight="750" letter-spacing="-5">erd<tspan fill="#14B8A6">scope</tspan></text>
+  <text x="194" y="139" fill="#64748B" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="17" font-weight="600" letter-spacing="3.4">EXPLORE THE SCHEMA YOU HAVE</text>
+</svg>
