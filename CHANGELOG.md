@@ -27,6 +27,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PlantUML Copy/Download buttons but non-interactively for the whole schema
   (or whatever `--only`/`--exclude` narrowed it to). Does not include
   notes/groups.
+- **`sources[].type: dbml`** (backlog P4) — a new typed input source that
+  statically parses a [DBML](https://dbml.dbdiagram.io/docs/) file: tables,
+  columns, indexes, primary keys (including composite, via an
+  `indexes { (a, b) [pk] }` entry), and `Ref` relationships (all four
+  cardinality symbols, inline on a column or as a standalone/block
+  statement) — no DBML library dependency. Same authority rank as
+  `rails.schema` (a declared physical schema document); a `Ref`-derived
+  foreign key carries the same schema-FK provenance. `TableGroup`, a
+  standalone `Note` object, and a composite (multi-column) `Ref` are out of
+  scope this round — recognized and skipped with a file:line warning, never
+  silently dropped.
+- **`sources[].type: mermaid.er`** (backlog P5) — a new typed input source
+  that statically parses a Mermaid `erDiagram`: entity blocks (columns,
+  `PK`/`UK`; `FK` is a display-only hint) and relationship lines
+  (crow's-foot cardinality mapped onto belongs_to/has_one/
+  has_and_belongs_to_many, the label becoming the association name — no
+  `foreign_key`, since a relationship line names no column). The lowest-
+  authority input source (below even `--models` code parsing), since a
+  Mermaid column's type is free text jotted down while sketching. MVP
+  scope: a single standalone `.mmd`/`.mermaid` file, no Markdown-fence
+  extraction yet.
 
 ## [0.7.2] - 2026-07-18
 

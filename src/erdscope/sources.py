@@ -33,15 +33,26 @@ def _rails_schema_type_builder(spec, table_map):
     return rails_schema_provider(spec['path'], given=spec['given'])
 
 
+def _dbml_type_builder(spec, table_map):
+    return dbml_provider(spec['path'], given=spec['given'])
+
+
+def _mermaid_er_type_builder(spec, table_map):
+    return mermaid_er_provider(spec['path'], given=spec['given'])
+
+
 SOURCE_TYPES = {
     'rails.schema': _rails_schema_type_builder,
+    'dbml': _dbml_type_builder,
+    'mermaid.er': _mermaid_er_type_builder,
 }
 
 # Source types whose path must be an existing FILE, not a directory (D4) —
 # checked in _run_typed_spec before the builder runs, with a type-specific
 # message (a directory is the mistake someone makes when they meant the
 # containing project, or copy-pasted a `rails.models` path by habit).
-_FILE_SOURCE_TYPES = {'rails.schema': 'a schema.rb file'}
+_FILE_SOURCE_TYPES = {'rails.schema': 'a schema.rb file', 'dbml': 'a .dbml file',
+                      'mermaid.er': 'a .mmd/.mermaid file'}
 
 
 def _models_type_builder(overlay_cls):
@@ -194,6 +205,10 @@ def _source_type_expects(type_name):
     here; a '<overlay>.models' type quotes the overlay's own `expects`."""
     if type_name == 'rails.schema':
         return 'a db/schema.rb with create_table blocks'
+    if type_name == 'dbml':
+        return 'a .dbml file with Table blocks'
+    if type_name == 'mermaid.er':
+        return 'a .mmd/.mermaid file with an erDiagram (entity blocks and/or relationships)'
     for cls in FRAMEWORK_OVERLAYS:
         if f'{cls.name}.models' == type_name:
             return cls.expects or f'input the {cls.name} overlay can parse'
@@ -202,10 +217,13 @@ def _source_type_expects(type_name):
 
 def _progress_noun(result):
     """D4's per-source progress line uses 'tables' for a schema-kind layer
-    (rails.schema's contribution is columns/indexes/PK, not code semantics)
-    and keeps the existing 'associations' wording for every other kind
-    (framework layers — tests may match this exact phrase)."""
-    return 'tables' if result['source']['kind'] == 'schema' else 'associations'
+    (rails.schema's/dbml's contribution is columns/indexes/PK, not code
+    semantics) — and, for the same reason, a sketch-kind layer (Mermaid
+    input, backlog P5: entity blocks are columns too, not just
+    relationships) — and keeps the existing 'associations' wording for
+    every other kind (framework layers — tests may match this exact
+    phrase)."""
+    return 'tables' if result['source']['kind'] in ('schema', 'sketch') else 'associations'
 
 
 def _run_untyped_spec(spec, table_map):

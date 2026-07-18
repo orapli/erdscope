@@ -16,8 +16,19 @@
 # names, so schema.rb ranks below it there but still above the DB (an
 # association's declared name beats a machine-derived one, which in turn beats
 # a raw DB-FK-derived name).
-_PHYSICAL_RANK = {'config': 4, 'db': 3, 'schema': 2, 'framework': 1}
-_LOGICAL_RANK = {'config': 4, 'framework': 3, 'schema': 2, 'db': 1}
+#
+# 'sketch' (backlog P5, DESIGN_ROADMAP.md's D-2) is a Mermaid erDiagram input
+# file: the LOWEST rank in BOTH tables, below even framework code — a
+# Mermaid column's `type` is free-text a human jotted down while sketching,
+# never a real/precise type the way a live DB, a schema.rb dump, OR even
+# framework code's own column parsing (Prisma/Django) is, so it must never
+# win a physical/logical tie against any of them. It still outranks nothing
+# below it because nothing is: an absent 'sketch' entry would make
+# `_PHYSICAL_RANK[kind]`/`_LOGICAL_RANK[kind]` raise a KeyError the moment a
+# sketch layer contributes a column/pk/index/comment, so it must be present
+# in both tables even though its value (0) never wins anything.
+_PHYSICAL_RANK = {'config': 4, 'db': 3, 'schema': 2, 'framework': 1, 'sketch': 0}
+_LOGICAL_RANK = {'config': 4, 'framework': 3, 'schema': 2, 'db': 1, 'sketch': 0}
 # Column attributes split by authority kind (§7.2). Everything not physical
 # (i.e. `comment`) is logical.
 _PHYSICAL_COL_ATTRS = ('type', 'sql_type', 'nullable', 'primary', 'default', 'extra')

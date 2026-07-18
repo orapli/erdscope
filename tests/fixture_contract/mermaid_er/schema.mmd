@@ -1,0 +1,26 @@
+%% Shared provider-contract domain (test_provider_contract.py): users 1:N
+%% posts, users 1:1 profiles, posts M:N tags (native crow's-foot habtm —
+%% Mermaid, unlike rails.schema/dbml, can express many-to-many directly),
+%% posts self-reference.
+
+erDiagram
+    users ||--o{ posts : "user"
+    users ||--|| profiles : ""
+    posts }o--o{ tags : "tagging"
+    posts ||--o{ posts : "parent"
+
+    users {
+        integer id PK
+        string name
+    }
+    profiles {
+        integer id PK
+    }
+    posts {
+        integer id PK
+        string title
+    }
+    tags {
+        integer id PK
+        string name
+    }

@@ -217,5 +217,29 @@ class TestRailsSchemaContract(_ProviderContract, unittest.TestCase):
         return f
 
 
+class TestDbmlContract(_ProviderContract, unittest.TestCase):
+    TYPE = 'dbml'
+    PATH = CONTRACT / 'dbml' / 'schema.dbml'
+    PROVENANCE = 'schema_fk'
+    M2M_STYLE = 'join_table'
+
+    def _write_empty_variant(self, tmp):
+        f = tmp / 'schema.dbml'
+        f.write_text('// empty, no Table blocks\n')
+        return f
+
+
+class TestMermaidErContract(_ProviderContract, unittest.TestCase):
+    TYPE = 'mermaid.er'
+    PATH = CONTRACT / 'mermaid_er' / 'schema.mmd'
+    PROVENANCE = 'declared'
+    M2M_STYLE = 'habtm'
+
+    def _write_empty_variant(self, tmp):
+        f = tmp / 'schema.mmd'
+        f.write_text('%% empty, no entities or relationships\nerDiagram\n')
+        return f
+
+
 if __name__ == '__main__':
     unittest.main()

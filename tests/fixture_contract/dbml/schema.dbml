@@ -1,0 +1,37 @@
+// Shared provider-contract domain (test_provider_contract.py): users 1:N
+// posts, users 1:1 profiles, posts M:N tags (join_table style — DBML has no
+// native HABTM notion, same reasoning rails.schema's own contract fixture
+// uses), posts self-reference.
+
+Table users {
+  id integer [pk, increment]
+  name varchar(255) [not null]
+}
+
+Table profiles {
+  id integer [pk]
+  user_id integer [not null]
+}
+
+Table posts {
+  id integer [pk, increment]
+  user_id integer [not null]
+  parent_id integer
+  title varchar(255) [not null]
+}
+
+Table tags {
+  id integer [pk, increment]
+  name varchar(255) [not null]
+}
+
+Table posts_tags {
+  post_id integer [pk]
+  tag_id integer [pk]
+}
+
+Ref: profiles.user_id - users.id
+Ref: posts.user_id > users.id
+Ref: posts.parent_id > posts.id
+Ref: posts_tags.post_id > posts.id
+Ref: posts_tags.tag_id > tags.id
