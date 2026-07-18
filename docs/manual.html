@@ -817,12 +817,13 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
 <tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
 <tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>Also write the final schema as a config-authoring file, re-importable via <code>--config</code> — see <a href="#emit-config">Exports</a>. Extension picks the format (<code>-</code> for stdout, always JSON). The HTML is still generated</td></tr>
-<tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--excel</code></td></tr>
+<tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--excel</code></td></tr>
 <tr><td><code>--diff-provenance</code></td><td>With <code>--diff</code>, also compare association provenance/sources (ignored by default)</td></tr>
 <tr><td><code>--diff-exit-zero</code></td><td>With <code>--diff</code>, exit 0 even when a difference is found</td></tr>
 <tr><td><code>--diff-format text|json</code></td><td>With <code>--diff</code>, render as human-readable text (default) or deterministic JSON</td></tr>
 <tr><td><code>--emit-digest FILE.md</code></td><td>Also write a token-efficient Markdown digest of the schema, with design notes, for LLMs/agents — see <a href="#emit-digest">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
 <tr><td><code>--digest-verbose</code></td><td>With <code>--emit-digest</code>, also include nullable/default/sql_type per column (omitted by default)</td></tr>
+<tr><td><code>--emit-dbml FILE.dbml</code></td><td>Also write a minimal DBML export of the schema (tables/columns/indexes/single-column-FK relations/table comments) — see <a href="#emit-dbml">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups/<code>TableGroup</code> (deferred). The HTML is still generated</td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
@@ -1112,7 +1113,7 @@ cannot detect.</p>
 <code>--emit-json</code> snapshot and reports the difference instead of generating any
 output — no HTML, Excel, JSON snapshot, config file, or digest is written for a
 <code>--diff</code> run, and it can't be combined with <code>--emit-json</code>/
-<code>--emit-config</code>/<code>--emit-digest</code>/<code>--excel</code> (a usage error,
+<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--excel</code> (a usage error,
 exit 2). It compares at <strong>level1</strong> — the
 same "materially the same schema" notion <a href="#emit-config">Config export</a> defines —
 not byte-for-byte: <code>added</code> means present in <em>this run</em> only, <code>removed</code>
@@ -1158,6 +1159,43 @@ they apply), and one compressed <code>Rel:</code> line summarizing its associati
 (<code>type target[ as name][ fk=…][ through …][ (poly)]</code>); a table with no associations
 simply omits the <code>Rel:</code> line. Like the JSON snapshot, the same schema always
 renders the same Markdown byte-for-byte.</p>
+
+<h3 id="emit-dbml">DBML export</h3>
+<p><code>--emit-dbml FILE.dbml</code> (use <code>-</code> for stdout) writes a minimal
+<a href="https://dbml.dbdiagram.io/docs/" target="_blank" rel="noopener">DBML</a> projection of
+the final schema alongside the HTML — tables, columns, primary keys, indexes, single-column-FK
+relations (<code>Ref:</code>), and table comments (<code>Note:</code>). This is the export half
+of DBML support; DBML as an *input* source is a separate, later piece of work, and this export
+is what fixes the schema↔DBML mapping first. <strong>High-fidelity:</strong> every column
+renders with its raw <code>sql_type</code> (falling back to the coarse type shorthand only when
+no DB type was ever recorded), <code>pk</code>/<code>increment</code>/<code>not null</code>/
+<code>unique</code>/<code>default</code> attributes, a composite primary key as an
+<code>indexes { (a, b) [pk] }</code> entry, every other index (named or not, unique or not) as
+its own <code>indexes</code> entry, and a table's comment as a trailing <code>Note:</code> line
+(triple-quoted when the comment itself spans multiple lines). <strong>Explicitly NOT included
+this round</strong> (deferred to a later extension phase): <code>notes</code>/
+<code>groups</code> (<a href="#notes">Notes</a>/<a href="#groups">Groups</a> — DBML's own
+<code>Project</code>/<code>TableGroup</code> blocks are a natural fit for groups, but that
+mapping isn't built yet), <code>has_one</code> relations, polymorphic relations, multi-column
+foreign keys, and any relation whose target has no single-column primary key. The
+<code>Ref:</code> rule is deliberately narrow: only a <code>belongs_to</code> association with a
+foreign key produces a <code>Ref:</code> line, because a <code>belongs_to</code>'s
+<code>foreign_key</code> always names a column on its own (declaring) table across every
+provider in erdscope, while a <code>has_one</code>'s <code>foreign_key</code> is ambiguous —
+most providers treat it as a column on the declaring table too, but Rails' hand-written
+<code>has_one :x, foreign_key: :y</code> means <code>y</code> is a column on the *other* table,
+and the schema alone can't tell which provider produced a given <code>has_one</code> once it
+reaches this export. Rather than risk emitting a <code>Ref:</code> that points at a column that
+doesn't exist, <code>has_one</code>/<code>has_many</code>/<code>has_and_belongs_to_many</code>
+are excluded from <code>Ref:</code> generation entirely. A polymorphic <code>belongs_to</code>
+is skipped silently (its target is a synthetic placeholder, not a real table); a
+<code>belongs_to</code> whose target has no primary key, or a composite one, can't be expressed
+as a single-column <code>Ref:</code> in this minimal version and is skipped with a warning
+printed to stderr (never a hard failure). Like the other exports, this is deterministic — the
+same schema always renders the same DBML text — and purely additive: existing HTML/Excel/
+<code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code> output is
+untouched, and it isn't combinable with <code>--diff</code> (a usage error, exit 2), same as
+every other output-generating flag.</p>
 </section>
 
 <section id="troubleshooting">

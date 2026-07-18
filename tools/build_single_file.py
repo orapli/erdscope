@@ -48,6 +48,7 @@ MODULES = [
                       # (config-authoring YAML/JSON projection, level1 round trip)
     'diff.py',        # --diff (backlog #2): level1 schema diff / CI drift gate
     'digest.py',      # --emit-digest (backlog #3): token-efficient Markdown digest for LLMs
+    'dbml.py',        # --emit-dbml (backlog #5): minimal DBML export of the schema
     'cli.py',         # argparse main, serialize_for_viewer, _finish
 ]
 

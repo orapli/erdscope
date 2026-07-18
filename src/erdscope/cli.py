@@ -51,6 +51,11 @@ def main():
     p.add_argument('--digest-verbose', action='store_true',
                    help='With --emit-digest, also include nullable/default/sql_type '
                         'per column (omitted by default to keep the digest small)')
+    p.add_argument('--emit-dbml', metavar='FILE.dbml', default=argparse.SUPPRESS,
+                   help='Also write a minimal DBML export of the schema '
+                        '(tables/columns/indexes/single-column-FK relations/table '
+                        'comments) alongside the HTML; use - for stdout. Does not '
+                        'include notes/groups/TableGroup (deferred)')
     p.add_argument('--excel-template', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help="Override the workbook's colors/fonts/borders from a template "
                         '.xlsx — see excel-template.xlsx and its Styles sheet for the '
@@ -440,6 +445,7 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
         for _flag, _val in (('--emit-json', getattr(args, 'emit_json', None)),
                             ('--emit-config', getattr(args, 'emit_config', None)),
                             ('--emit-digest', getattr(args, 'emit_digest', None)),
+                            ('--emit-dbml', getattr(args, 'emit_dbml', None)),
                             ('--excel', getattr(args, 'excel', None))):
             if _val:
                 _diff_fail(f'--diff cannot be combined with {_flag} '
@@ -494,6 +500,7 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
                         ('--emit-json', getattr(args, 'emit_json', None)),
                         ('--emit-config', getattr(args, 'emit_config', None)),
                         ('--emit-digest', getattr(args, 'emit_digest', None)),
+                        ('--emit-dbml', getattr(args, 'emit_dbml', None)),
                         ('--excel', getattr(args, 'excel', None))):
         if not _val or _val == '-':
             continue
@@ -535,6 +542,14 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     emit_digest_text = (emit_digest_document(tables, notes_data, groups_data, title=title_name,
                                              verbose=getattr(args, 'digest_verbose', False))
                         if emit_digest_val is not None else None)
+
+    # --emit-dbml (backlog #5): same provenance-preserving-IR timing as the
+    # other three emit-family builders above (built before serialize_for_viewer)
+    # — render_dbml reads columns/indexes/associations straight off
+    # canonical_schema, same as --emit-json/--emit-config/--emit-digest.
+    emit_dbml_val = getattr(args, 'emit_dbml', None)
+    emit_dbml_text = (emit_dbml_document(tables, notes_data, groups_data)
+                      if emit_dbml_val is not None else None)
 
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
@@ -583,6 +598,13 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
         else:
             Path(emit_digest_val).write_text(emit_digest_text, encoding='utf-8')
             print(f'Generated: {emit_digest_val}', file=sys.stderr)
+
+    if emit_dbml_text is not None:
+        if emit_dbml_val == '-':
+            sys.stdout.write(emit_dbml_text)
+        else:
+            Path(emit_dbml_val).write_text(emit_dbml_text, encoding='utf-8')
+            print(f'Generated: {emit_dbml_val}', file=sys.stderr)
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,
