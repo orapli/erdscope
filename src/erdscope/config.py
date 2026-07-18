@@ -270,7 +270,11 @@ def _check_config_notes(notes, path):
                 if not isinstance(val, str) or not val:
                     sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string '
                              f'`target.{key}`')
-            for key in ('foreign_key', 'name', 'through'):
+            # foreign_key / through: explicit null IS meaningful ("match an
+            # association where this field is absent" — Sol relaxation #2 in
+            # providers.py's resolve_and_validate_notes), so it stays allowed
+            # here; only a non-null value is type/shape-checked.
+            for key in ('foreign_key', 'through'):
                 if key in target and target[key] is not None:
                     val = target[key]
                     if isinstance(val, list):
@@ -280,9 +284,27 @@ def _check_config_notes(notes, path):
                     if not isinstance(val, str) or not val:
                         sys.exit(f'Error: {path} note {note_id!r} `target.{key}` must be a '
                                  'non-empty string')
+            # name / assoc_type: UNLIKE foreign_key/through above, an explicit
+            # null here has no real meaning — every producer (DB/framework/
+            # config) always assigns an association a name and a type, so
+            # "match an association where name/type is absent" would forever
+            # match zero associations and silently confuse whoever wrote it.
+            # Reject the explicit null outright; the wildcard ("don't narrow
+            # on this field at all") is spelled by omitting the key, not by
+            # nulling it.
+            if 'name' in target:
+                if target['name'] is None:
+                    sys.exit(f'Error: {path} note {note_id!r} target.name must not be null '
+                             '— omit the key to match any name')
+                if not isinstance(target['name'], str) or not target['name']:
+                    sys.exit(f'Error: {path} note {note_id!r} `target.name` must be a '
+                             'non-empty string')
             _check_bool(target.get('polymorphic'), 'polymorphic' in target, path,
                        f'{nw}.target.polymorphic')
-            if 'assoc_type' in target and target['assoc_type'] is not None:
+            if 'assoc_type' in target:
+                if target['assoc_type'] is None:
+                    sys.exit(f'Error: {path} note {note_id!r} target.assoc_type must not be '
+                             'null — omit the key to match any type')
                 at = target['assoc_type']
                 if at not in _CONFIG_ASSOC_TYPES:
                     sys.exit(f'Error: {path} note {note_id!r} `target.assoc_type` must be '

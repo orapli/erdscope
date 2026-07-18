@@ -1,0 +1,513 @@
+{
+  "fingerprint": "sha256:ca034e782a6de4d2e708a0c522348d08b74a7a8b71bb28271dcae377a9af6b12",
+  "format": 1,
+  "schema": {
+    "groups": [
+      {
+        "id": "g-content",
+        "tables": [
+          "categories",
+          "comments"
+        ]
+      },
+      {
+        "color": "#0d9488",
+        "id": "g-core",
+        "tables": [
+          "posts",
+          "users"
+        ],
+        "title": "Core commerce"
+      }
+    ],
+    "notes": [
+      {
+        "id": "note-global",
+        "links": [
+          {
+            "label": "Design doc",
+            "url": "https://example.com/design"
+          }
+        ],
+        "scope": "global",
+        "text": "This schema models a small blog with org membership.",
+        "title": "Overview"
+      },
+      {
+        "foreign_key": "commentable_id",
+        "id": "note-rel-commentable",
+        "name": "commentable",
+        "polymorphic": true,
+        "scope": "relation",
+        "source_table": "comments",
+        "target": "commentables",
+        "text": "Polymorphic: may point at posts or other commentable types.",
+        "through": null,
+        "type": "belongs_to"
+      },
+      {
+        "foreign_key": "user_id",
+        "id": "note-rel-post-user",
+        "links": [
+          {
+            "url": "https://example.com/authors"
+          }
+        ],
+        "name": "user",
+        "polymorphic": false,
+        "scope": "relation",
+        "source_table": "posts",
+        "target": "users",
+        "text": "Every post has exactly one author.",
+        "through": null,
+        "title": "Author relation",
+        "type": "belongs_to"
+      },
+      {
+        "foreign_key": null,
+        "id": "note-rel-users-comments",
+        "name": "comments",
+        "polymorphic": false,
+        "scope": "relation",
+        "source_table": "users",
+        "target": "comments",
+        "text": "Indirect: a user's comments, reached via their posts.",
+        "through": "posts",
+        "type": "has_many"
+      },
+      {
+        "id": "note-table-users",
+        "scope": "table",
+        "table": "users",
+        "text": "Users table stores auth + profile fields."
+      }
+    ],
+    "tables": {
+      "categories": {
+        "associations": [
+          {
+            "foreign_key": "parent_id",
+            "name": "parent",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "mysql"
+              }
+            ],
+            "target": "categories",
+            "type": "belongs_to"
+          },
+          {
+            "name": "posts",
+            "provenance": "declared",
+            "sources": [
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "posts",
+            "type": "has_many"
+          }
+        ],
+        "columns": [
+          {
+            "extra": "auto_increment",
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "parent_id",
+            "nullable": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "name",
+            "nullable": false,
+            "sql_type": "varchar(100)",
+            "type": "string"
+          }
+        ],
+        "indexes": []
+      },
+      "comments": {
+        "associations": [
+          {
+            "foreign_key": "commentable_id",
+            "name": "commentable",
+            "polymorphic": true,
+            "provenance": "declared",
+            "sources": [
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "commentables",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "post_id",
+            "name": "post",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "mysql"
+              }
+            ],
+            "target": "posts",
+            "type": "belongs_to"
+          }
+        ],
+        "columns": [
+          {
+            "extra": "auto_increment",
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "post_id",
+            "nullable": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "commentable_id",
+            "nullable": false,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "commentable_type",
+            "nullable": false,
+            "sql_type": "varchar(60)",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "nullable": false,
+            "type": "text"
+          }
+        ],
+        "comment": "Comments on posts, or (polymorphically) other things",
+        "indexes": []
+      },
+      "memberships": {
+        "associations": [
+          {
+            "foreign_key": "user_id",
+            "name": "member",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "mysql"
+              },
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "users",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "org_id",
+            "name": "org",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "mysql"
+              },
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "organizations",
+            "type": "belongs_to"
+          }
+        ],
+        "columns": [
+          {
+            "name": "org_id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "user_id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "default": "member",
+            "name": "role",
+            "nullable": true,
+            "sql_type": "varchar(30)",
+            "type": "string"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "role"
+            ],
+            "name": "idx_memberships_role",
+            "unique": false
+          }
+        ]
+      },
+      "organizations": {
+        "associations": [
+          {
+            "name": "memberships",
+            "provenance": "declared",
+            "sources": [
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "memberships",
+            "type": "has_many"
+          }
+        ],
+        "columns": [
+          {
+            "extra": "auto_increment",
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "name",
+            "nullable": false,
+            "sql_type": "varchar(100)",
+            "type": "string"
+          }
+        ],
+        "indexes": []
+      },
+      "posts": {
+        "associations": [
+          {
+            "foreign_key": "category_id",
+            "name": "category",
+            "provenance": "schema_fk",
+            "sources": [
+              {
+                "kind": "schema",
+                "provider": "rails.schema"
+              }
+            ],
+            "target": "categories",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "created_by_id",
+            "name": "creator",
+            "provenance": "inferred",
+            "target": "users",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "editor_id",
+            "name": "editor",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "users",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "user_id",
+            "name": "user",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "mysql"
+              },
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "users",
+            "type": "belongs_to"
+          },
+          {
+            "name": "comments",
+            "provenance": "declared",
+            "sources": [
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "comments",
+            "type": "has_many"
+          }
+        ],
+        "columns": [
+          {
+            "extra": "auto_increment",
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "user_id",
+            "nullable": false,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "category_id",
+            "nullable": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "editor_id",
+            "nullable": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "name": "created_by_id",
+            "nullable": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "comment": "post title",
+            "name": "title",
+            "nullable": false,
+            "sql_type": "varchar(255)",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "nullable": true,
+            "type": "text"
+          },
+          {
+            "comment": "legacy migration flag",
+            "default": "0",
+            "extra": "unsigned",
+            "name": "legacy_flag",
+            "nullable": false,
+            "sql_type": "tinyint(1)",
+            "type": "integer"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "user_id"
+            ],
+            "unique": false
+          }
+        ]
+      },
+      "users": {
+        "associations": [
+          {
+            "name": "comments",
+            "provenance": "declared",
+            "sources": [
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "comments",
+            "through": "posts",
+            "type": "has_many"
+          },
+          {
+            "name": "posts",
+            "provenance": "declared",
+            "sources": [
+              {
+                "kind": "framework",
+                "provider": "rails"
+              }
+            ],
+            "target": "posts",
+            "type": "has_many"
+          }
+        ],
+        "columns": [
+          {
+            "extra": "auto_increment",
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "bigint unsigned",
+            "type": "bigint"
+          },
+          {
+            "comment": "login email",
+            "name": "email",
+            "nullable": false,
+            "sql_type": "varchar(255)",
+            "type": "string"
+          },
+          {
+            "default": "active",
+            "name": "status",
+            "nullable": false,
+            "sql_type": "varchar(20)",
+            "type": "string"
+          },
+          {
+            "name": "bio",
+            "nullable": true,
+            "sql_type": "text",
+            "type": "text"
+          }
+        ],
+        "comment": "Application users",
+        "indexes": [
+          {
+            "columns": [
+              "status"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "email"
+            ],
+            "name": "idx_users_email",
+            "unique": true
+          }
+        ]
+      }
+    }
+  }
+}

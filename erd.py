@@ -7564,7 +7564,11 @@ def _check_config_notes(notes, path):
                 if not isinstance(val, str) or not val:
                     sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string '
                              f'`target.{key}`')
-            for key in ('foreign_key', 'name', 'through'):
+            # foreign_key / through: explicit null IS meaningful ("match an
+            # association where this field is absent" — Sol relaxation #2 in
+            # providers.py's resolve_and_validate_notes), so it stays allowed
+            # here; only a non-null value is type/shape-checked.
+            for key in ('foreign_key', 'through'):
                 if key in target and target[key] is not None:
                     val = target[key]
                     if isinstance(val, list):
@@ -7574,9 +7578,27 @@ def _check_config_notes(notes, path):
                     if not isinstance(val, str) or not val:
                         sys.exit(f'Error: {path} note {note_id!r} `target.{key}` must be a '
                                  'non-empty string')
+            # name / assoc_type: UNLIKE foreign_key/through above, an explicit
+            # null here has no real meaning — every producer (DB/framework/
+            # config) always assigns an association a name and a type, so
+            # "match an association where name/type is absent" would forever
+            # match zero associations and silently confuse whoever wrote it.
+            # Reject the explicit null outright; the wildcard ("don't narrow
+            # on this field at all") is spelled by omitting the key, not by
+            # nulling it.
+            if 'name' in target:
+                if target['name'] is None:
+                    sys.exit(f'Error: {path} note {note_id!r} target.name must not be null '
+                             '— omit the key to match any name')
+                if not isinstance(target['name'], str) or not target['name']:
+                    sys.exit(f'Error: {path} note {note_id!r} `target.name` must be a '
+                             'non-empty string')
             _check_bool(target.get('polymorphic'), 'polymorphic' in target, path,
                        f'{nw}.target.polymorphic')
-            if 'assoc_type' in target and target['assoc_type'] is not None:
+            if 'assoc_type' in target:
+                if target['assoc_type'] is None:
+                    sys.exit(f'Error: {path} note {note_id!r} target.assoc_type must not be '
+                             'null — omit the key to match any type')
                 at = target['assoc_type']
                 if at not in _CONFIG_ASSOC_TYPES:
                     sys.exit(f'Error: {path} note {note_id!r} `target.assoc_type` must be '
@@ -8642,10 +8664,53 @@ def main():
 
     _run_pipeline(args)
 
+def _emit_config_format(val):
+    """Extension dispatch for --emit-config: '-' (stdout) and a `.json` path
+    -> 'json'; `.yml`/`.yaml` -> 'yaml' (PyYAML required — checked here too,
+    hard error, no silent JSON fallback, since a script asking for YAML would
+    otherwise get a different format with no indication). Anything else is a
+    fatal usage error (an unrecognized/typo'd extension).
+
+    Single source of truth for this dispatch, called from TWO places: once at
+    the very top of _run_pipeline (fail-fast, before the DB layer is even
+    built — a typo'd extension or a missing PyYAML shouldn't cost the user a
+    slow DB introspection just to find out) and again from _finish (which
+    actually needs the format value to build the document). Calling it twice
+    is cheap and keeps the two call sites from ever disagreeing about what
+    counts as valid."""
+    if val == '-':
+        return 'json'
+    suffix = Path(val).suffix.lower()
+    if suffix in ('.yml', '.yaml'):
+        fmt = 'yaml'
+    elif suffix == '.json':
+        fmt = 'json'
+    else:
+        sys.exit(f'Error: --emit-config {val!r} must end in .yml, '
+                 '.yaml, or .json (or be "-" for stdout, which is always JSON)')
+    if fmt == 'yaml':
+        try:
+            import yaml  # noqa: F401 — existence check only; config_yaml_text imports it again
+        except ImportError:
+            sys.exit(f'Error: --emit-config {val} is YAML but PyYAML is '
+                     'not installed (pip install pyyaml, or use a .json extension '
+                     'instead)')
+    return fmt
+
 def _run_pipeline(args):
     """The actual generate pipeline, shared by a normal run and `erdscope
     demo` (run_demo, in demo.py, rewrites args.database to a temp sqlite URL
     and forces config off, then calls straight in here)."""
+    # Fail-fast (backlog #1 follow-up): validate --emit-config's extension/
+    # PyYAML-availability up front, before the config file is even loaded or
+    # the DB layer is built — a typo'd extension or missing PyYAML used to
+    # only surface in _finish, AFTER a possibly-slow DB introspection. Both
+    # `erdscope demo` (run_demo rewrites args.database and calls straight into
+    # here) and a normal run funnel through this one function, so this single
+    # check covers both. _finish reuses the SAME helper (not a second copy of
+    # this logic) when it actually builds the document.
+    if getattr(args, 'emit_config', None) is not None:
+        _emit_config_format(args.emit_config)
     config = load_config(args)
     # Load any custom DB adapters (--adapter / config `adapters`) before the URL
     # is classified, so their schemes are registered in time. Config entries
@@ -8930,31 +8995,13 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
 
     # --emit-config (backlog #1): same provenance-preserving-IR timing as
     # --emit-json above (built before serialize_for_viewer). Extension
-    # dispatch (Sol relaxation #6): .yml/.yaml -> YAML (PyYAML required — a
-    # hard error here, no silent JSON fallback, since a script asking for
-    # YAML would otherwise get a different format without any indication);
-    # .json -> JSON; '-' (stdout) -> JSON always (no extension to read).
+    # dispatch + PyYAML-availability (Sol relaxation #6) is delegated to
+    # _emit_config_format — the SAME helper _run_pipeline already called
+    # fail-fast, before the DB layer was even built, so a bad extension or
+    # missing PyYAML never reaches this far; this call is just getting the
+    # dispatch result back, not re-deciding anything.
     emit_config_val = getattr(args, 'emit_config', None)
-    emit_config_fmt = None
-    if emit_config_val is not None:
-        if emit_config_val == '-':
-            emit_config_fmt = 'json'
-        else:
-            _suffix = Path(emit_config_val).suffix.lower()
-            if _suffix in ('.yml', '.yaml'):
-                emit_config_fmt = 'yaml'
-            elif _suffix == '.json':
-                emit_config_fmt = 'json'
-            else:
-                sys.exit(f'Error: --emit-config {emit_config_val!r} must end in .yml, '
-                         '.yaml, or .json (or be "-" for stdout, which is always JSON)')
-        if emit_config_fmt == 'yaml':
-            try:
-                import yaml  # noqa: F401 — existence check only; config_yaml_text imports it again
-            except ImportError:
-                sys.exit(f'Error: --emit-config {emit_config_val} is YAML but PyYAML is '
-                         'not installed (pip install pyyaml, or use a .json extension '
-                         'instead)')
+    emit_config_fmt = _emit_config_format(emit_config_val) if emit_config_val is not None else None
     emit_config_text = None
     if emit_config_val is not None:
         emit_config_doc = config_document(tables, notes_data, groups_data, title=title_name)

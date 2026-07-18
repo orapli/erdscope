@@ -764,6 +764,58 @@ class TestCLIExtensionDispatch(_EmitConfigDriver):
         self.assertIn('Generated: schema.json', err)
 
 
+# ---------------------------------------------------------------------------
+# Fail-fast ordering: --emit-config's extension/PyYAML validation must run
+# BEFORE the DB layer is built (_run_pipeline calls _emit_config_format up
+# front, before db_provider), not only later in _finish after a possibly-slow
+# DB introspection has already happened. Uses a real sqlite:// URL pointing at
+# a file that does NOT exist — no monkeypatching needed: if the fail-fast
+# check regressed back to running only in _finish, the DB layer would run
+# FIRST and raise sqlite's own "database file not found" SystemExit instead,
+# which carries a different message than the --emit-config one, catching the
+# ordering bug via message content.
+# ---------------------------------------------------------------------------
+class TestEmitConfigFailsFastBeforeDB(unittest.TestCase):
+    def setUp(self):
+        self._orig_argv = sys.argv
+        self._orig_cwd = os.getcwd()
+        self.addCleanup(lambda: setattr(sys, 'argv', self._orig_argv))
+        self.addCleanup(os.chdir, self._orig_cwd)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        os.chdir(self.tmp.name)
+
+    def _run(self, *cli_args):
+        # a sqlite URL to a file that is never created — if the DB layer were
+        # reached at all, this would fail with "sqlite database file not
+        # found", not the --emit-config error under test
+        sys.argv = ['erd.py', 'sqlite:///does-not-exist.db', *cli_args]
+        err_buf = io.StringIO()
+        with redirect_stderr(err_buf):
+            erd.main()
+
+    def test_unknown_extension_errors_before_db_connection(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._run('--emit-config', 'schema.txt')
+        msg = str(cm.exception)
+        self.assertIn('--emit-config', msg)
+        self.assertIn('must end in', msg)
+        self.assertNotIn('sqlite database file not found', msg)
+
+    def test_unknown_extension_errors_before_output_file_is_written(self):
+        with self.assertRaises(SystemExit):
+            self._run('-o', 'out.html', '--emit-config', 'schema.txt')
+        self.assertFalse((Path(self.tmp.name) / 'out.html').exists())
+
+    def test_pyyaml_missing_errors_before_db_connection(self):
+        with _NoPyYAML():
+            with self.assertRaises(SystemExit) as cm:
+                self._run('--emit-config', 'schema.yml')
+        msg = str(cm.exception)
+        self.assertIn('PyYAML', msg)
+        self.assertNotIn('sqlite database file not found', msg)
+
+
 class TestCLICollisionGuard(_EmitConfigDriver):
     def test_emit_config_colliding_with_output_errors(self):
         with self.assertRaises(SystemExit):

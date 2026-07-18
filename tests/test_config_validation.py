@@ -803,6 +803,57 @@ class TestConfigNotesValidation(unittest.TestCase):
                 'bogus': 1})]})
         self.assertIn('bogus', str(cm.exception))
 
+    # -----------------------------------------------------------------------
+    # name / assoc_type: explicit null is REJECTED (unlike foreign_key/
+    # through) — every producer always assigns an association a name and a
+    # type, so an explicit null narrowing would forever match zero
+    # associations. The wildcard is spelled by omitting the key entirely.
+    # -----------------------------------------------------------------------
+    def test_relation_target_name_null_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={
+                'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+                'name': None})]})
+        msg = str(cm.exception)
+        self.assertIn('n1', msg)
+        self.assertIn('target.name', msg)
+        self.assertIn('must not be null', msg)
+
+    def test_relation_target_assoc_type_null_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={
+                'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+                'assoc_type': None})]})
+        msg = str(cm.exception)
+        self.assertIn('n1', msg)
+        self.assertIn('target.assoc_type', msg)
+        self.assertIn('must not be null', msg)
+
+    def test_relation_target_name_key_omitted_is_fine(self):
+        cfg = _load({'notes': [self._note(target={
+            'type': 'relation', 'source_table': 'orders', 'target_table': 'users'})]})
+        self.assertNotIn('name', cfg['notes'][0]['target'])
+
+    def test_relation_target_assoc_type_key_omitted_is_fine(self):
+        cfg = _load({'notes': [self._note(target={
+            'type': 'relation', 'source_table': 'orders', 'target_table': 'users'})]})
+        self.assertNotIn('assoc_type', cfg['notes'][0]['target'])
+
+    def test_relation_target_foreign_key_null_still_allowed(self):
+        # UNLIKE name/assoc_type: an explicit null here has real meaning
+        # ("match an association where foreign_key is absent") and stays
+        # accepted.
+        cfg = _load({'notes': [self._note(target={
+            'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+            'foreign_key': None})]})
+        self.assertIsNone(cfg['notes'][0]['target']['foreign_key'])
+
+    def test_relation_target_through_null_still_allowed(self):
+        cfg = _load({'notes': [self._note(target={
+            'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+            'through': None})]})
+        self.assertIsNone(cfg['notes'][0]['target']['through'])
+
     def test_empty_notes_list_is_syntactically_fine(self):
         self.assertEqual(_load({'notes': []})['notes'], [])
 
