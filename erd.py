@@ -5345,6 +5345,25 @@ function drawNode(parent, name) {
     rbTitle.textContent='Checked (expansion root)';
     rb.appendChild(rbTitle);
     g.appendChild(rb);
+  } else if(isAuto){
+    // dashed/auto-expanded table: shown only because some other root pulled
+    // it in (its list checkbox is disabled — see renderTableList) — this is
+    // the one direct way to promote it to an explicit root (same effect as
+    // checking that checkbox would have), so it keeps its place even if
+    // auto-expand's roots/depth/direction later change and would otherwise
+    // have dropped it.
+    const rb=svgEl('text',{x:12,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-mode'});
+    rb.textContent='＋';
+    const rbTitle=svgEl('title',{});
+    rbTitle.textContent='Promote to an explicit selection (keep this table even if auto-expand changes)';
+    rb.appendChild(rbTitle);
+    rb.addEventListener('mousedown', e=>e.stopPropagation());
+    rb.addEventListener('dblclick', e=>e.stopPropagation());
+    rb.addEventListener('click', e=>{
+      e.stopPropagation();
+      promoteAuto(name);
+    });
+    g.appendChild(rb);
   }
 
   // remove this table from the diagram — the lightweight equivalent of
@@ -5781,6 +5800,18 @@ function excludeTable(name){
   refreshView(); renderTableList();
 }
 
+// The mirror image of excludeTable(): promote a currently auto-expanded
+// (dashed, not-yet-explicit) table to an explicit root — exactly what
+// checking its list checkbox would do (excludedTables.delete), which is
+// otherwise unreachable for one of these tables since renderTableList()
+// disables the checkbox while auto-expand is what's actually showing it.
+function promoteAuto(name){
+  excludedTables.delete(name);
+  noAutoExpandRoot.delete(name); // a direct promotion is explicit intent — full root, not a stale auto-expand root
+  saveState();
+  refreshView(); renderTableList(); showDetails();
+}
+
 // Would excludeTable(name) actually remove it from what's currently
 // visible? False while focused (checkboxes/exclusion are ignored by the
 // focus view entirely) or when auto-expand would just pull the table back
@@ -5862,10 +5893,21 @@ function renderTableList(){
         e.preventDefault();
         focusedTable===name ? clearFocus() : focusTable(name); // double click = filter
       });
+      // Overview auto-expand (not focus mode): the checkbox stays enabled
+      // and doubles as the promote-to-explicit-root action (same
+      // excludedTables.delete the change handler below already does) — the
+      // list-side counterpart to the node's own ＋ button (drawNode/
+      // promoteAuto). Focus mode's own "every other table looks auto-shown"
+      // case is left locked, unchanged: focus ignores checkboxes for
+      // visibility entirely, so unlocking there would silently update
+      // excludedTables with no visible effect until the user exits focus —
+      // more confusing than useful.
+      const isOverviewAutoShown = autoShown && !focusedTable;
       const cb=document.createElement('input');
       cb.type='checkbox'; cb.checked=!excludedTables.has(name);
-      cb.disabled=isHidden||autoShown; // auto-expanded tables: checkbox locked
-      if(autoShown) cb.title='Shown by auto-expansion (checkbox locked)';
+      cb.disabled=isHidden||(autoShown && !isOverviewAutoShown);
+      if(isOverviewAutoShown) cb.title='Shown by auto-expansion — check to promote it to an explicit selection';
+      else if(autoShown) cb.title='Shown by auto-expansion (checkbox locked while focused)';
       cb.addEventListener('change', e => {
         e.stopPropagation();
         if(cb.checked){ excludedTables.delete(name); }
@@ -6145,7 +6187,9 @@ function renderMultiSelectDetails(el){
   let h=`<div class="detail-name">${names.length} tables selected</div>`;
   h+='<div class="sec-title">Align</div><div class="msel-btns">'
     +`<button class="diag-btn" data-align="left" ${canAlign?'':'disabled'} title="Align left edges">⇤ Left</button>`
+    +`<button class="diag-btn" data-align="right" ${canAlign?'':'disabled'} title="Align right edges">⇥ Right</button>`
     +`<button class="diag-btn" data-align="top" ${canAlign?'':'disabled'} title="Align top edges">⇡ Top</button>`
+    +`<button class="diag-btn" data-align="bottom" ${canAlign?'':'disabled'} title="Align bottom edges">⇣ Bottom</button>`
     +`<button class="diag-btn" data-align="hcenter" ${canAlign?'':'disabled'} title="Align horizontal centers">↔ Center</button>`
     +`<button class="diag-btn" data-align="vcenter" ${canAlign?'':'disabled'} title="Align vertical centers">↕ Middle</button>`
     +'</div>';
@@ -6241,9 +6285,15 @@ function alignSelection(mode){
   if(mode==='left'){
     const x0=Math.min(...boxes.map(b=>b.x0));
     boxes.forEach(b=>{ nodePos[b.t].x=x0+(b.x1-b.x0)/2; });
+  } else if(mode==='right'){
+    const x1=Math.max(...boxes.map(b=>b.x1));
+    boxes.forEach(b=>{ nodePos[b.t].x=x1-(b.x1-b.x0)/2; });
   } else if(mode==='top'){
     const y0=Math.min(...boxes.map(b=>b.y0));
     boxes.forEach(b=>{ nodePos[b.t].y=y0+(b.y1-b.y0)/2; });
+  } else if(mode==='bottom'){
+    const y1=Math.max(...boxes.map(b=>b.y1));
+    boxes.forEach(b=>{ nodePos[b.t].y=y1-(b.y1-b.y0)/2; });
   } else if(mode==='hcenter'){
     const cx=(Math.min(...boxes.map(b=>b.x0))+Math.max(...boxes.map(b=>b.x1)))/2;
     boxes.forEach(b=>{ nodePos[b.t].x=cx; });

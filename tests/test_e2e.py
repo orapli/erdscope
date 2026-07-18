@@ -795,6 +795,65 @@ class TestClientJS(unittest.TestCase):
         self.page.wait_for_timeout(100)
         return True
 
+    def _click_promote_button(self, name):
+        box = self.page.evaluate(f'''() => {{
+            const g = document.querySelector('.er-node[data-name="{name}"]');
+            const btn = [...g.querySelectorAll('text')].find(t => t.textContent.startsWith('＋'));
+            if (!btn) return null;
+            const r = btn.getBoundingClientRect();
+            return {{x: r.x + r.width/2, y: r.y + r.height/2}};
+        }}''')
+        if box is None: return False
+        self.page.mouse.click(box['x'], box['y'])
+        self.page.wait_for_timeout(100)
+        return True
+
+    def test_promote_button_on_auto_expanded_node(self):
+        # exclude 'posts' but leave auto-expand on: 'users' (still a root)
+        # pulls posts back in as a neighbor, so it renders dashed ('auto')
+        # with no way to check its (disabled) list checkbox — the node's
+        # own ＋ button is the way to promote it to an explicit root.
+        self.page.locator('#auto-expand').check()
+        self.page.evaluate("excludedTables.add('posts'); refreshView(); renderTableList();")
+        self.page.wait_for_timeout(100)
+        self.assertTrue(
+            self.page.evaluate('document.querySelector(\'[data-name="posts"]\').classList.contains("auto")'),
+            'test setup: posts should render as auto-expanded (dashed)')
+        self.assertTrue(self._click_promote_button('posts'))
+        self.assertFalse(self.page.evaluate("excludedTables.has('posts')"),
+                          '＋ should promote the table to an explicit root')
+        self.assertFalse(
+            self.page.evaluate('document.querySelector(\'[data-name="posts"]\').classList.contains("auto")'),
+            'promoted table should no longer render dashed')
+
+    def test_promote_button_not_shown_for_an_explicit_root(self):
+        self.assertFalse(self._click_promote_button('users'),
+                          'a table already checked as an explicit root has no ＋ button')
+
+    def test_list_checkbox_unlocked_for_overview_auto_expanded_table(self):
+        # the list checkbox is a second way to do the same promotion — see
+        # renderTableList()'s isOverviewAutoShown handling
+        self.page.locator('#auto-expand').check()
+        self.page.evaluate("excludedTables.add('posts'); refreshView(); renderTableList();")
+        self.page.wait_for_timeout(100)
+        cb = self.page.locator('.table-item:has-text("posts") input[type="checkbox"]').first
+        self.assertTrue(cb.is_enabled(),
+                         'an overview auto-expanded table\'s checkbox should be promotable, not locked')
+        cb.check()
+        self.page.wait_for_timeout(100)
+        self.assertFalse(self.page.evaluate("excludedTables.has('posts')"),
+                          'checking the box should promote the table to an explicit root')
+
+    def test_list_checkbox_stays_locked_while_focused(self):
+        # focus mode ignores checkboxes for visibility entirely, so this
+        # deliberately unrelated case is left as it was before
+        self.page.dblclick('.er-node[data-name="users"] .n-title')
+        self.page.wait_for_timeout(100)
+        self.assertTrue(self.page.evaluate('!!focusedTable'), 'test setup: should now be focused')
+        cb = self.page.locator('.table-item:has-text("posts") input[type="checkbox"]').first
+        self.assertFalse(cb.is_enabled(),
+                          "a focus-mode 'auto-shown' table's checkbox should still be locked")
+
     def test_node_remove_button_excludes_the_table(self):
         # the ⊖ button on a node's header is the diagram-side equivalent of
         # unchecking the table's list checkbox — a lighter action than the
@@ -883,6 +942,34 @@ class TestClientJS(unittest.TestCase):
         }''')
         self.assertAlmostEqual(boxes['posts']['left'], boxes['comments']['left'], places=6,
                                 msg='align-left should give both nodes the same left edge')
+
+    def test_align_right(self):
+        self.page.click('[data-name="posts"]')
+        self.page.click('[data-name="comments"]', modifiers=['Shift'])
+        align_btn = self.page.locator('[data-align="right"]')
+        self.assertTrue(align_btn.is_enabled(), 'align buttons should be enabled at 2+ selected')
+        align_btn.click()
+
+        boxes = self.page.evaluate('''() => {
+            const box = n => ({right: nodePos[n].x + nodeSize[n].w/2});
+            return {posts: box('posts'), comments: box('comments')};
+        }''')
+        self.assertAlmostEqual(boxes['posts']['right'], boxes['comments']['right'], places=6,
+                                msg='align-right should give both nodes the same right edge')
+
+    def test_align_bottom(self):
+        self.page.click('[data-name="posts"]')
+        self.page.click('[data-name="comments"]', modifiers=['Shift'])
+        align_btn = self.page.locator('[data-align="bottom"]')
+        self.assertTrue(align_btn.is_enabled(), 'align buttons should be enabled at 2+ selected')
+        align_btn.click()
+
+        boxes = self.page.evaluate('''() => {
+            const box = n => ({bottom: nodePos[n].y + nodeSize[n].h/2});
+            return {posts: box('posts'), comments: box('comments')};
+        }''')
+        self.assertAlmostEqual(boxes['posts']['bottom'], boxes['comments']['bottom'], places=6,
+                                msg='align-bottom should give both nodes the same bottom edge')
 
     def test_shift_drag_on_empty_canvas_marquee_selects(self):
         # regression: the marquee's own mouseup is immediately followed by a
