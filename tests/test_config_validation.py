@@ -559,6 +559,214 @@ class TestConfigSourcesKey(unittest.TestCase):
         self.assertEqual(_load({'sources': []})['sources'], [])
 
 
+class TestConfigNotesValidation(unittest.TestCase):
+    """`notes:` syntactic validation (config.py `_check_config_notes`) — notes
+    Phase 1. Purely syntactic: target existence (table/relation identity
+    actually resolving in the final IR) is semantic validation, covered in
+    tests/test_notes.py against providers.resolve_and_validate_notes, NOT
+    here (mirrors the tables §6.4①/② split already tested above)."""
+
+    def _note(self, **overrides):
+        n = {'id': 'n1', 'target': {'type': 'global'}, 'text': 'hello'}
+        n.update(overrides)
+        return n
+
+    def test_minimal_global_note_accepted(self):
+        cfg = _load({'notes': [self._note()]})
+        self.assertEqual(cfg['notes'][0]['id'], 'n1')
+
+    def test_notes_must_be_a_list(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': {'id': 'n1'}})
+        self.assertIn('notes', str(cm.exception))
+
+    def test_note_must_be_an_object(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': ['nope']})
+        self.assertIn('notes[0]', str(cm.exception))
+
+    def test_unknown_top_level_key_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(bogus=1)]})
+        self.assertIn('bogus', str(cm.exception))
+
+    def test_missing_id_rejected(self):
+        n = self._note()
+        del n['id']
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [n]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_empty_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(id='')]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_non_string_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(id=123)]})
+        self.assertIn('id', str(cm.exception))
+
+    def test_duplicate_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(id='dup'), self._note(id='dup')]})
+        self.assertIn('duplicate', str(cm.exception))
+        self.assertIn('dup', str(cm.exception))
+
+    def test_missing_text_rejected(self):
+        n = self._note()
+        del n['text']
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [n]})
+        self.assertIn('n1', str(cm.exception))
+        self.assertIn('text', str(cm.exception))
+
+    def test_empty_text_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(text='')]})
+        self.assertIn('text', str(cm.exception))
+
+    def test_non_string_text_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(text=123)]})
+        self.assertIn('text', str(cm.exception))
+
+    def test_title_optional(self):
+        cfg = _load({'notes': [self._note(title='Heading')]})
+        self.assertEqual(cfg['notes'][0]['title'], 'Heading')
+
+    def test_non_string_title_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(title=123)]})
+        self.assertIn('title', str(cm.exception))
+
+    def test_links_must_be_a_list(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(links={'url': 'https://x'})]})
+        self.assertIn('links', str(cm.exception))
+
+    def test_link_must_be_an_object(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(links=['https://x'])]})
+        self.assertIn('n1', str(cm.exception))
+
+    def test_link_unknown_key_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(links=[{'url': 'https://x', 'bogus': 1}])]})
+        self.assertIn('bogus', str(cm.exception))
+
+    def test_link_missing_url_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(links=[{'label': 'ADR'}])]})
+        self.assertIn('url', str(cm.exception))
+
+    def test_link_url_must_be_http_or_https(self):
+        for bad in ('javascript:alert(1)', 'data:text/html,x', 'file:///etc/passwd', 'ftp://x'):
+            with self.assertRaises(SystemExit) as cm:
+                _load({'notes': [self._note(links=[{'url': bad}])]})
+            self.assertIn('http', str(cm.exception))
+
+    def test_link_url_empty_string_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(links=[{'url': ''}])]})
+        self.assertIn('url', str(cm.exception))
+
+    def test_link_url_accepts_http_and_https(self):
+        cfg = _load({'notes': [self._note(
+            links=[{'label': 'a', 'url': 'http://example.com'},
+                   {'label': 'b', 'url': 'https://example.com'}])]})
+        self.assertEqual(len(cfg['notes'][0]['links']), 2)
+
+    def test_link_url_scheme_check_is_case_insensitive(self):
+        cfg = _load({'notes': [self._note(links=[{'url': 'HTTPS://example.com'}])]})
+        self.assertEqual(cfg['notes'][0]['links'][0]['url'], 'HTTPS://example.com')
+
+    def test_link_label_must_be_a_string(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(links=[{'label': 123, 'url': 'https://x'}])]})
+        self.assertIn('label', str(cm.exception))
+
+    def test_target_must_be_an_object(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target='table')]})
+        self.assertIn('n1', str(cm.exception))
+
+    def test_target_type_must_be_known(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={'type': 'bogus'})]})
+        self.assertIn('n1', str(cm.exception))
+
+    def test_global_target_rejects_extra_keys(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={'type': 'global', 'table': 'x'})]})
+        self.assertIn('table', str(cm.exception))
+
+    def test_table_target_requires_table_name(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={'type': 'table'})]})
+        self.assertIn('table', str(cm.exception))
+
+    def test_table_target_accepted(self):
+        cfg = _load({'notes': [self._note(target={'type': 'table', 'table': 'invoices'})]})
+        self.assertEqual(cfg['notes'][0]['target']['table'], 'invoices')
+
+    def test_relation_target_requires_source_and_target_table(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={'type': 'relation', 'source_table': 'orders'})]})
+        self.assertIn('target_table', str(cm.exception))
+
+    def test_relation_target_minimal_accepted(self):
+        cfg = _load({'notes': [self._note(target={
+            'type': 'relation', 'source_table': 'orders', 'target_table': 'users'})]})
+        self.assertEqual(cfg['notes'][0]['target']['target_table'], 'users')
+
+    def test_relation_target_full_narrowing_accepted(self):
+        cfg = _load({'notes': [self._note(target={
+            'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+            'foreign_key': 'user_id', 'name': 'user', 'assoc_type': 'belongs_to',
+            'through': None, 'polymorphic': False})]})
+        self.assertEqual(cfg['notes'][0]['target']['foreign_key'], 'user_id')
+        self.assertEqual(cfg['notes'][0]['target']['assoc_type'], 'belongs_to')
+
+    def test_relation_target_assoc_type_accepted(self):
+        for at in ('has_many', 'belongs_to', 'has_one', 'has_and_belongs_to_many'):
+            cfg = _load({'notes': [self._note(target={
+                'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+                'assoc_type': at})]})
+            self.assertEqual(cfg['notes'][0]['target']['assoc_type'], at)
+
+    def test_relation_target_assoc_type_invalid_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={
+                'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+                'assoc_type': 'nonsense'})]})
+        self.assertIn('assoc_type', str(cm.exception))
+
+    def test_relation_target_foreign_key_composite_list_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={
+                'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+                'foreign_key': ['a', 'b']})]})
+        self.assertIn('foreign_key', str(cm.exception))
+
+    def test_relation_target_polymorphic_must_be_bool(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={
+                'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+                'polymorphic': 'yes'})]})
+        self.assertIn('polymorphic', str(cm.exception))
+
+    def test_relation_target_rejects_unknown_key(self):
+        with self.assertRaises(SystemExit) as cm:
+            _load({'notes': [self._note(target={
+                'type': 'relation', 'source_table': 'orders', 'target_table': 'users',
+                'bogus': 1})]})
+        self.assertIn('bogus', str(cm.exception))
+
+    def test_empty_notes_list_is_syntactically_fine(self):
+        self.assertEqual(_load({'notes': []})['notes'], [])
+
+
 class TestConfigOwnerFkAliasMerge(unittest.TestCase):
     def test_owner_fk_aliases_survive_into_merged_ir(self):
         # P1-e: two aliased owner_fk associations on the same column both reach

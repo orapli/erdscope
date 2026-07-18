@@ -3,9 +3,14 @@
 [![CI](https://github.com/orapli/erdscope/actions/workflows/ci.yml/badge.svg)](https://github.com/orapli/erdscope/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/erdscope)](https://pypi.org/project/erdscope/)
 
-Generate a **self-contained, interactive ER diagram** — and an **Excel table-definition
+**Interactive ER diagrams and documented schema definitions.** Generate a
+**self-contained, interactive ER diagram** — and an **Excel table-definition
 workbook** — from a live MySQL, PostgreSQL, or SQLite database, with a single-file,
-zero-dependency Python CLI.
+zero-dependency Python CLI. Turn an ER diagram into a documented schema: attach design
+decisions, operational rules, and ADR links to tables and relationships with config
+[`notes:`](#notes-attach-design-decisions-to-the-diagram) — plain text and http(s) links
+only, validated against the real schema so a note can never point at something that
+doesn't exist.
 
 ```bash
 pip install erdscope
@@ -239,6 +244,59 @@ closer to the real database than code is, but a live DB read still wins when bot
 present. See the [Input sources chapter of the manual](https://orapli.github.io/erdscope/manual.html#input-sources)
 for the full `sources[]` reference.
 
+### Notes: attach design decisions to the diagram
+
+Config **`notes:`** attaches short, plain-text write-ups — design decisions, operational
+rules, ADR links — to a table, a specific relation, or the whole diagram. Notes never
+touch the schema itself (no effect on columns, associations, or merge precedence); they're
+a read-only sidecar validated against the final merged schema and rendered next to it:
+
+```yaml
+notes:
+  - id: user-retention
+    target: { type: table, table: users }
+    title: Retention policy
+    text: Suspended accounts are kept for 1 year, then anonymized.
+    links:
+      - { label: ADR-004, url: https://example.com/adr/004 }
+
+  - id: order-ownership
+    target: { type: relation, source_table: orders, target_table: users, foreign_key: user_id }
+    text: Orders are kept after a user is anonymized (financial record-keeping).
+
+  - id: diagram-conventions
+    target: { type: global }
+    title: How to read this diagram
+    text: The dotted amber edge is an inferred relation, not a real FK.
+```
+
+- Every note needs a config-unique `id` and non-empty `text`; `title` and `links` are
+  optional. Link `url`s must be `http://` or `https://` — anything else (`javascript:`,
+  `data:`, a bare string) is rejected at load time.
+- `target.type` is `table`, `relation`, or `global`. A `relation` note is identified by
+  `source_table` (the side that **holds** the association — the `belongs_to`/FK-holding
+  side for a `belongs_to`, the owning side for a `has_many`) and `target_table`;
+  `foreign_key`/`name`/`assoc_type`/`through`/`polymorphic` are optional narrowing keys for
+  when a table has more than one relation to the same target (`assoc_type` is the
+  association kind — `has_many`/`belongs_to`/`has_one`/`has_and_belongs_to_many` — which
+  tells apart, say, a `has_many` and a `has_one` that share a name and target). A note that
+  matches no relation, or more than one, is a hard error naming the note's `id` — never a
+  silent guess.
+- Validation runs **twice**, like `tables:` above: syntax at load time, then semantically
+  against the schema that results **after** DB/`--models`/config `tables:` are all merged
+  — so a note can reference a table or relation that config itself adds, and a note on
+  something config *removes* is correctly an error.
+- Rendered as plain, HTML-escaped text only — no Markdown, no raw HTML, no scripts — in
+  the table's detail panel, next to the matching relation, or in the diagram's legend for
+  a `global` note. Notes are also searchable (title, text, link labels). A note whose
+  table is hidden from the current view simply doesn't appear in the (now absent) detail
+  panel; a `global` note's legend entry is unaffected.
+- `write_excel` accepts the same notes but doesn't use them yet in this release — an Excel
+  Notes sheet is a possible future addition, not implemented today.
+
+See the [Notes chapter of the manual](https://orapli.github.io/erdscope/manual.html#notes)
+for the full reference.
+
 ## Dependencies
 
 `erd.py` runs with **zero required dependencies** — everything below is optional, and
@@ -306,6 +364,9 @@ Feature highlights — each link goes to the relevant [manual](https://orapli.gi
   the live view and exports
 - **Extras** — a built-in `?` shortcuts/help popup, dark mode, print stylesheet,
   resizable/collapsible panes
+- **[Notes](#notes-attach-design-decisions-to-the-diagram)** — attach design decisions,
+  operational rules, and ADR links to a table, a relation, or the whole diagram, validated
+  against the real schema and searchable alongside tables/columns
 
 ## Tests
 

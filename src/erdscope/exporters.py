@@ -202,7 +202,11 @@ def _build_stylesheet_parts(role_styles):
                         'applyFont="1" applyFill="1" applyBorder="1"/>')
     return fonts, fills, borders, cellxfs
 
-def write_excel(tables, path, title, template_path=None):
+def write_excel(tables, path, title, template_path=None, notes=None):
+    """`notes` (notes Phase 1) is accepted but UNUSED in this release — wiring
+    only, so the shared data form (tables + notes) is already in place for a
+    future Notes sheet without an interface break. Not touching it here keeps
+    every existing Excel test byte-for-byte unchanged."""
     import zipfile
     used = set()
     sheets = []  # (sheet_name, xml)

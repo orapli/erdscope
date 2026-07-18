@@ -132,6 +132,7 @@ def _run_pipeline(args):
         models_list = list(args.models)
     relations = config.get('relations', [])  # shape already validated by load_config()
     config_tables = config.get('tables')     # shape already validated by load_config()
+    config_notes = config.get('notes')       # shape already validated by load_config()
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
     cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
@@ -205,7 +206,14 @@ def _run_pipeline(args):
     if config_tables:
         validate_config_references(config_tables, tables, cfg_label)
 
-    _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)))
+    # notes Phase 1 (Sol findings #1/#3): resolution/semantic-validation now
+    # happens INSIDE _finish, after its --infer-fk step has added any inferred
+    # relations to `tables` — so a note can target one (finding #3) — and its
+    # result is filtered down to the tables that survive --only/--exclude
+    # (finding #1). Pass the RAW config `notes:` (unresolved) plus a label;
+    # `_finish` resolves them itself against its own final IR.
+    _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)),
+            notes=config_notes, notes_label=cfg_label)
 
 def serialize_for_viewer(tables):
     """Convert the internal merged IR to the shape the HTML viewer JSON and the
@@ -231,12 +239,31 @@ def serialize_for_viewer(tables):
                 a.update(legacy_flags_for(prov))
     return out
 
-def _finish(tables, args, title_name):
-    """Shared tail: FK inference, --only/--exclude filtering, HTML generation."""
+def _finish(tables, args, title_name, notes=None, notes_label='config'):
+    """Shared tail: FK inference, notes resolution, --only/--exclude filtering,
+    HTML generation.
+
+    `notes` (notes Phase 1) is now the RAW config `notes:` list (or None/empty)
+    — resolved/semantically-validated HERE (Sol finding #3: AFTER --infer-fk,
+    so a note may target a relation --infer-fk adds) and then filtered down to
+    the tables that survive --only/--exclude (Sol finding #1: an excluded
+    table's design notes must not leak into the HTML). `notes_label` names the
+    config source for error messages (mirrors _run_pipeline's cfg_label; the
+    demo passes 'demo'). Still never None-but-empty-list vs absent-key
+    ambiguity in the output: an empty/None result omits the DATA_JSON `notes`
+    key entirely, keeping the demo and every pre-Phase-1 config byte-identical
+    to today's output."""
     if getattr(args, 'infer_fk', False):
         inferred = infer_fk_associations(tables)
         if inferred:
             print(f'Inferred {inferred} relations from *_id columns', file=sys.stderr)
+
+    # notes Phase 1: semantic validation + viewer resolution against the FINAL
+    # IR — deliberately AFTER infer_fk (Sol finding #3) so a note can target an
+    # inferred relation, and deliberately BEFORE --only/--exclude filtering
+    # below so validation always sees the complete final IR (an excluded
+    # table's note is still validated, just filtered out of the output after).
+    notes_data = resolve_and_validate_notes(notes, tables, notes_label) if notes else None
 
     # single source of truth for "is this column really a foreign key" —
     # the FK badge and the PK/FK column view both read this instead of
@@ -260,6 +287,22 @@ def _finish(tables, args, title_name):
             sys.exit('Error: no tables left after --only/--exclude filtering')
         print(f'Filtered: {len(tables)} tables', file=sys.stderr)
 
+    # Sol finding #1: drop table/relation notes whose table(s) didn't survive
+    # --only/--exclude — their design info must not leak into the HTML for a
+    # table that's no longer in it. A `relation` note ships only when BOTH its
+    # endpoint tables survive (Sol re-review #2): filtering on `source_table`
+    # alone would keep an `orders -> users` note — note body and `target:
+    # users` and all — in an HTML that `--only orders` excluded `users` from.
+    # `global` notes are diagram-wide (legend/overview), not tied to any one
+    # table, so they always survive. A no-op when --only/--exclude weren't
+    # passed: `tables` is then the unfiltered set, so every endpoint is present.
+    if notes_data:
+        notes_data = [n for n in notes_data
+                      if n['scope'] == 'global'
+                      or (n['scope'] == 'table' and n['table'] in tables)
+                      or (n['scope'] == 'relation' and n['source_table'] in tables
+                          and n['target'] in tables)]
+
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
     # IR), so BOTH the HTML DATA_JSON and the Excel export below see exactly the
@@ -272,7 +315,10 @@ def _finish(tables, args, title_name):
     # .replace() calls, and one containing "</script>" would prematurely
     # close the script tag and blank the whole page. Both are realistic:
     # comments are free-text and come straight from the database.
-    data_json = json.dumps({'tables': tables}, ensure_ascii=False).replace('</', '<\\/')
+    payload = {'tables': tables}
+    if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
+        payload['notes'] = notes_data
+    data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
     html = (HTML_TEMPLATE
             .replace('__MAX_ROWS__', str(args.max_rows))
             .replace('__TITLE__', f'{title_name} — ERD')
@@ -284,7 +330,7 @@ def _finish(tables, args, title_name):
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,
-                    template_path=getattr(args, 'excel_template', None))
+                    template_path=getattr(args, 'excel_template', None), notes=notes_data)
         print(f'Generated: {args.excel}', file=sys.stderr)
     elif getattr(args, 'excel_template', None):
         print('Warning: --excel-template has no effect without --excel', file=sys.stderr)

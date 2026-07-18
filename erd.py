@@ -2835,6 +2835,103 @@ def validate_config_references(config_tables, tables, label):
                          f"{tname!r}'s merged columns")
 
 # ---------------------------------------------------------------------------
+# `notes:` semantic validation + viewer-ready resolution (notes Phase 1).
+#
+# Called from cli._finish, AFTER --infer-fk has added its guessed relations to
+# `tables` (Sol finding #3: a note can target an inferred relation, since this
+# validates against the FINAL final-IR-plus-inferred-relations, not the
+# pre-infer merge_ir output) and BEFORE --only/--exclude filtering (so a note
+# on an about-to-be-excluded table still gets full semantic validation against
+# the complete schema — _finish filters the RESOLVED notes down afterward).
+# This is also after the final merge_ir (same final IR validate_config_
+# references checks), so a note may target a table/association added by
+# config.tables, and a note targeting something config.tables DROPPED is
+# correctly an error here even though it was syntactically fine at load time
+# (§6.4②-style two stage split, mirrored from validate_config_references
+# above).
+#
+# notes are a pure sidecar: this function only READS `tables` (never mutates
+# it, never feeds anything back into layers/merge_ir/ProviderResult/
+# provenance/fk_columns) and returns a new, viewer-ready list. Every error
+# includes the note's `id`, per the Phase 1 contract.
+# ---------------------------------------------------------------------------
+def resolve_and_validate_notes(notes, tables, label):
+    """Semantic-validate config `notes` against the FINAL merged IR and
+    resolve each `relation` note to the one association it identifies, so the
+    viewer can match on a fully-resolved identity instead of re-implementing
+    relation lookup in JS. Hard error via sys.exit (note id always included)."""
+    out = []
+    for n in notes:
+        note_id = n['id']
+        target = n['target']
+        ttype = target['type']
+        if ttype == 'global':
+            entry = {'id': note_id, 'scope': 'global'}
+        elif ttype == 'table':
+            tname = target['table']
+            if tname not in tables:
+                sys.exit(f"Error: {label} note {note_id!r}: unknown table {tname!r} "
+                         "(not in the final schema)")
+            entry = {'id': note_id, 'scope': 'table', 'table': tname}
+        else:  # relation
+            src, tgt = target['source_table'], target['target_table']
+            if src not in tables:
+                sys.exit(f"Error: {label} note {note_id!r}: unknown source_table {src!r} "
+                         "(not in the final schema)")
+            cands = [a for a in tables[src]['associations'] if a['target'] == tgt]
+            fk = target.get('foreign_key')
+            if fk is not None:
+                cands = [a for a in cands if a.get('foreign_key') == fk]
+            name = target.get('name')
+            if name is not None:
+                cands = [a for a in cands if a['name'] == name]
+            through = target.get('through')
+            if through is not None:
+                cands = [a for a in cands if a.get('through') == through]
+            # Sol finding #5: narrow by association TYPE (has_many/belongs_to/
+            # has_one/has_and_belongs_to_many) — lets a note pick out e.g. a
+            # has_many among a has_many/has_one pair that otherwise share name
+            # and target. Config key is `assoc_type` (not `type` — that name is
+            # already the note's own target-kind discriminator), but it
+            # narrows against the association's real `type` field.
+            atype = target.get('assoc_type')
+            if atype is not None:
+                cands = [a for a in cands if a['type'] == atype]
+            # `polymorphic` is tri-state: None = don't care, True/False both
+            # narrow (previously only `is True` narrowed, so `polymorphic:
+            # false` was silently ignored as a filter — Sol finding #5).
+            poly = target.get('polymorphic')
+            if poly is not None:
+                cands = [a for a in cands if bool(a.get('polymorphic')) == poly]
+            if not cands:
+                sys.exit(f"Error: {label} note {note_id!r}: no relation from {src!r} to "
+                         f"{tgt!r} matches (check source_table/target_table/foreign_key/"
+                         "name/through/assoc_type/polymorphic)")
+            if len(cands) > 1:
+                sys.exit(f"Error: {label} note {note_id!r}: ambiguous — {len(cands)} "
+                         f"relations from {src!r} to {tgt!r} match; add foreign_key/name/"
+                         "through/assoc_type to disambiguate")
+            a = cands[0]
+            # Resolved relation entry — SHARED CONTRACT with the viewer (do not
+            # diverge): id/scope/source_table/target/type/name/foreign_key/
+            # through/polymorphic, where every field except id/scope/
+            # source_table/target is the RESOLVED association `a`'s real value
+            # (not the note's possibly-partial narrowing target). `type` is
+            # ALWAYS included now (Sol finding #5) so the viewer can match on
+            # role the same way this function just did.
+            entry = {'id': note_id, 'scope': 'relation', 'source_table': src,
+                     'target': tgt, 'type': a['type'], 'name': a['name'],
+                     'foreign_key': a.get('foreign_key'), 'through': a.get('through'),
+                     'polymorphic': bool(a.get('polymorphic'))}
+        if n.get('title'):
+            entry['title'] = n['title']
+        entry['text'] = n['text']
+        if n.get('links'):
+            entry['links'] = n['links']
+        out.append(entry)
+    return out
+
+# ---------------------------------------------------------------------------
 # Excel export (.xlsx via zipfile — no third-party dependency)
 # ---------------------------------------------------------------------------
 def _xml(s):
@@ -3041,7 +3138,11 @@ def _build_stylesheet_parts(role_styles):
                         'applyFont="1" applyFill="1" applyBorder="1"/>')
     return fonts, fills, borders, cellxfs
 
-def write_excel(tables, path, title, template_path=None):
+def write_excel(tables, path, title, template_path=None, notes=None):
+    """`notes` (notes Phase 1) is accepted but UNUSED in this release — wiring
+    only, so the shared data form (tables + notes) is already in place for a
+    future Notes sheet without an interface break. Not touching it here keeps
+    every existing Excel test byte-for-byte unchanged."""
     import zipfile
     used = set()
     sheets = []  # (sheet_name, xml)
@@ -3463,6 +3564,25 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .atarget .add-target{color:#64748b;cursor:pointer;text-decoration:none;border-bottom:1px dashed #cbd5e1}
 .atarget .add-target:hover{color:#1d4ed8;border-bottom-color:#1d4ed8}
 
+/* ── notes (notes Phase 1) ── */
+.note-list{display:flex;flex-direction:column;gap:4px}
+.note-entry{padding:5px 8px;border-radius:4px;background:#f8fafc;border-left:3px solid #0d9488}
+.note-title{font-size:11px;font-weight:700;color:#0f766e;margin-bottom:2px}
+.note-text{font-size:11px;color:#334155;line-height:1.5;white-space:pre-wrap}
+.note-links{margin-top:3px;display:flex;flex-direction:column;gap:1px}
+.note-links a{font-size:10px;color:#0d9488;text-decoration:none}
+.note-links a:hover{text-decoration:underline}
+.assoc-notes{margin-top:4px}
+.assoc-notes .note-entry{background:transparent;padding:4px 0 0 6px;border-left-width:2px}
+#legend-notes{margin-top:6px;padding-top:6px;border-top:1px solid #f1f5f9}
+#legend-notes:empty,#legend-notes[style*="display: none"]{border-top:none;padding-top:0;margin-top:0}
+.lgn-title{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;
+  letter-spacing:.6px;margin-bottom:4px}
+#legend-notes .note-entry{max-width:230px}
+.note-hit{font-size:9px;background:#ccfbf1;color:#0f766e;padding:1px 4px;border-radius:3px;
+  flex-shrink:0;margin-left:4px}
+.table-item.note-banner label{cursor:pointer;color:#0f766e;font-size:11px;gap:6px}
+
 /* ── multi-select align/distribute panel ── */
 .msel-btns{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .msel-btns .diag-btn{width:100%;font-size:11px;justify-content:flex-start;padding:0 10px}
@@ -3575,7 +3695,15 @@ body.dark #hidden-bar{background:#450a0a;border-color:#7f1d1d;color:#fca5a5}
 body.dark #canvas-empty{color:#94a3b8}
 body.dark .detail-name{color:#e2e8f0;border-color:#e2e8f0}
 body.dark .word-mark{background:#78350f;color:#fde68a}
-body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry,body.dark .msel-chip{background:#1e293b}
+body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry,body.dark .msel-chip,body.dark .note-entry{background:#1e293b}
+body.dark .note-entry{border-left-color:#2dd4bf}
+body.dark .assoc-notes .note-entry{background:transparent}
+body.dark .note-title{color:#5eead4}
+body.dark .note-text{color:#cbd5e1}
+body.dark .note-links a{color:#2dd4bf}
+body.dark #legend-notes{border-color:#1e293b}
+body.dark .note-hit{background:#134e4a;color:#5eead4}
+body.dark .table-item.note-banner label{color:#5eead4}
 body.dark .idx-name{color:#e2e8f0}
 body.dark .col-cn,body.dark .aname,body.dark .msel-cn{color:#e2e8f0}
 body.dark .empty-state{color:#94a3b8}
@@ -3696,6 +3824,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           Toolbar "Highlight" box: marks matches everywhere (doesn't filter), survives exports.<br>
           Enter = next match, Shift+Enter = previous match<br>
           Esc: exit focus</div>
+        <div id="legend-notes" style="pointer-events:auto;display:none"></div>
       </div>
     </div>
     <button id="expand-left" class="expand-tab" title="Open left pane">▶</button>
@@ -3819,6 +3948,10 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
 <script>
 'use strict';
 const DATA = __DATA_JSON__;
+// notes Phase 1: viewer-ready sidecar, already validated/resolved server-side
+// (resolve_and_validate_notes in providers.py) — DATA.notes is absent when no
+// notes were configured (demo byte-equality), so default to [] here.
+const NOTES = DATA.notes || [];
 // LocalStorage keys are namespaced per project so multiple ERD pages
 // served from the same origin don't share table selections
 const LS = k => `erd:${document.title}:${k}`;
@@ -3940,7 +4073,11 @@ function wordColHits(name){
 function wordHit(name){
   if(!wordMatcher) return false;
   return wordMatcher.test(name) || wordColHits(name).length>0
-    || wordMatcher.test(DATA.tables[name]?.comment||'');
+    || wordMatcher.test(DATA.tables[name]?.comment||'')
+    // table/relation notes attached to this table count toward Highlight too
+    // (a global note has no owning table/node, so it's out of scope here —
+    // it's only reachable via the left-pane filter's banner row).
+    || notesForTable(name).some(n=>wordMatcher.test(noteText(n)));
 }
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
@@ -5371,10 +5508,34 @@ function renderTableList(){
     ? (DATA.tables[t]?.columns||[]).find(c=>filterMatcher.test(c.name) || filterMatcher.test(c.comment||''))?.name
     : null;
   const commentHit = t => filterMatcher && filterMatcher.test(DATA.tables[t]?.comment||'');
+  // notesForTable() is shared with wordHit() (toolbar Highlight) — see its
+  // definition in the Notes section below.
+  const noteHit = t => filterMatcher
+    ? notesForTable(t).find(n=>filterMatcher.test(noteText(n)))
+    : null;
+  // Global notes have no owning table, so a match surfaces as a synthetic
+  // banner row at the top of the list instead (clicking scrolls/expands the
+  // legend, where the global note actually renders).
+  if(filterMatcher){
+    const globalHits=NOTES.filter(n=>n.scope==='global' && filterMatcher.test(noteText(n)));
+    if(globalHits.length){
+      const gitem=document.createElement('div');
+      gitem.className='table-item note-banner';
+      const glbl=document.createElement('label');
+      glbl.innerHTML=`🌐 <span class="note-hit">📝 global note: ${escMark(globalHits[0].title||globalHits[0].text)}</span>`;
+      glbl.title='Click to open the legend and view the global note(s)';
+      glbl.addEventListener('click', ()=>{
+        document.getElementById('legend').classList.remove('collapsed');
+      });
+      gitem.appendChild(glbl);
+      list.appendChild(gitem);
+    }
+  }
   allTables()
     .filter(t => !filterMatcher || filterMatcher.test(t)
       || (DATA.tables[t]?.columns||[]).some(c=>filterMatcher.test(c.name) || filterMatcher.test(c.comment||''))
-      || commentHit(t))
+      || commentHit(t)
+      || noteHit(t))
     .forEach(name => {
       const t=DATA.tables[name];
       const isHidden=hiddenTables.has(name);
@@ -5409,8 +5570,13 @@ function renderTableList(){
         else { excludedTables.add(name); }
         noAutoExpandRoot.delete(name); // a direct checkbox click is explicit intent — full root again
         saveState();
-        if(focusedTable){ renderTableList(); return; } // the focus view ignores checkboxes
-        refreshView(); renderTableList();
+        // showDetails() so a selected table's note sections re-render against
+        // its new visibility right away — gating notes inside showDetails only
+        // takes effect when showDetails is actually re-invoked (Sol re-review
+        // #1: unchecking a selected table used to leave its note stale until
+        // the next unrelated redraw). Mirrors toggleBan()'s tail.
+        if(focusedTable){ renderTableList(); showDetails(); return; } // the focus view ignores checkboxes
+        refreshView(); renderTableList(); showDetails();
       });
       const nm=document.createElement('span'); nm.className='tname'; nm.textContent=name;
       lbl.appendChild(cb); lbl.appendChild(nm);
@@ -5418,6 +5584,12 @@ function renderTableList(){
       if(lg){const lgEl=document.createElement('span');lgEl.className='tlogical';lgEl.textContent=lg;lbl.appendChild(lgEl);}
       const hit=colHit(name);
       if(hit){const hb2=document.createElement('span');hb2.className='col-hit';hb2.textContent='⌕ '+hit;lbl.appendChild(hb2);}
+      const nhit=noteHit(name);
+      if(nhit){
+        const nb=document.createElement('span'); nb.className='note-hit';
+        nb.textContent='📝 note: '+(nhit.title||nhit.text).slice(0,40);
+        lbl.appendChild(nb);
+      }
       // Relation count + ban button live in a `.tail` wrapper pinned to the
       // row's right edge (margin-left:auto) so their position doesn't drift
       // with the table name's length or whether a logical name is present.
@@ -5504,6 +5676,15 @@ function showDetails(){
   if(!name||!DATA.tables[name]){el.innerHTML='<div class="empty-state">Click a table<br>to see its details</div>';return;}
   const t=DATA.tables[name];
   const cols=t.columns||[], assocs=t.associations||[];
+  // notes gating (Sol review finding 2): a stale selection can outlive its
+  // table being unchecked/banned from the current view (selectedTables isn't
+  // cleared by excludeTable()/toggleBan()). Columns/indexes/associations keep
+  // rendering regardless — only table/relation notes are gated on the anchor
+  // table still being part of the displayed set, per NOTES_PHASE1_SPEC's
+  // "hidden table's note doesn't leak into the right pane" contract. A
+  // global note has no owning table, so it's unaffected and always shown
+  // via the legend.
+  const anchorVisible = getDisplayTables().includes(name);
   let h=`<div class="detail-name">${escMark(name)}</div>`;
   if(t.comment) h+=`<div class="tbl-comment">${esc(t.comment)}</div>`;
   if(t.schema_missing && cols.length===0){
@@ -5562,9 +5743,18 @@ function showDetails(){
             ?`<span class="not-in-view" title="Banned with 🚫">${escMark(a.target)} 🚫</span>`
             :`<a class="add-target" data-add="${esc(a.target)}" title="Not displayed — click to add to the diagram">${escMark(a.target)} ＋</a>`;
       const thr=a.through?`<div class="athrough">through: :${esc(a.through)}</div>`:'';
+      const relNotes=anchorVisible ? NOTES.filter(n=>relNoteMatches(n, name, a)) : [];
+      const relNotesHtml=relNotes.length
+        ? '<div class="assoc-notes">'+relNotes.map(noteBlockHtml).join('')+'</div>' : '';
       // plain-language description appears as a tooltip on hover
-      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.schema_fk?' <span class="badge-schemafk">schema FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${escMark(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
+      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.schema_fk?' <span class="badge-schemafk">schema FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${escMark(a.name)}</div><div class="atarget">→ ${link}</div>${thr}${relNotesHtml}</div>`;
     });
+    h+='</div>';
+  }
+  const tableNotes=anchorVisible ? NOTES.filter(n=>n.scope==='table' && n.table===name) : [];
+  if(tableNotes.length){
+    h+='<div class="sec-title">Notes</div><div class="note-list">';
+    tableNotes.forEach(n=> h+=noteBlockHtml(n));
     h+='</div>';
   }
   el.innerHTML=h;
@@ -5593,6 +5783,56 @@ function escMark(s){
     i=b;
   });
   return out+esc(s.slice(i));
+}
+
+// ── Notes (notes Phase 1) ────────────────────────────────────────────────
+// Every note field is plain text — rendered via innerHTML but always passed
+// through esc()/escMark(), same discipline as every other DATA field above.
+// Link URLs are validated to http(s)-only at config-load time (config.py); no
+// Markdown/raw-HTML rendering is ever done here.
+function noteLinksHtml(links){
+  if(!links || !links.length) return '';
+  return '<div class="note-links">' + links.map(l=>
+    `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${escMark(l.label||l.url)}</a>`
+  ).join('') + '</div>';
+}
+function noteBlockHtml(n){
+  const ttl = n.title ? `<div class="note-title">${escMark(n.title)}</div>` : '';
+  return `<div class="note-entry">${ttl}<div class="note-text">${escMark(n.text)}</div>${noteLinksHtml(n.links)}</div>`;
+}
+// Mirrors the Python resolve_and_validate_notes identity fields exactly —
+// never re-derive relation identity from scratch in JS (association_key is
+// the single source of truth; Python already resolved each relation note to
+// one specific association before it ever reached DATA).
+function relNoteMatches(n, srcTable, a){
+  return n.scope==='relation' && n.source_table===srcTable && n.target===a.target
+      && n.type===a.type && n.name===a.name
+      && (n.foreign_key ?? null) === (a.foreign_key ?? null)
+      && (n.through ?? null) === (a.through ?? null)
+      && !!n.polymorphic === !!a.polymorphic;
+}
+// Aggregate a note's searchable text (title/text/link labels/target names) so
+// the left-pane filter and the global-note search banner can match on it.
+function noteText(n){
+  return [n.title, n.text, ...(n.links||[]).map(l=>l.label), n.table, n.target, n.source_table]
+    .filter(Boolean).join(' ');
+}
+// Notes attached to table `t`: its own table notes, plus relation notes whose
+// source_table is `t` (the side the note's association lives on — mirrors the
+// right-pane Associations list, which is keyed the same way). Shared by
+// renderTableList (left-pane note-hit badge) and wordHit (toolbar Highlight),
+// so both search boxes agree on which notes belong to which table.
+function notesForTable(t){
+  return NOTES.filter(n =>
+    (n.scope==='table' && n.table===t) || (n.scope==='relation' && n.source_table===t));
+}
+function renderGlobalNotes(){
+  const box=document.getElementById('legend-notes');
+  if(!box) return;
+  const gs=NOTES.filter(n=>n.scope==='global');
+  if(!gs.length){ box.innerHTML=''; box.style.display='none'; return; }
+  box.style.display='';
+  box.innerHTML='<div class="lgn-title">Design notes</div>'+gs.map(noteBlockHtml).join('');
 }
 
 // ── Multi-select: align / distribute panel ─────────────────────────────────
@@ -6767,6 +7007,7 @@ if(location.hash.startsWith('#v=')){
     showToast('Applied the shared view');
   }catch(e){ console.warn('Failed to load the shared view:', e); }
 }
+renderGlobalNotes();
 renderTableList();
 renderDiagram();
 requestAnimationFrame(fitView);
@@ -6885,7 +7126,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version', 'notes'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -6951,6 +7192,8 @@ def _check_config_types(config, path):
         _check_config_tables(config['tables'], path)
     if 'sources' in config:
         _check_config_sources(config['sources'], path)
+    if 'notes' in config:
+        _check_config_notes(config['notes'], path)
 
 # ---------------------------------------------------------------------------
 # `sources:` — typed code-source declarations (D5). Purely syntactic here:
@@ -6979,6 +7222,110 @@ def _check_config_sources(sources, path):
         if s['id'] in seen:
             sys.exit(f'Error: {path} `sources` has a duplicate id {s["id"]!r}')
         seen.add(s['id'])
+
+# ---------------------------------------------------------------------------
+# `notes:` — design-documentation sidecar (notes Phase 1). Purely syntactic
+# here: shape, required fields, allow-listed keys, Config-internal duplicate
+# `id`, and link URL scheme (http/https only — the first line of XSS defense,
+# since a note's links render as real <a href> in the viewer). Whether the
+# note's TARGET actually exists (a table/relation naming something real) is a
+# semantic, final-IR-after-merge concern — see resolve_and_validate_notes in
+# providers.py, not here. Mirrors the tables §6.4①/② two-stage split.
+# ---------------------------------------------------------------------------
+_CONFIG_NOTE_KEYS = {'id', 'target', 'title', 'text', 'links'}
+_CONFIG_NOTE_LINK_KEYS = {'label', 'url'}
+_CONFIG_NOTE_TARGET_TYPES = {'global', 'table', 'relation'}
+_CONFIG_NOTE_TARGET_KEYS = {
+    'global': {'type'},
+    'table': {'type', 'table'},
+    # NOTE: `type` here is the target-KIND discriminator (already required to
+    # be 'relation') — an association-type narrowing key (has_many/belongs_to/
+    # has_one/has_and_belongs_to_many, mirroring _CONFIG_ASSOC_TYPES) can't
+    # reuse that same name without colliding with it, so it's `assoc_type`
+    # (Sol finding #5: narrow an ambiguous relation note by role, matching the
+    # resolved association's `type`, which the OUTPUT entry surfaces as `type`
+    # per the viewer contract — only the config INPUT key differs).
+    'relation': {'type', 'source_table', 'target_table', 'foreign_key', 'name',
+                 'through', 'polymorphic', 'assoc_type'},
+}
+
+def _check_config_notes(notes, path):
+    if not isinstance(notes, list):
+        sys.exit(f'Error: {path} `notes` must be a list of objects '
+                 '({id, target, text, ...})')
+    seen = set()
+    for i, n in enumerate(notes):
+        nw = f'notes[{i}]'
+        if not isinstance(n, dict):
+            sys.exit(f'Error: {path} `{nw}` must be an object')
+        _reject_unknown_keys(n, _CONFIG_NOTE_KEYS, path, nw)
+        note_id = n.get('id')
+        if not isinstance(note_id, str) or not note_id:
+            sys.exit(f'Error: {path} `{nw}` needs a non-empty string `id`')
+        if note_id in seen:
+            sys.exit(f'Error: {path} `notes` has a duplicate id {note_id!r}')
+        seen.add(note_id)
+        text = n.get('text')
+        if not isinstance(text, str) or not text:
+            sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string `text`')
+        if 'title' in n and n['title'] is not None and not isinstance(n['title'], str):
+            sys.exit(f'Error: {path} note {note_id!r} `title` must be a string')
+        if 'links' in n:
+            _check_config_note_links(n['links'], path, note_id)
+        target = n.get('target')
+        if not isinstance(target, dict):
+            sys.exit(f'Error: {path} note {note_id!r} needs an object `target`')
+        ttype = target.get('type')
+        if ttype not in _CONFIG_NOTE_TARGET_TYPES:
+            sys.exit(f'Error: {path} note {note_id!r} `target.type` must be one of '
+                     f'{", ".join(sorted(_CONFIG_NOTE_TARGET_TYPES))}, got {ttype!r}')
+        _reject_unknown_keys(target, _CONFIG_NOTE_TARGET_KEYS[ttype], path,
+                             f'{nw}.target')
+        if ttype == 'table':
+            tbl = target.get('table')
+            if not isinstance(tbl, str) or not tbl:
+                sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string '
+                         '`target.table`')
+        elif ttype == 'relation':
+            for key in ('source_table', 'target_table'):
+                val = target.get(key)
+                if not isinstance(val, str) or not val:
+                    sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string '
+                             f'`target.{key}`')
+            for key in ('foreign_key', 'name', 'through'):
+                if key in target and target[key] is not None:
+                    val = target[key]
+                    if isinstance(val, list):
+                        sys.exit(f'Error: {path} note {note_id!r} `target.{key}` is a list '
+                                 '— composite foreign keys are not supported; use a single '
+                                 'column name')
+                    if not isinstance(val, str) or not val:
+                        sys.exit(f'Error: {path} note {note_id!r} `target.{key}` must be a '
+                                 'non-empty string')
+            _check_bool(target.get('polymorphic'), 'polymorphic' in target, path,
+                       f'{nw}.target.polymorphic')
+            if 'assoc_type' in target and target['assoc_type'] is not None:
+                at = target['assoc_type']
+                if at not in _CONFIG_ASSOC_TYPES:
+                    sys.exit(f'Error: {path} note {note_id!r} `target.assoc_type` must be '
+                             f'one of {", ".join(sorted(_CONFIG_ASSOC_TYPES))}, got {at!r}')
+
+def _check_config_note_links(links, path, note_id):
+    if not isinstance(links, list):
+        sys.exit(f'Error: {path} note {note_id!r} `links` must be a list')
+    for j, link in enumerate(links):
+        lw = f'links[{j}]'
+        if not isinstance(link, dict):
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}` must be an object')
+        _reject_unknown_keys(link, _CONFIG_NOTE_LINK_KEYS, path, f'notes.{lw}')
+        if 'label' in link and link['label'] is not None and not isinstance(link['label'], str):
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}.label` must be a string')
+        url = link.get('url')
+        if not isinstance(url, str) or not url:
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}` needs a non-empty string `url`')
+        if not url.lower().startswith(('http://', 'https://')):
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}.url` must start with http:// '
+                     f'or https:// (got {url!r})')
 
 # ---------------------------------------------------------------------------
 # `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)
@@ -7599,6 +7946,7 @@ def _run_pipeline(args):
         models_list = list(args.models)
     relations = config.get('relations', [])  # shape already validated by load_config()
     config_tables = config.get('tables')     # shape already validated by load_config()
+    config_notes = config.get('notes')       # shape already validated by load_config()
     cfg_label = str(args.config) if getattr(args, 'config', None) else 'config'
     cfg_location = str(args.config) if getattr(args, 'config', None) else None
 
@@ -7672,7 +8020,14 @@ def _run_pipeline(args):
     if config_tables:
         validate_config_references(config_tables, tables, cfg_label)
 
-    _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)))
+    # notes Phase 1 (Sol findings #1/#3): resolution/semantic-validation now
+    # happens INSIDE _finish, after its --infer-fk step has added any inferred
+    # relations to `tables` — so a note can target one (finding #3) — and its
+    # result is filtered down to the tables that survive --only/--exclude
+    # (finding #1). Pass the RAW config `notes:` (unresolved) plus a label;
+    # `_finish` resolves them itself against its own final IR.
+    _finish(tables, args, _resolve_title(config, url, fw_root, getattr(args, 'output', None)),
+            notes=config_notes, notes_label=cfg_label)
 
 def serialize_for_viewer(tables):
     """Convert the internal merged IR to the shape the HTML viewer JSON and the
@@ -7698,12 +8053,31 @@ def serialize_for_viewer(tables):
                 a.update(legacy_flags_for(prov))
     return out
 
-def _finish(tables, args, title_name):
-    """Shared tail: FK inference, --only/--exclude filtering, HTML generation."""
+def _finish(tables, args, title_name, notes=None, notes_label='config'):
+    """Shared tail: FK inference, notes resolution, --only/--exclude filtering,
+    HTML generation.
+
+    `notes` (notes Phase 1) is now the RAW config `notes:` list (or None/empty)
+    — resolved/semantically-validated HERE (Sol finding #3: AFTER --infer-fk,
+    so a note may target a relation --infer-fk adds) and then filtered down to
+    the tables that survive --only/--exclude (Sol finding #1: an excluded
+    table's design notes must not leak into the HTML). `notes_label` names the
+    config source for error messages (mirrors _run_pipeline's cfg_label; the
+    demo passes 'demo'). Still never None-but-empty-list vs absent-key
+    ambiguity in the output: an empty/None result omits the DATA_JSON `notes`
+    key entirely, keeping the demo and every pre-Phase-1 config byte-identical
+    to today's output."""
     if getattr(args, 'infer_fk', False):
         inferred = infer_fk_associations(tables)
         if inferred:
             print(f'Inferred {inferred} relations from *_id columns', file=sys.stderr)
+
+    # notes Phase 1: semantic validation + viewer resolution against the FINAL
+    # IR — deliberately AFTER infer_fk (Sol finding #3) so a note can target an
+    # inferred relation, and deliberately BEFORE --only/--exclude filtering
+    # below so validation always sees the complete final IR (an excluded
+    # table's note is still validated, just filtered out of the output after).
+    notes_data = resolve_and_validate_notes(notes, tables, notes_label) if notes else None
 
     # single source of truth for "is this column really a foreign key" —
     # the FK badge and the PK/FK column view both read this instead of
@@ -7727,6 +8101,22 @@ def _finish(tables, args, title_name):
             sys.exit('Error: no tables left after --only/--exclude filtering')
         print(f'Filtered: {len(tables)} tables', file=sys.stderr)
 
+    # Sol finding #1: drop table/relation notes whose table(s) didn't survive
+    # --only/--exclude — their design info must not leak into the HTML for a
+    # table that's no longer in it. A `relation` note ships only when BOTH its
+    # endpoint tables survive (Sol re-review #2): filtering on `source_table`
+    # alone would keep an `orders -> users` note — note body and `target:
+    # users` and all — in an HTML that `--only orders` excluded `users` from.
+    # `global` notes are diagram-wide (legend/overview), not tied to any one
+    # table, so they always survive. A no-op when --only/--exclude weren't
+    # passed: `tables` is then the unfiltered set, so every endpoint is present.
+    if notes_data:
+        notes_data = [n for n in notes_data
+                      if n['scope'] == 'global'
+                      or (n['scope'] == 'table' and n['table'] in tables)
+                      or (n['scope'] == 'relation' and n['source_table'] in tables
+                          and n['target'] in tables)]
+
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
     # IR), so BOTH the HTML DATA_JSON and the Excel export below see exactly the
@@ -7739,7 +8129,10 @@ def _finish(tables, args, title_name):
     # .replace() calls, and one containing "</script>" would prematurely
     # close the script tag and blank the whole page. Both are realistic:
     # comments are free-text and come straight from the database.
-    data_json = json.dumps({'tables': tables}, ensure_ascii=False).replace('</', '<\\/')
+    payload = {'tables': tables}
+    if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
+        payload['notes'] = notes_data
+    data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
     html = (HTML_TEMPLATE
             .replace('__MAX_ROWS__', str(args.max_rows))
             .replace('__TITLE__', f'{title_name} — ERD')
@@ -7751,7 +8144,7 @@ def _finish(tables, args, title_name):
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,
-                    template_path=getattr(args, 'excel_template', None))
+                    template_path=getattr(args, 'excel_template', None), notes=notes_data)
         print(f'Generated: {args.excel}', file=sys.stderr)
     elif getattr(args, 'excel_template', None):
         print('Warning: --excel-template has no effect without --excel', file=sys.stderr)

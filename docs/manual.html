@@ -156,6 +156,7 @@ footer{border-top:1px solid var(--border); padding:20px 34px 60px; font-size:12.
   <a class="lvl2" href="#quickstart">Quickstart</a>
   <a class="lvl2" href="#cli-reference">CLI reference</a>
   <a class="lvl2" href="#config-file">Config file</a>
+  <a class="lvl2" href="#notes">Notes</a>
   <a class="lvl2" href="#viewer-guide">Viewer guide</a>
   <a class="lvl3" href="#viewer-panes">Panes</a>
   <a class="lvl3" href="#viewer-focus">Focus &amp; exploration</a>
@@ -179,9 +180,13 @@ footer{border-top:1px solid var(--border); padding:20px 34px 60px; font-size:12.
 <section id="what-is-erdscope">
 <h1>erdscope <a class="anchor-link" href="#what-is-erdscope">#</a></h1>
 <p>
-erdscope generates a <strong>self-contained, interactive ER diagram</strong> — and, optionally,
-an <strong>Excel table-definition workbook</strong> — from a live MySQL, PostgreSQL, or SQLite database. It ships as a
+erdscope generates <strong>interactive ER diagrams and documented schema definitions</strong> — a
+<strong>self-contained ER diagram</strong> and, optionally, an <strong>Excel table-definition
+workbook</strong> — from a live MySQL, PostgreSQL, or SQLite database. It ships as a
 single Python file (<code>erd.py</code>, no install step) with <strong>zero required dependencies</strong>.
+Config <a href="#notes"><code>notes:</code></a> turns the diagram into a documented schema: attach
+design decisions, operational rules, and ADR links to tables and relationships, validated against
+the real schema so a note can never point at something that doesn't exist.
 </p>
 <p>
 There are <strong>three input sources, and any one of them is enough</strong> — a database is
@@ -219,6 +224,7 @@ diagram will be.
   <div class="card"><h4>Readable layouts</h4><p>Viewport-aware packing, drag-to-snap, multi-select align/distribute, Auto-tidy, undo/redo.</p></div>
   <div class="card"><h4>Exports</h4><p>PNG, SVG, Mermaid, PlantUML — each with copy and download — plus an Excel workbook.</p></div>
   <div class="card"><h4>Logical names</h4><p>A table's DB comment doubles as a searchable logical name, shown alongside the physical name.</p></div>
+  <div class="card"><h4>Notes</h4><p>Attach design decisions, operational rules, and ADR links to a table, a relation, or the whole diagram — validated against the real schema, searchable alongside tables and columns.</p></div>
 </div>
 </section>
 
@@ -563,6 +569,90 @@ upfront error rather than a silently wrong diagram — if you hit one, check the
 against the example above.</div>
 </section>
 
+<section id="notes">
+<h2>Notes: attach design decisions to the diagram <a class="anchor-link" href="#notes">#</a></h2>
+<p>
+Config <code>notes:</code> attaches short, plain-text write-ups — design decisions, operational
+rules, ADR links — to a table, a specific relation, or the whole diagram. Notes are a <strong>read-only
+sidecar</strong>: they never affect columns, associations, merge precedence, or which source "wins" —
+they only decorate a schema that's already been resolved.
+</p>
+<pre><code>notes:
+  - id: user-retention
+    target: { type: table, table: users }
+    title: Retention policy
+    text: Suspended accounts are kept for 1 year, then anonymized.
+    links:
+      - { label: ADR-004, url: https://example.com/adr/004 }
+
+  - id: order-ownership
+    target: { type: relation, source_table: orders, target_table: users, foreign_key: user_id }
+    text: Orders are kept after a user is anonymized (financial record-keeping).
+
+  - id: diagram-conventions
+    target: { type: global }
+    title: How to read this diagram
+    text: The dotted amber edge is an inferred relation, not a real FK.</code></pre>
+<p>
+Every note needs a config-unique <code>id</code> and a non-empty <code>text</code>; <code>title</code>
+and <code>links</code> are optional. Each <code>links[]</code> entry is <code>{ label, url }</code> —
+<code>url</code> must start with <code>http://</code> or <code>https://</code>; anything else
+(<code>javascript:</code>, <code>data:</code>, a bare string with no scheme) is rejected when the
+config loads, before it ever reaches the diagram.
+</p>
+<p><code>target.type</code> is one of:</p>
+<ul>
+<li><strong><code>table</code></strong> — <code>{ type: table, table: &lt;name&gt; }</code>. Shown in
+that table's detail panel (right pane) under its own <em>Notes</em> section.</li>
+<li><strong><code>relation</code></strong> — identified by <code>source_table</code> (the side that
+<strong>holds</strong> the association — the <code>belongs_to</code>/FK-holding side for a
+<code>belongs_to</code>, the owning side for a <code>has_many</code> — the same side the Associations
+list in the detail panel shows it on) and <code>target_table</code>. <code>foreign_key</code>,
+<code>name</code>, <code>assoc_type</code>, <code>through</code>, and <code>polymorphic</code> are optional
+narrowing keys, needed only when a table has more than one relation to the same target (e.g.
+two aliased <code>belongs_to</code> on different FK columns, like Rails' <code>:user</code> and
+<code>:author</code> both pointing at <code>users</code>, or a <code>has_many</code> and a
+<code>has_one</code> that share a name and target, told apart with
+<code>assoc_type: has_many</code>). <code>assoc_type</code> is the association kind
+(<code>has_many</code> / <code>belongs_to</code> / <code>has_one</code> /
+<code>has_and_belongs_to_many</code>). A note that matches <strong>zero</strong> or
+<strong>more than one</strong> relation is a hard error naming the note's <code>id</code> — never a
+silent guess at which edge you meant.</li>
+<li><strong><code>global</code></strong> — <code>{ type: global }</code>. Shown in the diagram's
+legend/overview panel, always visible regardless of which tables are checked/hidden.</li>
+</ul>
+<p>
+<strong>Validation is two-pass</strong>, exactly like <code>tables:</code> above: syntax is checked
+when the config loads (unknown keys, bad types, a malformed <code>target</code>, a non-http(s) link
+URL). The target's actual existence is checked <strong>after</strong> every source is merged — DB,
+<code>--models</code>, and config <code>tables:</code> (including its own adds/drops) all resolved —
+so a note may reference a table or relation that <code>tables:</code> itself adds, and a note whose
+target <code>tables:</code> <em>removes</em> is correctly a hard error, naming the note's <code>id</code>.
+</p>
+<p>
+Notes render as <strong>plain, HTML-escaped text only</strong> — no Markdown, no raw HTML, no scripts
+— in the table detail panel, next to the matching relation in the Associations list, or in the
+legend for a <code>global</code> note. They're also searchable, with a small scope difference
+between the two search boxes: the left-pane filter matches every note — table, relation, and
+<code>global</code> — with a <code>global</code> match surfacing as its own banner row (a
+<code>global</code> note has no table to attach a badge to). The toolbar Highlight marks matching
+<em>nodes</em> in the diagram, so it matches table and relation notes (on the table that owns
+them) alongside table/column names and comments, but not <code>global</code> notes — find those via
+the left-pane filter instead. Either way, a matching row is marked distinctly from a plain
+table/column hit so you can tell a note match from a schema match at a glance.
+</p>
+<p>
+A table or relation note only ever shows up where its target is actually visible: if a table is
+unchecked or banned (🚫) from the current view, its detail panel simply isn't open, so its notes
+don't appear anywhere either — nothing forces a hidden table's note into view. A <code>global</code>
+note's legend entry is a separate, always-available block, unaffected by which tables are shown.
+</p>
+<div class="warn"><strong>Excel: wiring only, not implemented yet</strong>
+<code>write_excel</code> accepts the same resolved notes as the HTML viewer, so the data already
+exists in the shape a future Notes sheet would need — but this release doesn't write one. Passing
+<code>notes:</code> in your config has no effect on the <code>--excel</code> workbook today.</div>
+</section>
+
 <section id="viewer-guide">
 <h2>Viewer guide <a class="anchor-link" href="#viewer-guide">#</a></h2>
 <p>Everything below describes the generated HTML file itself — the diagram you open in a browser,
@@ -617,8 +707,8 @@ your browser and are captured in named views and share links.</p>
 <h3 id="viewer-search">Search &amp; highlight <a class="anchor-link" href="#viewer-search">#</a></h3>
 <p>There are two different search boxes, and they do different things:</p>
 <div class="grid-cards">
-<div class="card"><h4>Filter (left pane, "Search tables / columns…")</h4><p>Matches table name, column name, column comment, and table comment. Live-filters the table list as you type. <strong>Enter</strong> jumps to the best match in the diagram (pulling it back into view if needed) and highlights the matched column.</p></div>
-<div class="card"><h4>Highlight (toolbar, "Highlight…")</h4><p>Same match fields, but never removes anything from view — it marks matching tables/columns and dims the rest, purely as an overlay. <strong>Enter</strong>/<strong>Shift+Enter</strong> step to the next/previous match. Unlike selection, a Highlight query is preserved into PNG/SVG exports.</p></div>
+<div class="card"><h4>Filter (left pane, "Search tables / columns…")</h4><p>Matches table name, column name, column comment, table comment, and any <a href="#notes">note</a> attached to a table, its relations, or the whole diagram. Live-filters the table list as you type. <strong>Enter</strong> jumps to the best match in the diagram (pulling it back into view if needed) and highlights the matched column.</p></div>
+<div class="card"><h4>Highlight (toolbar, "Highlight…")</h4><p>Mostly the same match fields, but never removes anything from view — it marks matching tables/columns and dims the rest, purely as an overlay. It also matches table/relation notes, but — since it can only mark diagram nodes — not a <code>global</code> note, which has no table of its own; use the filter box for that. <strong>Enter</strong>/<strong>Shift+Enter</strong> step to the next/previous match. Unlike selection, a Highlight query is preserved into PNG/SVG exports.</p></div>
 </div>
 <p>Each box has its own, independent <code>Aa</code> (match case) and <code>.*</code> (regular
 expression) toggle — turning on regex mode in the filter box doesn't affect the Highlight box.</p>

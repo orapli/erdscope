@@ -289,6 +289,25 @@ body.focus-mode #table-list input[type=checkbox]{opacity:.35}
 .atarget .add-target{color:#64748b;cursor:pointer;text-decoration:none;border-bottom:1px dashed #cbd5e1}
 .atarget .add-target:hover{color:#1d4ed8;border-bottom-color:#1d4ed8}
 
+/* ── notes (notes Phase 1) ── */
+.note-list{display:flex;flex-direction:column;gap:4px}
+.note-entry{padding:5px 8px;border-radius:4px;background:#f8fafc;border-left:3px solid #0d9488}
+.note-title{font-size:11px;font-weight:700;color:#0f766e;margin-bottom:2px}
+.note-text{font-size:11px;color:#334155;line-height:1.5;white-space:pre-wrap}
+.note-links{margin-top:3px;display:flex;flex-direction:column;gap:1px}
+.note-links a{font-size:10px;color:#0d9488;text-decoration:none}
+.note-links a:hover{text-decoration:underline}
+.assoc-notes{margin-top:4px}
+.assoc-notes .note-entry{background:transparent;padding:4px 0 0 6px;border-left-width:2px}
+#legend-notes{margin-top:6px;padding-top:6px;border-top:1px solid #f1f5f9}
+#legend-notes:empty,#legend-notes[style*="display: none"]{border-top:none;padding-top:0;margin-top:0}
+.lgn-title{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;
+  letter-spacing:.6px;margin-bottom:4px}
+#legend-notes .note-entry{max-width:230px}
+.note-hit{font-size:9px;background:#ccfbf1;color:#0f766e;padding:1px 4px;border-radius:3px;
+  flex-shrink:0;margin-left:4px}
+.table-item.note-banner label{cursor:pointer;color:#0f766e;font-size:11px;gap:6px}
+
 /* ── multi-select align/distribute panel ── */
 .msel-btns{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .msel-btns .diag-btn{width:100%;font-size:11px;justify-content:flex-start;padding:0 10px}
@@ -401,7 +420,15 @@ body.dark #hidden-bar{background:#450a0a;border-color:#7f1d1d;color:#fca5a5}
 body.dark #canvas-empty{color:#94a3b8}
 body.dark .detail-name{color:#e2e8f0;border-color:#e2e8f0}
 body.dark .word-mark{background:#78350f;color:#fde68a}
-body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry,body.dark .msel-chip{background:#1e293b}
+body.dark .col-entry,body.dark .assoc-entry,body.dark .idx-entry,body.dark .msel-chip,body.dark .note-entry{background:#1e293b}
+body.dark .note-entry{border-left-color:#2dd4bf}
+body.dark .assoc-notes .note-entry{background:transparent}
+body.dark .note-title{color:#5eead4}
+body.dark .note-text{color:#cbd5e1}
+body.dark .note-links a{color:#2dd4bf}
+body.dark #legend-notes{border-color:#1e293b}
+body.dark .note-hit{background:#134e4a;color:#5eead4}
+body.dark .table-item.note-banner label{color:#5eead4}
 body.dark .idx-name{color:#e2e8f0}
 body.dark .col-cn,body.dark .aname,body.dark .msel-cn{color:#e2e8f0}
 body.dark .empty-state{color:#94a3b8}
@@ -522,6 +549,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
           Toolbar "Highlight" box: marks matches everywhere (doesn't filter), survives exports.<br>
           Enter = next match, Shift+Enter = previous match<br>
           Esc: exit focus</div>
+        <div id="legend-notes" style="pointer-events:auto;display:none"></div>
       </div>
     </div>
     <button id="expand-left" class="expand-tab" title="Open left pane">▶</button>
@@ -645,6 +673,10 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
 <script>
 'use strict';
 const DATA = __DATA_JSON__;
+// notes Phase 1: viewer-ready sidecar, already validated/resolved server-side
+// (resolve_and_validate_notes in providers.py) — DATA.notes is absent when no
+// notes were configured (demo byte-equality), so default to [] here.
+const NOTES = DATA.notes || [];
 // LocalStorage keys are namespaced per project so multiple ERD pages
 // served from the same origin don't share table selections
 const LS = k => `erd:${document.title}:${k}`;
@@ -766,7 +798,11 @@ function wordColHits(name){
 function wordHit(name){
   if(!wordMatcher) return false;
   return wordMatcher.test(name) || wordColHits(name).length>0
-    || wordMatcher.test(DATA.tables[name]?.comment||'');
+    || wordMatcher.test(DATA.tables[name]?.comment||'')
+    // table/relation notes attached to this table count toward Highlight too
+    // (a global note has no owning table/node, so it's out of scope here —
+    // it's only reachable via the left-pane filter's banner row).
+    || notesForTable(name).some(n=>wordMatcher.test(noteText(n)));
 }
 let colMode        = 0;  // 0=all  1=PK/FK  2=header
 let colOverride    = {}; // per-table column-mode override (name -> 0|1|2)
@@ -2197,10 +2233,34 @@ function renderTableList(){
     ? (DATA.tables[t]?.columns||[]).find(c=>filterMatcher.test(c.name) || filterMatcher.test(c.comment||''))?.name
     : null;
   const commentHit = t => filterMatcher && filterMatcher.test(DATA.tables[t]?.comment||'');
+  // notesForTable() is shared with wordHit() (toolbar Highlight) — see its
+  // definition in the Notes section below.
+  const noteHit = t => filterMatcher
+    ? notesForTable(t).find(n=>filterMatcher.test(noteText(n)))
+    : null;
+  // Global notes have no owning table, so a match surfaces as a synthetic
+  // banner row at the top of the list instead (clicking scrolls/expands the
+  // legend, where the global note actually renders).
+  if(filterMatcher){
+    const globalHits=NOTES.filter(n=>n.scope==='global' && filterMatcher.test(noteText(n)));
+    if(globalHits.length){
+      const gitem=document.createElement('div');
+      gitem.className='table-item note-banner';
+      const glbl=document.createElement('label');
+      glbl.innerHTML=`🌐 <span class="note-hit">📝 global note: ${escMark(globalHits[0].title||globalHits[0].text)}</span>`;
+      glbl.title='Click to open the legend and view the global note(s)';
+      glbl.addEventListener('click', ()=>{
+        document.getElementById('legend').classList.remove('collapsed');
+      });
+      gitem.appendChild(glbl);
+      list.appendChild(gitem);
+    }
+  }
   allTables()
     .filter(t => !filterMatcher || filterMatcher.test(t)
       || (DATA.tables[t]?.columns||[]).some(c=>filterMatcher.test(c.name) || filterMatcher.test(c.comment||''))
-      || commentHit(t))
+      || commentHit(t)
+      || noteHit(t))
     .forEach(name => {
       const t=DATA.tables[name];
       const isHidden=hiddenTables.has(name);
@@ -2235,8 +2295,13 @@ function renderTableList(){
         else { excludedTables.add(name); }
         noAutoExpandRoot.delete(name); // a direct checkbox click is explicit intent — full root again
         saveState();
-        if(focusedTable){ renderTableList(); return; } // the focus view ignores checkboxes
-        refreshView(); renderTableList();
+        // showDetails() so a selected table's note sections re-render against
+        // its new visibility right away — gating notes inside showDetails only
+        // takes effect when showDetails is actually re-invoked (Sol re-review
+        // #1: unchecking a selected table used to leave its note stale until
+        // the next unrelated redraw). Mirrors toggleBan()'s tail.
+        if(focusedTable){ renderTableList(); showDetails(); return; } // the focus view ignores checkboxes
+        refreshView(); renderTableList(); showDetails();
       });
       const nm=document.createElement('span'); nm.className='tname'; nm.textContent=name;
       lbl.appendChild(cb); lbl.appendChild(nm);
@@ -2244,6 +2309,12 @@ function renderTableList(){
       if(lg){const lgEl=document.createElement('span');lgEl.className='tlogical';lgEl.textContent=lg;lbl.appendChild(lgEl);}
       const hit=colHit(name);
       if(hit){const hb2=document.createElement('span');hb2.className='col-hit';hb2.textContent='⌕ '+hit;lbl.appendChild(hb2);}
+      const nhit=noteHit(name);
+      if(nhit){
+        const nb=document.createElement('span'); nb.className='note-hit';
+        nb.textContent='📝 note: '+(nhit.title||nhit.text).slice(0,40);
+        lbl.appendChild(nb);
+      }
       // Relation count + ban button live in a `.tail` wrapper pinned to the
       // row's right edge (margin-left:auto) so their position doesn't drift
       // with the table name's length or whether a logical name is present.
@@ -2330,6 +2401,15 @@ function showDetails(){
   if(!name||!DATA.tables[name]){el.innerHTML='<div class="empty-state">Click a table<br>to see its details</div>';return;}
   const t=DATA.tables[name];
   const cols=t.columns||[], assocs=t.associations||[];
+  // notes gating (Sol review finding 2): a stale selection can outlive its
+  // table being unchecked/banned from the current view (selectedTables isn't
+  // cleared by excludeTable()/toggleBan()). Columns/indexes/associations keep
+  // rendering regardless — only table/relation notes are gated on the anchor
+  // table still being part of the displayed set, per NOTES_PHASE1_SPEC's
+  // "hidden table's note doesn't leak into the right pane" contract. A
+  // global note has no owning table, so it's unaffected and always shown
+  // via the legend.
+  const anchorVisible = getDisplayTables().includes(name);
   let h=`<div class="detail-name">${escMark(name)}</div>`;
   if(t.comment) h+=`<div class="tbl-comment">${esc(t.comment)}</div>`;
   if(t.schema_missing && cols.length===0){
@@ -2388,9 +2468,18 @@ function showDetails(){
             ?`<span class="not-in-view" title="Banned with 🚫">${escMark(a.target)} 🚫</span>`
             :`<a class="add-target" data-add="${esc(a.target)}" title="Not displayed — click to add to the diagram">${escMark(a.target)} ＋</a>`;
       const thr=a.through?`<div class="athrough">through: :${esc(a.through)}</div>`:'';
+      const relNotes=anchorVisible ? NOTES.filter(n=>relNoteMatches(n, name, a)) : [];
+      const relNotesHtml=relNotes.length
+        ? '<div class="assoc-notes">'+relNotes.map(noteBlockHtml).join('')+'</div>' : '';
       // plain-language description appears as a tooltip on hover
-      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.schema_fk?' <span class="badge-schemafk">schema FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${escMark(a.name)}</div><div class="atarget">→ ${link}</div>${thr}</div>`;
+      h+=`<div class="assoc-entry ${cls}" title="${esc(desc)}"><div class="atype">${esc(a.type)}${a.inferred?' <span class="badge-inf">inferred</span>':''}${a.db_fk?' <span class="badge-dbfk">DB FK</span>':''}${a.schema_fk?' <span class="badge-schemafk">schema FK</span>':''}${a.manual?' <span class="badge-manual">manual</span>':''}</div><div class="aname">:${escMark(a.name)}</div><div class="atarget">→ ${link}</div>${thr}${relNotesHtml}</div>`;
     });
+    h+='</div>';
+  }
+  const tableNotes=anchorVisible ? NOTES.filter(n=>n.scope==='table' && n.table===name) : [];
+  if(tableNotes.length){
+    h+='<div class="sec-title">Notes</div><div class="note-list">';
+    tableNotes.forEach(n=> h+=noteBlockHtml(n));
     h+='</div>';
   }
   el.innerHTML=h;
@@ -2419,6 +2508,56 @@ function escMark(s){
     i=b;
   });
   return out+esc(s.slice(i));
+}
+
+// ── Notes (notes Phase 1) ────────────────────────────────────────────────
+// Every note field is plain text — rendered via innerHTML but always passed
+// through esc()/escMark(), same discipline as every other DATA field above.
+// Link URLs are validated to http(s)-only at config-load time (config.py); no
+// Markdown/raw-HTML rendering is ever done here.
+function noteLinksHtml(links){
+  if(!links || !links.length) return '';
+  return '<div class="note-links">' + links.map(l=>
+    `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${escMark(l.label||l.url)}</a>`
+  ).join('') + '</div>';
+}
+function noteBlockHtml(n){
+  const ttl = n.title ? `<div class="note-title">${escMark(n.title)}</div>` : '';
+  return `<div class="note-entry">${ttl}<div class="note-text">${escMark(n.text)}</div>${noteLinksHtml(n.links)}</div>`;
+}
+// Mirrors the Python resolve_and_validate_notes identity fields exactly —
+// never re-derive relation identity from scratch in JS (association_key is
+// the single source of truth; Python already resolved each relation note to
+// one specific association before it ever reached DATA).
+function relNoteMatches(n, srcTable, a){
+  return n.scope==='relation' && n.source_table===srcTable && n.target===a.target
+      && n.type===a.type && n.name===a.name
+      && (n.foreign_key ?? null) === (a.foreign_key ?? null)
+      && (n.through ?? null) === (a.through ?? null)
+      && !!n.polymorphic === !!a.polymorphic;
+}
+// Aggregate a note's searchable text (title/text/link labels/target names) so
+// the left-pane filter and the global-note search banner can match on it.
+function noteText(n){
+  return [n.title, n.text, ...(n.links||[]).map(l=>l.label), n.table, n.target, n.source_table]
+    .filter(Boolean).join(' ');
+}
+// Notes attached to table `t`: its own table notes, plus relation notes whose
+// source_table is `t` (the side the note's association lives on — mirrors the
+// right-pane Associations list, which is keyed the same way). Shared by
+// renderTableList (left-pane note-hit badge) and wordHit (toolbar Highlight),
+// so both search boxes agree on which notes belong to which table.
+function notesForTable(t){
+  return NOTES.filter(n =>
+    (n.scope==='table' && n.table===t) || (n.scope==='relation' && n.source_table===t));
+}
+function renderGlobalNotes(){
+  const box=document.getElementById('legend-notes');
+  if(!box) return;
+  const gs=NOTES.filter(n=>n.scope==='global');
+  if(!gs.length){ box.innerHTML=''; box.style.display='none'; return; }
+  box.style.display='';
+  box.innerHTML='<div class="lgn-title">Design notes</div>'+gs.map(noteBlockHtml).join('');
 }
 
 // ── Multi-select: align / distribute panel ─────────────────────────────────
@@ -3593,6 +3732,7 @@ if(location.hash.startsWith('#v=')){
     showToast('Applied the shared view');
   }catch(e){ console.warn('Failed to load the shared view:', e); }
 }
+renderGlobalNotes();
 renderTableList();
 renderDiagram();
 requestAnimationFrame(fitView);

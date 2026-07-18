@@ -102,7 +102,7 @@ def load_config(args):
                  f'(or a full connection URL, which could carry one) are not supported '
                  f'in the config file. Use `host`/`port`/`user`/`database` instead, and '
                  f'MYSQL_PWD, ~/.my.cnf, or the interactive prompt for the password')
-    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version'}
+    unknown = (set(config) - set(CONFIG_DEFAULTS) - {'relations', 'adapters', 'sources', 'version', 'notes'}
                - CONFIG_CONNECTION_KEYS - CONFIG_SCHEMA_KEYS)
     if unknown:
         sys.exit(f'Error: {path} has unknown key(s): {", ".join(sorted(unknown))}')
@@ -168,6 +168,8 @@ def _check_config_types(config, path):
         _check_config_tables(config['tables'], path)
     if 'sources' in config:
         _check_config_sources(config['sources'], path)
+    if 'notes' in config:
+        _check_config_notes(config['notes'], path)
 
 # ---------------------------------------------------------------------------
 # `sources:` — typed code-source declarations (D5). Purely syntactic here:
@@ -196,6 +198,110 @@ def _check_config_sources(sources, path):
         if s['id'] in seen:
             sys.exit(f'Error: {path} `sources` has a duplicate id {s["id"]!r}')
         seen.add(s['id'])
+
+# ---------------------------------------------------------------------------
+# `notes:` — design-documentation sidecar (notes Phase 1). Purely syntactic
+# here: shape, required fields, allow-listed keys, Config-internal duplicate
+# `id`, and link URL scheme (http/https only — the first line of XSS defense,
+# since a note's links render as real <a href> in the viewer). Whether the
+# note's TARGET actually exists (a table/relation naming something real) is a
+# semantic, final-IR-after-merge concern — see resolve_and_validate_notes in
+# providers.py, not here. Mirrors the tables §6.4①/② two-stage split.
+# ---------------------------------------------------------------------------
+_CONFIG_NOTE_KEYS = {'id', 'target', 'title', 'text', 'links'}
+_CONFIG_NOTE_LINK_KEYS = {'label', 'url'}
+_CONFIG_NOTE_TARGET_TYPES = {'global', 'table', 'relation'}
+_CONFIG_NOTE_TARGET_KEYS = {
+    'global': {'type'},
+    'table': {'type', 'table'},
+    # NOTE: `type` here is the target-KIND discriminator (already required to
+    # be 'relation') — an association-type narrowing key (has_many/belongs_to/
+    # has_one/has_and_belongs_to_many, mirroring _CONFIG_ASSOC_TYPES) can't
+    # reuse that same name without colliding with it, so it's `assoc_type`
+    # (Sol finding #5: narrow an ambiguous relation note by role, matching the
+    # resolved association's `type`, which the OUTPUT entry surfaces as `type`
+    # per the viewer contract — only the config INPUT key differs).
+    'relation': {'type', 'source_table', 'target_table', 'foreign_key', 'name',
+                 'through', 'polymorphic', 'assoc_type'},
+}
+
+def _check_config_notes(notes, path):
+    if not isinstance(notes, list):
+        sys.exit(f'Error: {path} `notes` must be a list of objects '
+                 '({id, target, text, ...})')
+    seen = set()
+    for i, n in enumerate(notes):
+        nw = f'notes[{i}]'
+        if not isinstance(n, dict):
+            sys.exit(f'Error: {path} `{nw}` must be an object')
+        _reject_unknown_keys(n, _CONFIG_NOTE_KEYS, path, nw)
+        note_id = n.get('id')
+        if not isinstance(note_id, str) or not note_id:
+            sys.exit(f'Error: {path} `{nw}` needs a non-empty string `id`')
+        if note_id in seen:
+            sys.exit(f'Error: {path} `notes` has a duplicate id {note_id!r}')
+        seen.add(note_id)
+        text = n.get('text')
+        if not isinstance(text, str) or not text:
+            sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string `text`')
+        if 'title' in n and n['title'] is not None and not isinstance(n['title'], str):
+            sys.exit(f'Error: {path} note {note_id!r} `title` must be a string')
+        if 'links' in n:
+            _check_config_note_links(n['links'], path, note_id)
+        target = n.get('target')
+        if not isinstance(target, dict):
+            sys.exit(f'Error: {path} note {note_id!r} needs an object `target`')
+        ttype = target.get('type')
+        if ttype not in _CONFIG_NOTE_TARGET_TYPES:
+            sys.exit(f'Error: {path} note {note_id!r} `target.type` must be one of '
+                     f'{", ".join(sorted(_CONFIG_NOTE_TARGET_TYPES))}, got {ttype!r}')
+        _reject_unknown_keys(target, _CONFIG_NOTE_TARGET_KEYS[ttype], path,
+                             f'{nw}.target')
+        if ttype == 'table':
+            tbl = target.get('table')
+            if not isinstance(tbl, str) or not tbl:
+                sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string '
+                         '`target.table`')
+        elif ttype == 'relation':
+            for key in ('source_table', 'target_table'):
+                val = target.get(key)
+                if not isinstance(val, str) or not val:
+                    sys.exit(f'Error: {path} note {note_id!r} needs a non-empty string '
+                             f'`target.{key}`')
+            for key in ('foreign_key', 'name', 'through'):
+                if key in target and target[key] is not None:
+                    val = target[key]
+                    if isinstance(val, list):
+                        sys.exit(f'Error: {path} note {note_id!r} `target.{key}` is a list '
+                                 '— composite foreign keys are not supported; use a single '
+                                 'column name')
+                    if not isinstance(val, str) or not val:
+                        sys.exit(f'Error: {path} note {note_id!r} `target.{key}` must be a '
+                                 'non-empty string')
+            _check_bool(target.get('polymorphic'), 'polymorphic' in target, path,
+                       f'{nw}.target.polymorphic')
+            if 'assoc_type' in target and target['assoc_type'] is not None:
+                at = target['assoc_type']
+                if at not in _CONFIG_ASSOC_TYPES:
+                    sys.exit(f'Error: {path} note {note_id!r} `target.assoc_type` must be '
+                             f'one of {", ".join(sorted(_CONFIG_ASSOC_TYPES))}, got {at!r}')
+
+def _check_config_note_links(links, path, note_id):
+    if not isinstance(links, list):
+        sys.exit(f'Error: {path} note {note_id!r} `links` must be a list')
+    for j, link in enumerate(links):
+        lw = f'links[{j}]'
+        if not isinstance(link, dict):
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}` must be an object')
+        _reject_unknown_keys(link, _CONFIG_NOTE_LINK_KEYS, path, f'notes.{lw}')
+        if 'label' in link and link['label'] is not None and not isinstance(link['label'], str):
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}.label` must be a string')
+        url = link.get('url')
+        if not isinstance(url, str) or not url:
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}` needs a non-empty string `url`')
+        if not url.lower().startswith(('http://', 'https://')):
+            sys.exit(f'Error: {path} note {note_id!r} `{lw}.url` must start with http:// '
+                     f'or https:// (got {url!r})')
 
 # ---------------------------------------------------------------------------
 # `tables:` schema-input syntactic validation (REFACTOR_PLAN.md §4.3 / §6.4 ①)

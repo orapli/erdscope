@@ -82,3 +82,43 @@ relations: []
   #   column: order_id
   #   references: orders
   #   one_to_one: true
+
+# `notes:` attaches design decisions / operational rules / ADR links to the
+# diagram itself (notes Phase 1) — a table, a specific relation, or the whole
+# diagram. Every note needs a config-unique `id` and non-empty `text`; `title`
+# and `links` are optional. Notes are validated against the FINAL merged
+# schema (after DB/--models/config.tables are all combined) and rendered as
+# plain, escaped text in the viewer — no Markdown, no raw HTML. Link URLs must
+# be http:// or https://.
+#
+# notes:
+#   - id: user-retention
+#     target: { type: table, table: users }
+#     title: Retention policy
+#     text: Suspended accounts are kept for 1 year, then anonymized.
+#     links:
+#       - { label: ADR-004, url: https://example.com/adr/004 }
+#
+#   # relation notes are keyed by the identity of a SPECIFIC association, not
+#   # a display label: `source_table` is the side that HOLDS the association
+#   # (the belongs_to/FK-holding side for a belongs_to, the owning side for a
+#   # has_many) — the same side the viewer's right-pane Associations list
+#   # shows it on. `foreign_key`/`name`/`assoc_type`/`through`/`polymorphic` are
+#   # optional narrowing keys, only needed when a table has more than one
+#   # relation to the same target (e.g. two aliased belongs_to on different FK
+#   # columns, or a has_many and a has_one that share a name+target — narrow
+#   # those with `assoc_type: has_many` etc.). An ambiguous match without them
+#   # is a hard error, on purpose.
+#   - id: order-ownership
+#     target:
+#       type: relation
+#       source_table: orders
+#       target_table: users
+#       foreign_key: user_id
+#       # assoc_type: belongs_to   # optional: has_many | belongs_to | has_one | has_and_belongs_to_many
+#     text: Orders are kept after a user is anonymized (financial record-keeping).
+#
+#   - id: diagram-conventions
+#     target: { type: global }
+#     title: How to read this diagram
+#     text: The dotted amber edge under activity_logs.user_id is inferred, not a real FK.

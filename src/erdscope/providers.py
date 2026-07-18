@@ -141,5 +141,102 @@ def validate_config_references(config_tables, tables, label):
                          f"{tname!r}'s merged columns")
 
 # ---------------------------------------------------------------------------
+# `notes:` semantic validation + viewer-ready resolution (notes Phase 1).
+#
+# Called from cli._finish, AFTER --infer-fk has added its guessed relations to
+# `tables` (Sol finding #3: a note can target an inferred relation, since this
+# validates against the FINAL final-IR-plus-inferred-relations, not the
+# pre-infer merge_ir output) and BEFORE --only/--exclude filtering (so a note
+# on an about-to-be-excluded table still gets full semantic validation against
+# the complete schema — _finish filters the RESOLVED notes down afterward).
+# This is also after the final merge_ir (same final IR validate_config_
+# references checks), so a note may target a table/association added by
+# config.tables, and a note targeting something config.tables DROPPED is
+# correctly an error here even though it was syntactically fine at load time
+# (§6.4②-style two stage split, mirrored from validate_config_references
+# above).
+#
+# notes are a pure sidecar: this function only READS `tables` (never mutates
+# it, never feeds anything back into layers/merge_ir/ProviderResult/
+# provenance/fk_columns) and returns a new, viewer-ready list. Every error
+# includes the note's `id`, per the Phase 1 contract.
+# ---------------------------------------------------------------------------
+def resolve_and_validate_notes(notes, tables, label):
+    """Semantic-validate config `notes` against the FINAL merged IR and
+    resolve each `relation` note to the one association it identifies, so the
+    viewer can match on a fully-resolved identity instead of re-implementing
+    relation lookup in JS. Hard error via sys.exit (note id always included)."""
+    out = []
+    for n in notes:
+        note_id = n['id']
+        target = n['target']
+        ttype = target['type']
+        if ttype == 'global':
+            entry = {'id': note_id, 'scope': 'global'}
+        elif ttype == 'table':
+            tname = target['table']
+            if tname not in tables:
+                sys.exit(f"Error: {label} note {note_id!r}: unknown table {tname!r} "
+                         "(not in the final schema)")
+            entry = {'id': note_id, 'scope': 'table', 'table': tname}
+        else:  # relation
+            src, tgt = target['source_table'], target['target_table']
+            if src not in tables:
+                sys.exit(f"Error: {label} note {note_id!r}: unknown source_table {src!r} "
+                         "(not in the final schema)")
+            cands = [a for a in tables[src]['associations'] if a['target'] == tgt]
+            fk = target.get('foreign_key')
+            if fk is not None:
+                cands = [a for a in cands if a.get('foreign_key') == fk]
+            name = target.get('name')
+            if name is not None:
+                cands = [a for a in cands if a['name'] == name]
+            through = target.get('through')
+            if through is not None:
+                cands = [a for a in cands if a.get('through') == through]
+            # Sol finding #5: narrow by association TYPE (has_many/belongs_to/
+            # has_one/has_and_belongs_to_many) — lets a note pick out e.g. a
+            # has_many among a has_many/has_one pair that otherwise share name
+            # and target. Config key is `assoc_type` (not `type` — that name is
+            # already the note's own target-kind discriminator), but it
+            # narrows against the association's real `type` field.
+            atype = target.get('assoc_type')
+            if atype is not None:
+                cands = [a for a in cands if a['type'] == atype]
+            # `polymorphic` is tri-state: None = don't care, True/False both
+            # narrow (previously only `is True` narrowed, so `polymorphic:
+            # false` was silently ignored as a filter — Sol finding #5).
+            poly = target.get('polymorphic')
+            if poly is not None:
+                cands = [a for a in cands if bool(a.get('polymorphic')) == poly]
+            if not cands:
+                sys.exit(f"Error: {label} note {note_id!r}: no relation from {src!r} to "
+                         f"{tgt!r} matches (check source_table/target_table/foreign_key/"
+                         "name/through/assoc_type/polymorphic)")
+            if len(cands) > 1:
+                sys.exit(f"Error: {label} note {note_id!r}: ambiguous — {len(cands)} "
+                         f"relations from {src!r} to {tgt!r} match; add foreign_key/name/"
+                         "through/assoc_type to disambiguate")
+            a = cands[0]
+            # Resolved relation entry — SHARED CONTRACT with the viewer (do not
+            # diverge): id/scope/source_table/target/type/name/foreign_key/
+            # through/polymorphic, where every field except id/scope/
+            # source_table/target is the RESOLVED association `a`'s real value
+            # (not the note's possibly-partial narrowing target). `type` is
+            # ALWAYS included now (Sol finding #5) so the viewer can match on
+            # role the same way this function just did.
+            entry = {'id': note_id, 'scope': 'relation', 'source_table': src,
+                     'target': tgt, 'type': a['type'], 'name': a['name'],
+                     'foreign_key': a.get('foreign_key'), 'through': a.get('through'),
+                     'polymorphic': bool(a.get('polymorphic'))}
+        if n.get('title'):
+            entry['title'] = n['title']
+        entry['text'] = n['text']
+        if n.get('links'):
+            entry['links'] = n['links']
+        out.append(entry)
+    return out
+
+# ---------------------------------------------------------------------------
 # Excel export (.xlsx via zipfile — no third-party dependency)
 # ---------------------------------------------------------------------------

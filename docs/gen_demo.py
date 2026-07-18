@@ -136,13 +136,46 @@ IX = [
     ('coupons', 'uk_coupons_code', 0, 1, 'code'),
 ]
 
+# Design notes (notes Phase 1) — a small, illustrative set so the live demo
+# actually shows the feature: a global note in the legend, table notes in the
+# right pane, and a relation note under an association. Kept short and generic
+# (the ADR link points at example.com on purpose).
+NOTES = [
+    {'id': 'design-intro',
+     'target': {'type': 'global'},
+     'text': 'Design notes travel with the schema: attach decisions, operational '
+             'rules, and ADR links to tables and relationships, then read them back '
+             'right here in the diagram.'},
+    {'id': 'activity-retention',
+     'target': {'type': 'table', 'table': 'activity_logs'},
+     'title': 'Retention & audit',
+     'text': 'Append-only audit trail — rows are never updated or deleted, and it '
+             'deliberately carries no FK constraints so a write never blocks on a '
+             'referential check. Retained 7 years for compliance.',
+     'links': [{'label': 'ADR-014: audit logging', 'url': 'https://example.com/adr/014'}]},
+    {'id': 'order-lifecycle',
+     'target': {'type': 'table', 'table': 'orders'},
+     'title': 'Order state machine',
+     'text': 'state drives fulfillment: cart -> placed -> paid -> shipped. An order '
+             'is created in "cart" and is never hard-deleted, so history stays intact.'},
+    {'id': 'customer-anonymization',
+     'target': {'type': 'relation', 'source_table': 'orders',
+                'target_table': 'users', 'foreign_key': 'user_id'},
+     'title': 'Customer retention',
+     'text': 'When a customer deletes their account we anonymize the user row, but '
+             'their orders are kept for accounting and warranty history.'},
+]
+
 tables = erd.mysql_ir(T, C, FK, IX)
 args = SimpleNamespace(output=str(ROOT / 'docs' / 'index.html'),
                        models=None, excel=None, max_rows=15,
                        only=None, exclude=None,
                        infer_fk=True)  # showcase the feature: activity_logs' *_id
                                        # columns are deliberately FK-less in the schema
-erd._finish(tables, args, 'demo_shop')
+# notes Phase 1 (Sol finding #3): _finish now resolves/validates notes itself,
+# AFTER infer_fk — pass the RAW NOTES list (not pre-resolved) so this exercises
+# the same post-infer resolution path the real CLI pipeline uses.
+erd._finish(tables, args, 'demo_shop', notes=NOTES, notes_label='demo')
 print('demo written to docs/index.html', file=sys.stderr)
 
 # README's screenshot used to be a hand-exported SVG that this script never
@@ -153,10 +186,6 @@ print('demo written to docs/index.html', file=sys.stderr)
 # with a note rather than fail if it's not installed.
 try:
     from playwright.sync_api import sync_playwright
-except ImportError:
-    print('playwright not installed — skipping docs/screenshot.png '
-          '(pip install playwright && playwright install chromium)', file=sys.stderr)
-else:
     import base64
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -196,3 +225,14 @@ else:
     _, encoded = data_url.split(',', 1)
     (ROOT / 'docs' / 'screenshot.png').write_bytes(base64.b64decode(encoded))
     print('demo written to docs/screenshot.png', file=sys.stderr)
+except ImportError:
+    print('playwright not installed — skipping docs/screenshot.png '
+          '(pip install playwright && playwright install chromium)', file=sys.stderr)
+except Exception as e:
+    # Browser present but unlaunchable (e.g. sandbox / OS-permission error in a
+    # restricted CI): skip the screenshot instead of crashing the whole demo
+    # regen — index.html was already written above. Sol's re-review flagged the
+    # full-suite byte-identical test failing here only because a launch error
+    # escaped instead of being skipped like a missing Playwright would be.
+    print(f'skipping docs/screenshot.png — browser unavailable '
+          f'({type(e).__name__}: {e})', file=sys.stderr)

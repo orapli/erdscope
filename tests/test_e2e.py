@@ -128,6 +128,344 @@ def _build_html_with_comments():
     return out
 
 
+def _build_html_with_notes():
+    # notes Phase 1: exercise the real resolve_and_validate_notes ->
+    # _finish(notes=...) path, not a hand-rolled DATA.notes shape — this is
+    # what actually ships. 'users' carries a table note, the posts->users
+    # belongs_to (FK user_id) carries a relation note, and one global note
+    # with an http(s) link rounds out all three scopes.
+    tables = erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
+    notes_cfg = [
+        {'id': 'n-table', 'target': {'type': 'table', 'table': 'users'},
+         'title': 'User retention', 'text': 'Do not delete without archiving first.'},
+        {'id': 'n-rel', 'target': {'type': 'relation', 'source_table': 'posts',
+                                   'target_table': 'users', 'foreign_key': 'user_id'},
+         'text': 'Posts survive user anonymization.'},
+        {'id': 'n-global', 'target': {'type': 'global'},
+         'title': 'Diagram conventions',
+         'text': 'Teal badges mark manually-declared associations.',
+         'links': [{'label': 'ADR-1', 'url': 'https://example.com/adr/1'}]},
+    ]
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    # _finish resolves/validates the RAW config notes itself (after infer_fk,
+    # before --only/--exclude) and stamps the relation `type` per the viewer
+    # contract — so hand it the raw notes_cfg, exactly like the real pipeline.
+    erd._finish(tables, args, 'e2e_fixture', notes=notes_cfg, notes_label='test')
+    return out
+
+
+def _build_html_with_xss_notes():
+    # DOM-level XSS regression (Sol finding 6): notes are attacker-reachable
+    # free text (anyone who can edit config, not just a trusted maintainer,
+    # writes title/text/link-label). The existing regression coverage only
+    # round-trips these strings through JSON; it never renders them through
+    # innerHTML in a real browser, which is where the safety property
+    # (esc()/escMark() on every field, never raw) actually has to hold.
+    # One table note, one relation note, one global note, each carrying a
+    # different mix of the payloads under review: a script-tag close+reopen,
+    # an onerror-bearing tag, a quote+tag attribute escape, and a bare
+    # attribute-injection attempt in a link label.
+    tables = erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
+    notes_cfg = [
+        {'id': 'n-table-xss', 'target': {'type': 'table', 'table': 'users'},
+         'title': '</script><script>window.__xss_title=1</script>',
+         'text': '<img src=x onerror="window.__xss_text=1">',
+         'links': [{'label': '"><b>esc</b>', 'url': 'https://example.com/safe1'},
+                   {'label': '" onmouseover=alert(1) foo="', 'url': 'https://example.com/safe2'}]},
+        {'id': 'n-rel-xss', 'target': {'type': 'relation', 'source_table': 'posts',
+                                        'target_table': 'users', 'foreign_key': 'user_id'},
+         'title': '"><b>rel-esc</b>',
+         'text': '" onmouseover=alert(1)</script><script>window.__xss_rel=1</script>'},
+        {'id': 'n-global-xss', 'target': {'type': 'global'},
+         'title': '<b>global title</b>',
+         'text': '<img src=x onerror="window.__xss_global=1">'},
+    ]
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture', notes=notes_cfg, notes_label='test')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestNotes(unittest.TestCase):
+    """notes Phase 1 — right-pane table/relation notes, the global note in
+    the legend, search integration, and the documented hidden-table
+    interaction (Fable review point 4: a banned table's note disappears
+    from the right pane, but the global note's legend entry point survives)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_with_notes()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _ban(self, name):
+        self.page.evaluate('''(name) => {
+            const item = [...document.querySelectorAll('.table-item')]
+                .find(el => el.querySelector('.tname')?.textContent === name);
+            item.querySelector('.hide-btn').click();
+        }''', name)
+
+    def _uncheck(self, name):
+        self.page.evaluate('''(name) => {
+            const item = [...document.querySelectorAll('.table-item')]
+                .find(el => el.querySelector('.tname')?.textContent === name);
+            item.querySelector('input[type=checkbox]').click();
+        }''', name)
+
+    def test_table_note_shown_in_right_pane(self):
+        self.page.click('.er-node[data-name="users"]')
+        self.page.wait_for_timeout(50)
+        text = self.page.inner_text('#table-details')
+        self.assertIn('User retention', text)
+        self.assertIn('Do not delete without archiving first.', text)
+
+    def test_relation_note_shown_on_the_assoc_entry(self):
+        self.page.click('.er-node[data-name="posts"]')
+        self.page.wait_for_timeout(50)
+        text = self.page.inner_text('#table-details')
+        self.assertIn('Posts survive user anonymization.', text)
+
+    def test_global_note_shown_in_legend_with_working_link(self):
+        text = self.page.inner_text('#legend-notes')
+        self.assertIn('Diagram conventions', text)
+        self.assertIn('Teal badges mark manually-declared associations.', text)
+        href = self.page.get_attribute('#legend-notes .note-links a', 'href')
+        self.assertEqual(href, 'https://example.com/adr/1')
+
+    def test_search_surfaces_a_note_hit_badge(self):
+        self.page.fill('#search', 'archiving')
+        self.page.wait_for_timeout(50)
+        badge = self.page.evaluate(
+            "document.querySelector('.table-item .note-hit')?.textContent")
+        self.assertIsNotNone(badge)
+        self.assertIn('note', badge)
+
+    def test_global_note_search_shows_banner(self):
+        self.page.fill('#search', 'Teal badges')
+        self.page.wait_for_timeout(50)
+        banner = self.page.evaluate(
+            "document.querySelector('.note-banner')?.textContent")
+        self.assertIsNotNone(banner)
+        self.assertIn('global note', banner)
+
+    def test_banned_table_note_is_unreachable_but_global_note_survives(self):
+        # Ban 'users' (🚫) BEFORE it's ever selected: its node leaves the
+        # diagram entirely, so there is no way to select it and no way for
+        # its table note to reach the right pane — the documented behavior
+        # (Fable review point 4). The global note's legend entry point is a
+        # separate, always-available block and must be unaffected.
+        self._ban('users')
+        self.page.wait_for_timeout(50)
+        self.assertIsNone(
+            self.page.evaluate('document.querySelector(\'.er-node[data-name="users"]\')'),
+            'a banned table should no longer be a selectable diagram node')
+        self.page.click('.er-node[data-name="posts"]')
+        self.page.wait_for_timeout(50)
+        text = self.page.inner_text('#table-details')
+        self.assertNotIn('User retention', text)  # unreachable now that users is banned
+        self.assertIn('Posts survive user anonymization.', text)  # posts' own relation note is unaffected
+        self.assertIn('Diagram conventions', self.page.inner_text('#legend-notes'))
+
+    def test_banning_an_already_selected_tables_note_disappears_from_the_right_pane(self):
+        # Sol review finding 2, the actual regression: select 'users' FIRST
+        # (its note is now in the right pane), THEN ban it. selectedTables
+        # isn't cleared by toggleBan() for a plain (non-focused) selection,
+        # so the anchor table stays "selected" while no longer being part of
+        # getDisplayTables() — showDetails() must notice that itself. The
+        # pre-existing "banned before ever selected" test above can't catch
+        # this: it never lets 'users' become selected in the first place.
+        self.page.click('.er-node[data-name="users"]')
+        self.page.wait_for_timeout(50)
+        self.assertIn('User retention', self.page.inner_text('#table-details'))
+        self._ban('users')
+        self.page.wait_for_timeout(50)
+        text = self.page.inner_text('#table-details')
+        self.assertNotIn('User retention', text)
+        self.assertNotIn('Do not delete without archiving first.', text)
+
+    def test_unchecking_an_already_selected_tables_note_disappears_from_the_right_pane(self):
+        # Same regression, via the lighter "exclude" path (unchecking the list
+        # checkbox) instead of a full ban — the SPEC draws no distinction
+        # between the two ways of leaving the display set. Sol re-review #1:
+        # the checkbox `change` handler now calls showDetails() itself, so the
+        # note must vanish immediately on uncheck — no unrelated redraw needed.
+        self.page.click('.er-node[data-name="users"]')
+        self.page.wait_for_timeout(50)
+        self.assertIn('User retention', self.page.inner_text('#table-details'))
+        self._uncheck('users')
+        self.page.wait_for_timeout(50)
+        text = self.page.inner_text('#table-details')
+        self.assertNotIn('User retention', text)
+        self.assertNotIn('Do not delete without archiving first.', text)
+
+    def test_highlight_matches_a_table_note(self):
+        # Sol review finding 4: wordHit() used to only look at table/column
+        # names and comments, so a query that only appears in a note's text
+        # produced zero hits, dimmed every node, and made Enter-to-cycle a
+        # no-op. 'archiving' only appears in users' table note.
+        self.page.fill('#word-search', 'archiving')
+        self.page.wait_for_timeout(250)
+        hit = self.page.evaluate(
+            "[...document.querySelectorAll('.er-node.word-hit')].map(n=>n.dataset.name)")
+        self.assertEqual(hit, ['users'])
+        self.assertEqual(
+            self.page.evaluate("document.getElementById('word-search-count').textContent"), '1')
+
+    def test_highlight_matches_a_relation_note_on_its_source_table(self):
+        # 'anonymization' only appears in the posts->users relation note,
+        # which is attached to 'posts' (the source_table / FK-holding side).
+        self.page.fill('#word-search', 'anonymization')
+        self.page.wait_for_timeout(250)
+        hit = self.page.evaluate(
+            "[...document.querySelectorAll('.er-node.word-hit')].map(n=>n.dataset.name)")
+        self.assertEqual(hit, ['posts'])
+
+    def test_highlight_does_not_match_a_global_note(self):
+        # A global note has no owning table/node, so it's correctly outside
+        # Highlight's reach (which can only mark diagram nodes) — it's only
+        # discoverable via the left-pane filter's banner row (see
+        # test_global_note_search_shows_banner above). 'conventions' is
+        # unique to the global note's title; no table/column/other-note text
+        # contains it.
+        self.page.fill('#word-search', 'conventions')
+        self.page.wait_for_timeout(250)
+        hit = self.page.evaluate(
+            "[...document.querySelectorAll('.er-node.word-hit')].map(n=>n.dataset.name)")
+        self.assertEqual(hit, [])
+        self.assertEqual(
+            self.page.evaluate("document.getElementById('word-search-count').textContent"), '0')
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestNotesXSS(unittest.TestCase):
+    """Sol review finding 6: notes are rendered via innerHTML (esc()/escMark()
+    on every field, same discipline as the rest of the right pane), but the
+    only existing coverage was a JSON round-trip of dangerous strings — it
+    never actually rendered them in a browser. These tests do: malicious
+    text/title/link-label content must show up as literal, inert text and
+    must never execute or produce a live element/attribute."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_with_xss_notes()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _no_stray_event_attrs(self, container_selector):
+        return self.page.evaluate('''(sel) => {
+            const root = document.querySelector(sel);
+            if (!root) return true;
+            return ![...root.querySelectorAll('*')].some(
+                el => el.getAttributeNames().some(a => a.startsWith('on')));
+        }''', container_selector)
+
+    def test_table_note_xss_payloads_are_escaped_not_executed(self):
+        self.page.click('.er-node[data-name="users"]')
+        self.page.wait_for_timeout(50)
+        # nothing executed
+        self.assertIsNone(self.page.evaluate('window.__xss_title'))
+        self.assertIsNone(self.page.evaluate('window.__xss_text'))
+        # the tags never became live elements
+        self.assertIsNone(self.page.evaluate(
+            "document.querySelector('#table-details .note-list img')"))
+        self.assertIsNone(self.page.evaluate(
+            "document.querySelector('#table-details .note-list script')"))
+        self.assertIsNone(self.page.evaluate(
+            "document.querySelector('#table-details .note-list b')"))
+        self.assertTrue(self._no_stray_event_attrs('#table-details .note-list'))
+        # the raw payload is visible as literal text, proving it was escaped
+        # rather than silently dropped
+        text = self.page.inner_text('#table-details .note-list')
+        self.assertIn('<script>window.__xss_title=1</script>', text)
+        self.assertIn('<img src=x onerror="window.__xss_text=1">', text)
+        self.assertIn('<b>esc</b>', text)  # from the first link's label
+
+    def test_relation_note_xss_payloads_are_escaped_not_executed(self):
+        self.page.click('.er-node[data-name="posts"]')
+        self.page.wait_for_timeout(50)
+        self.assertIsNone(self.page.evaluate('window.__xss_rel'))
+        self.assertIsNone(self.page.evaluate(
+            "document.querySelector('#table-details .assoc-notes b')"))
+        self.assertIsNone(self.page.evaluate(
+            "document.querySelector('#table-details .assoc-notes script')"))
+        self.assertTrue(self._no_stray_event_attrs('#table-details .assoc-notes'))
+        text = self.page.inner_text('#table-details .assoc-notes')
+        self.assertIn('<b>rel-esc</b>', text)
+        self.assertIn('onmouseover=alert(1)', text)
+        self.assertIn('<script>window.__xss_rel=1</script>', text)
+
+    def test_global_note_xss_payloads_are_escaped_not_executed(self):
+        self.page.wait_for_timeout(50)
+        self.assertIsNone(self.page.evaluate('window.__xss_global'))
+        self.assertIsNone(self.page.evaluate("document.querySelector('#legend-notes img')"))
+        self.assertIsNone(self.page.evaluate("document.querySelector('#legend-notes b')"))
+        self.assertTrue(self._no_stray_event_attrs('#legend-notes'))
+        text = self.page.inner_text('#legend-notes')
+        self.assertIn('<b>global title</b>', text)
+        self.assertIn('<img src=x onerror="window.__xss_global=1">', text)
+
+    def test_link_label_attribute_escape_creates_no_extra_attributes(self):
+        # The second table-note link's label attempts to break out of the
+        # href="..." attribute (' onmouseover=alert(1) foo="'); confirm the
+        # <a> itself only has the two attributes noteLinksHtml() sets
+        # (href, target — plus rel), nothing injected.
+        self.page.click('.er-node[data-name="users"]')
+        self.page.wait_for_timeout(50)
+        links = self.page.evaluate('''() => {
+            return [...document.querySelectorAll('#table-details .note-links a')]
+                .map(a => ({ href: a.getAttribute('href'),
+                             attrs: a.getAttributeNames(),
+                             text: a.textContent }));
+        }''')
+        self.assertEqual(len(links), 2)
+        for link in links:
+            self.assertEqual(set(link['attrs']), {'href', 'target', 'rel'})
+        self.assertIn('"><b>esc</b>', links[0]['text'])
+        self.assertIn('" onmouseover=alert(1) foo="', links[1]['text'])
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestClientJS(unittest.TestCase):
     @classmethod
