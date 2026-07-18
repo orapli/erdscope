@@ -20,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   additions are omitted entirely — not left present-but-empty — when there
   are no notes/groups, so a run with neither produces byte-identical output
   to before this feature.
+- **`--emit-dbml FILE.dbml`** (backlog #5) — writes a minimal
+  [DBML](https://dbml.dbdiagram.io/docs/) export of the final schema
+  alongside the HTML (`-` for stdout; the HTML is still generated either
+  way): tables, columns (with `sql_type` preferred over the coarse `type`
+  shorthand for fidelity), primary keys, indexes, single-column-FK
+  relations (`Ref:`), and table comments (`Note:`). This is the export half
+  of DBML support — DBML as an *input* source is a later, separate piece of
+  work that this fixes the IR↔DBML mapping for. Deliberately minimal:
+  `notes`/`groups` and DBML's own `Project`/`TableGroup` blocks are out of
+  scope this round. `Ref:` generation only ever considers a `belongs_to`
+  with a foreign key — never `has_one`/`has_many`/
+  `has_and_belongs_to_many` — because a `has_one`'s `foreign_key` is
+  ambiguous across providers (most treat it as a column on the declaring
+  table, but Rails' hand-written `has_one foreign_key:` names a column on
+  the *other* table instead) and the schema alone can't tell which provider
+  produced a given one; a polymorphic `belongs_to` is skipped silently, and
+  a `belongs_to` whose target has no single-column primary key is skipped
+  with a stderr warning (never a hard failure). Deterministic: the same
+  schema always renders the same DBML text. Purely additive: existing
+  HTML/Excel/`--emit-json`/`--emit-config`/`--emit-digest` output is
+  untouched; not combinable with `--diff` (a usage error, exit 2), same as
+  every other output-generating flag.
 
 ## [0.7.1] - 2026-07-18
 
