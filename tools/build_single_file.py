@@ -44,6 +44,7 @@ MODULES = [
     'exporters.py',   # Excel writer + the HTML_TEMPLATE sentinel (viewer inlined below)
     'config.py',      # config-file loading/validation, URL assembly, title
     'demo.py',        # `erdscope demo` — bundled sample DB, no pip-installed file needed
+    'emit.py',        # --emit-json: canonical schema projection + content fingerprint
     'cli.py',         # argparse main, serialize_for_viewer, _finish
 ]
 

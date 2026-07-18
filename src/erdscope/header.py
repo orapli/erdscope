@@ -73,7 +73,7 @@ serialization time, so the DATA_JSON output stays byte-identical.
     #   config relations/associations -> manual ; --infer-fk post-pass -> inferred
     #   legacy flag mapping: db_fk/inferred/manual -> {<flag>: True}; declared -> {}
 """
-import abc, ast, copy, getpass, os, subprocess, sys, json, re, argparse
+import abc, ast, copy, getpass, hashlib, os, subprocess, sys, json, re, argparse
 from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse

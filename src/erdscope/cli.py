@@ -33,6 +33,10 @@ def main():
     p.add_argument('--excel', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help='Also write a table-definition workbook '
                         '(overview sheet + one sheet per table)')
+    p.add_argument('--emit-json', metavar='FILE.json', default=argparse.SUPPRESS,
+                   help='Also write a canonical JSON schema snapshot (with provenance and '
+                        'a content fingerprint) alongside the HTML; use - for stdout. The '
+                        'HTML is still generated')
     p.add_argument('--excel-template', metavar='FILE.xlsx', default=argparse.SUPPRESS,
                    help="Override the workbook's colors/fonts/borders from a template "
                         '.xlsx — see excel-template.xlsx and its Styles sheet for the '
@@ -329,6 +333,31 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
                        for g in groups_data]
         groups_data = [g for g in groups_data if g['tables']]
 
+    # Guard: two file outputs must not resolve to the same path, or the second
+    # write silently clobbers the first — `-o x.json --emit-json x.json` would
+    # overwrite the HTML with the JSON, and `--emit-json y.xlsx --excel y.xlsx`
+    # would overwrite the JSON with the workbook. stdout ('-') never collides.
+    _seen_out = {}
+    for _flag, _val in (('-o/--output', getattr(args, 'output', None)),
+                        ('--emit-json', getattr(args, 'emit_json', None)),
+                        ('--excel', getattr(args, 'excel', None))):
+        if not _val or _val == '-':
+            continue
+        _rp = Path(_val).resolve()
+        if _rp in _seen_out:
+            sys.exit(f'Error: {_seen_out[_rp]} and {_flag} both write to {_val!r}; '
+                     'use distinct output paths')
+        _seen_out[_rp] = _flag
+
+    # --emit-json (backlog #0): built HERE, before the §9.3 serialize boundary
+    # below replaces `tables`' structured provenance/sources with the legacy
+    # boolean flags — canonical_schema wants the provenance-preserving shape,
+    # already narrowed by --only/--exclude (same `tables` the HTML/Excel
+    # outputs below are about to consume). Non-destructive: emit_json_document
+    # deep-copies internally, so this never affects the HTML/Excel below.
+    emit_json_doc = (emit_json_document(tables, notes_data, groups_data)
+                     if getattr(args, 'emit_json', None) is not None else None)
+
     # §9.3 serialize boundary: convert the internal provenance/sources IR to
     # today's legacy-flag shape (a no-op pass-through for the already-legacy demo
     # IR), so BOTH the HTML DATA_JSON and the Excel export below see exactly the
@@ -355,6 +384,13 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     out = Path(args.output)
     out.write_text(html, encoding='utf-8')
     print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
+
+    if emit_json_doc is not None:
+        if args.emit_json == '-':
+            sys.stdout.write(emit_json_doc)
+        else:
+            Path(args.emit_json).write_text(emit_json_doc, encoding='utf-8')
+            print(f'Generated: {args.emit_json}', file=sys.stderr)
 
     if getattr(args, 'excel', None):
         write_excel(tables, Path(args.excel), title_name,

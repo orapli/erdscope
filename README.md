@@ -127,6 +127,7 @@ itself is made.
 | `--models PATH` | Merge associations parsed from code: a Rails project (or `app/models` dir), a `schema.prisma`, or a Django project — auto-detected. **Repeatable** — multiple sources merge in the order given (later wins). Usable with no database URL |
 | `--excel FILE.xlsx` | Also write a table-definition workbook: an overview sheet plus one sheet per table (columns, defaults, keys, comments, indexes, associations) |
 | `--excel-template FILE.xlsx` | Override the workbook's colors/fonts/borders from a template `.xlsx` — see `excel-template.xlsx` and its `Styles` sheet for the 5-cell contract (default: built-in styling) |
+| `--emit-json FILE.json` | Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML; use `-` for stdout. The HTML is still generated |
 | `--max-rows N` | Max column rows shown per table (default: 15; the rest scroll) |
 | `--only 'user*,post*'` | Include only tables matching the glob pattern(s) |
 | `--exclude '*_logs'` | Exclude tables matching the glob pattern(s) |
@@ -391,7 +392,8 @@ Feature highlights — each link goes to the relevant [manual](https://orapli.gi
   layout undo/redo
 - **[Exports](https://orapli.github.io/erdscope/manual.html#exports)** — PNG (2x), SVG, Mermaid, and PlantUML, each with its own
   copy and download buttons and image options, plus the Excel workbook
-  (customizable via `--excel-template`)
+  (customizable via `--excel-template`) and a `--emit-json` canonical schema
+  snapshot with provenance and a content fingerprint
 - **[Logical names](https://orapli.github.io/erdscope/manual.html#viewer-names)** — a table's DB comment doubles as a searchable
   logical name (e.g. `users（Customer accounts）`), with independent display modes for
   the live view and exports

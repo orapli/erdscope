@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--emit-json FILE.json`** — writes a canonical, machine-readable JSON
+  projection of the final schema (tables/columns/indexes/associations plus
+  resolved notes/groups) alongside the HTML, wrapped with a `sha256` content
+  fingerprint (`-` for stdout; the HTML is still generated either way). A
+  fixed key allowlist (no internal/plugin keys), deterministic column/index/
+  association ordering, and 5-value association provenance (declared/manual/
+  db_fk/schema_fk/inferred) make the snapshot diff-friendly and stable across
+  table/notes/groups/sources reordering — same input, byte-identical output.
+  Purely additive: existing HTML/Excel output is untouched.
+
 ## [0.6.0] - 2026-07-18
 
 ### Added

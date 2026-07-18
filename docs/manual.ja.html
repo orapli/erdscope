@@ -343,6 +343,7 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <tr><td><code>--adapter PATH</code></td><td>独自のデータベースアダプタ（<code>DBAdapter</code>）やフレームワークオーバーレイ（<code>FrameworkOverlay</code>）を登録する Python プラグインを読み込みます — <a href="#extending">拡張</a>を参照。繰り返し指定可。config の <code>adapters</code> でも指定できます</td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>テーブル定義書も出力: 概要シート＋テーブルごとのシート</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>ワークブックの色/フォント/罫線をテンプレート <code>.xlsx</code> から上書き — 5セル契約については<a href="#excel-template">エクスポート</a>を参照。<code>--excel</code> なしでは効果がなく（警告が出ます）</td></tr>
+<tr><td><code>--emit-json FILE.json</code></td><td>HTML と並べて、正規化された JSON スキーマスナップショット（provenance と内容フィンガープリント付き）も書き出します — <a href="#emit-json">エクスポート</a>参照。<code>-</code> で標準出力へ。HTML は常に生成されます</td></tr>
 <tr><td><code>--max-rows N</code></td><td>テーブルごとにスクロールなしで表示するカラム数の上限（デフォルト: 15）</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>指定した glob パターンに一致するテーブルのみを含める。繰り返し指定可、カンマ区切りリストも可</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>指定した glob パターンに一致するテーブルを除外。<code>--only</code> と同じ構文</td></tr>
@@ -925,6 +926,22 @@ B 列には各ロールの平易な説明があります。</p>
 <code>--excel-template</code> は <code>--excel</code> なしでは効果がありません — スタイル対象となる
 <code>--excel</code> を指定せずにテンプレートを渡した場合、erdscope は stderr に警告を出力し、それ以外は
 無視します。</div>
+
+<h3 id="emit-json">JSON スナップショット</h3>
+<p><code>--emit-json FILE.json</code>（<code>-</code> で標準出力）は、最終スキーマを機械可読な正規形に
+投影した JSON を HTML と並べて書き出します — HTML はどちらの場合も生成されます。ドキュメントの形は
+<code>{"format": 1, "fingerprint": "sha256:…", "schema": {"tables": {…}, "notes"?: […], "groups"?: […]}}</code>
+で、各テーブルは <code>comment</code>（空なら省略）、<code>columns</code>、<code>indexes</code>、
+<code>associations</code> だけに絞り込まれます（内部用・プラグイン用のキーは一切含みません）。columns/
+indexes は決定的な順序・並び替えを経ており、各 association の由来は5つの値（<code>declared</code>、
+<code>manual</code>、<code>db_fk</code>、<code>schema_fk</code>、<code>inferred</code>）のいずれかに
+正規化され、分かる場合はその association に寄与したレイヤー集合も付きます。参照先が
+<code>--only</code>/<code>--exclude</code> で残らなかった非ポリモーフィックな association はダングリング
+のまま出力せず刈り取られます（ポリモーフィックな <code>belongs_to</code> は単一の参照先テーブルを持たない
+ため常に保持され、その <code>target</code> は実テーブルに対応しない象徴的な名前になります）。
+<code>fingerprint</code> はスキーマ内容の <code>sha256</code> ハッシュで、テーブル/notes/
+groups/sources の並び順を変えても変化しません — 同じ入力からは常にバイト同一の出力が得られるため、2つの
+スナップショットを diff したり、フィンガープリントの変化を CI のゲートにしたりできます。</p>
 </section>
 
 <section id="troubleshooting">

@@ -346,6 +346,7 @@ erdscope mysql://readonly@127.0.0.1:3307/myapp_production -o erd.html</code></pr
 <tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
+<tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
@@ -927,6 +928,24 @@ look and a plain-language description of each role in column B.</p>
 <code>--excel-template</code> has no effect without <code>--excel</code> — erdscope prints a
 warning to stderr and otherwise ignores it if you pass a template with no <code>--excel</code>
 target to style.</div>
+
+<h3 id="emit-json">JSON snapshot</h3>
+<p><code>--emit-json FILE.json</code> (use <code>-</code> for stdout) writes a canonical,
+machine-readable projection of the final schema alongside the HTML — the HTML is still
+generated either way. The document is
+<code>{"format": 1, "fingerprint": "sha256:…", "schema": {"tables": {…}, "notes"?: […], "groups"?: […]}}</code>:
+every table is reduced to <code>comment</code> (omitted when empty), <code>columns</code>,
+<code>indexes</code>, and <code>associations</code> — no internal or plugin-only keys — with
+columns and indexes deterministically ordered/sorted, and each association's provenance
+normalized to one of five values (<code>declared</code>, <code>manual</code>,
+<code>db_fk</code>, <code>schema_fk</code>, <code>inferred</code>) plus, where known, the set
+of layers that contributed it. A non-polymorphic association whose target didn't survive
+<code>--only</code>/<code>--exclude</code> is pruned rather than left dangling; a polymorphic
+<code>belongs_to</code> has no single target table, so it is always kept (its
+<code>target</code> is a symbolic, tableless name). The
+<code>fingerprint</code> is a <code>sha256</code> content hash of the schema, stable across
+table/notes/groups/sources reordering — identical input always produces byte-identical
+output, so it's safe to diff two snapshots or gate CI on the fingerprint changing.</p>
 </section>
 
 <section id="troubleshooting">
