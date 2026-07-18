@@ -306,16 +306,34 @@ class TestGroupsBackwardCompatRegression(_NoDBDriver):
                'notes': [{'id': 'n1', 'target': {'type': 'global'}, 'text': 'hi'}],
                'groups': [{'id': 'g1', 'tables': ['t']}]}
 
-    def test_excel_still_generates_without_a_groups_sheet(self):
-        # Phase 1 write_excel(groups=...) is wiring-only — no Groups sheet yet
+    def test_excel_has_a_groups_sheet_when_groups_are_present(self):
+        # backlog #4: groups now activate a Groups sheet, plus a Group
+        # column on the overview sheet
         import zipfile
         cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}},
-               'groups': [{'id': 'g1', 'tables': ['t']}]}
+               'groups': [{'id': 'g1', 'title': 'Core', 'tables': ['t']}]}
         path = self._p('c.json')
         Path(path).write_text(json.dumps(cfg))
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', path, '-o', out, '--excel', xlsx)
         self.assertTrue(Path(xlsx).exists())
+        with zipfile.ZipFile(xlsx) as z:
+            wb = z.read('xl/workbook.xml').decode('utf-8')
+            sheet_names = re.findall(r'<sheet name="([^"]+)"', wb)
+            self.assertIn('Groups', sheet_names)
+            groups_idx = sheet_names.index('Groups')
+            groups_xml = z.read(f'xl/worksheets/sheet{groups_idx + 1}.xml').decode('utf-8')
+            overview_xml = z.read('xl/worksheets/sheet1.xml').decode('utf-8')
+        self.assertIn('Core', groups_xml)
+        self.assertIn('Group', overview_xml)  # the overview's new column header
+
+    def test_excel_has_no_groups_sheet_when_there_are_no_groups(self):
+        import zipfile
+        cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}}}
+        path = self._p('c.json')
+        Path(path).write_text(json.dumps(cfg))
+        out, xlsx = self._p('out.html'), self._p('defs.xlsx')
+        self._run('--config', path, '-o', out, '--excel', xlsx)
         with zipfile.ZipFile(xlsx) as z:
             names = z.namelist()
         self.assertFalse(any('group' in n.lower() for n in names))

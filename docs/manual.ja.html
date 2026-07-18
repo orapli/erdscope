@@ -1020,14 +1020,26 @@ SVG は、ライブビューの現在のダーク/ライト設定に関わらず
 <ul>
 <li><strong>概要シート</strong> — テーブルごとに1行: <code>#</code>、<code>Table</code>（そのテーブル
 自身のシートへのハイパーリンク付き）、<code>Comment</code>、<code>Columns</code>（カラム数）、
-<code>Indexes</code>（インデックス数）、<code>Missing schema</code>。</li>
+<code>Indexes</code>（インデックス数）、<code>Missing schema</code>。<a href="#groups">groups</a>が
+1つでも設定されていれば、末尾に <strong>Group</strong> 列（そのテーブルが属するグループのタイトル、
+なければ空欄）が追加されます。</li>
 <li><strong>テーブルごとのシート</strong> — テーブル名とコメント、続いてカラムの表（<code>#</code>、
 <code>Column</code>、<code>Type</code>、<code>Nullable</code>、<code>Default</code>、<code>Key</code>
 — <code>PK</code>/<code>FK</code>/空欄、<code>Extra</code>、<code>Comment</code>）、インデックスがあれば
 <strong>Indexes</strong> セクション（名前、カラム、unique の有無）、association があれば
 <strong>Associations</strong> セクション（種類、名前、参照先、そしてその出所: <code>DB FK</code> /
 <code>inferred</code> / <code>manual</code> / <code>code</code>）。</li>
+<li><strong>Notes シート</strong> — <a href="#notes">notes</a>が1つでも設定されている場合のみ存在:
+note ごとに1行（<code>#</code>、<code>ID</code>、<code>Scope</code>、<code>Target</code>、
+<code>Title</code>、<code>Text</code>、<code>Links</code>）、note id でソート。<code>relation</code>
+note の Target は <code>source_table → target_table</code>、<code>table</code> note はテーブル名、
+<code>global</code> note は空欄になります。</li>
+<li><strong>Groups シート</strong> — <a href="#groups">groups</a>が1つでも設定されている場合のみ存在:
+グループごとに1行（<code>#</code>、<code>Group</code> id、<code>Title</code>、<code>Color</code>、
+<code>Tables</code> — カンマ区切りでアルファベット順のメンバー一覧）、group id でソート。</li>
 </ul>
+<p>この2つの新しいシートと概要シートの Group 列は、notes/groups がどちらも無い場合は完全に省略され
+（空のまま残ることはありません）、その結果この機能が入る前とバイト同一のワークブックになります。</p>
 <p>
 <code>--excel-template FILE.xlsx</code> を使うと、erdscope 自体のコードに触れることなく、ワークブックの
 色・フォント・罫線を<strong>5セル契約</strong>を通じて再スタイルできます: テンプレートの最初のワークシート

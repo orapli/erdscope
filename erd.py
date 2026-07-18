@@ -3206,11 +3206,12 @@ def _build_stylesheet_parts(role_styles):
     return fonts, fills, borders, cellxfs
 
 def write_excel(tables, path, title, template_path=None, notes=None, groups=None):
-    """`notes` (notes Phase 1) and `groups` (groups Phase 1) are accepted but
-    UNUSED in this release — wiring only, so the shared data form (tables +
-    notes + groups) is already in place for a future sheet without an
-    interface break. Not touching them here keeps every existing Excel test
-    byte-for-byte unchanged."""
+    """`notes`/`groups` (backlog #4, activating the Phase 1 wiring): a Notes
+    sheet and a Groups sheet are appended when either is non-empty, and the
+    overview sheet gains a trailing Group column when `groups` is non-empty.
+    Both additions are fully omitted (not just left empty) when there's
+    nothing to show, so a run with no notes/groups still produces
+    byte-identical output to before this feature existed."""
     import zipfile
     used = set()
     sheets = []  # (sheet_name, xml)
@@ -3226,19 +3227,34 @@ def write_excel(tables, path, title, template_path=None, notes=None, groups=None
     used.add('tables')
     names = sorted(tables)
     sheet_of = {n: _sheet_name(n, used) for n in names}
-    rows = [[(f'{title} — table definitions', S_TITLE)], [],
-            [('#', S_HEADER), ('Table', S_HEADER), ('Comment', S_HEADER),
-             ('Columns', S_HEADER), ('Indexes', S_HEADER), ('Missing schema', S_HEADER)]]
+    # table -> its group's display label (title if set, else the group id).
+    # Phase 1 groups have non-overlapping membership (resolve_and_validate_
+    # groups), so a table maps to at most one label here.
+    group_of = {}
+    for g in (groups or []):
+        label = g.get('title') or g['id']
+        for tn in g.get('tables', []):
+            group_of[tn] = label
+    header = [('#', S_HEADER), ('Table', S_HEADER), ('Comment', S_HEADER),
+              ('Columns', S_HEADER), ('Indexes', S_HEADER), ('Missing schema', S_HEADER)]
+    widths = [5, 32, 50, 10, 10, 14]
+    if groups:  # column omitted entirely (not left blank) when there are no groups
+        header.append(('Group', S_HEADER))
+        widths.append(20)
+    rows = [[(f'{title} — table definitions', S_TITLE)], [], header]
     links = []
     for i, n in enumerate(names, 1):
         t = tables[n]
         r = len(rows) + 1
         s = alt(i - 1)
-        rows.append([(i, s), (n, s), (t.get('comment', ''), s), (len(t['columns']), s),
-                     (len(t.get('indexes', [])), s),
-                     ('yes' if t.get('schema_missing') else '', s)])
+        row = [(i, s), (n, s), (t.get('comment', ''), s), (len(t['columns']), s),
+               (len(t.get('indexes', [])), s),
+               ('yes' if t.get('schema_missing') else '', s)]
+        if groups:
+            row.append((group_of.get(n, ''), s))
+        rows.append(row)
         links.append((f'B{r}', f"'{sheet_of[n]}'", n))
-    overview = _sheet_xml(rows, widths=[5, 32, 50, 10, 10, 14], links=links)
+    overview = _sheet_xml(rows, widths=widths, links=links)
 
     # ── per-table sheets ──
     for n in names:
@@ -3276,6 +3292,37 @@ def write_excel(tables, path, title, template_path=None, notes=None, groups=None
                 rows.append([(a['type'], s), (a['name'], s), (a['target'], s), (via, s)])
         sheets.append((sheet_of[n],
                        _sheet_xml(rows, widths=[12, 28, 24, 10, 18, 6, 16, 50])))
+
+    # ── notes sheet (backlog #4) — omitted entirely when there are no notes ──
+    if notes:
+        rows = [[(f'{title} — notes', S_TITLE)], [],
+                [('#', S_HEADER), ('ID', S_HEADER), ('Scope', S_HEADER), ('Target', S_HEADER),
+                 ('Title', S_HEADER), ('Text', S_HEADER), ('Links', S_HEADER)]]
+        for i, n in enumerate(sorted(notes, key=lambda n: n['id']), 1):
+            if n['scope'] == 'global':
+                target = ''
+            elif n['scope'] == 'table':
+                target = n['table']
+            else:  # relation
+                target = f"{n['source_table']} → {n['target']}"
+            link_text = '; '.join((f"{l['label']} " if l.get('label') else '') + l['url']
+                                  for l in n.get('links') or [])
+            s = alt(i - 1)
+            rows.append([(i, s), (n['id'], s), (n['scope'], s), (target, s),
+                        (n.get('title', ''), s), (n['text'], s), (link_text, s)])
+        sheets.append(('Notes', _sheet_xml(rows, widths=[5, 12, 12, 30, 20, 60, 40])))
+
+    # ── groups sheet (backlog #4) — omitted entirely when there are no groups ──
+    if groups:
+        rows = [[(f'{title} — groups', S_TITLE)], [],
+                [('#', S_HEADER), ('Group', S_HEADER), ('Title', S_HEADER),
+                 ('Color', S_HEADER), ('Tables', S_HEADER)]]
+        for i, g in enumerate(sorted(groups, key=lambda g: g['id']), 1):
+            s = alt(i - 1)
+            rows.append([(i, s), (g['id'], s), (g.get('title', ''), s), (g.get('color', ''), s),
+                        (', '.join(sorted(g.get('tables', []))), s)])
+        sheets.append(('Groups', _sheet_xml(rows, widths=[5, 16, 24, 12, 60])))
+
     sheets.insert(0, ('Tables', overview))
 
     # ── workbook plumbing ──

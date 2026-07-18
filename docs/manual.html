@@ -1028,9 +1028,12 @@ table's logical name (if it has one) appears alongside the physical name in full
 <h3 id="excel-template">Excel workbook</h3>
 <p><code>--excel FILE.xlsx</code> writes a workbook with no external spreadsheet library involved:</p>
 <ul>
-<li><strong>Overview sheet</strong> — one row per table: <code>#</code>, <code>Table</code> (hyperlinked to that table's own sheet), <code>Comment</code>, <code>Columns</code> (count), <code>Indexes</code> (count), <code>Missing schema</code>.</li>
+<li><strong>Overview sheet</strong> — one row per table: <code>#</code>, <code>Table</code> (hyperlinked to that table's own sheet), <code>Comment</code>, <code>Columns</code> (count), <code>Indexes</code> (count), <code>Missing schema</code>, plus a trailing <strong>Group</strong> column (the table's group title, or blank) when any <a href="#groups">groups</a> are configured.</li>
 <li><strong>One sheet per table</strong> — table name and comment, then a column table (<code>#</code>, <code>Column</code>, <code>Type</code>, <code>Nullable</code>, <code>Default</code>, <code>Key</code> — <code>PK</code>/<code>FK</code>/blank, <code>Extra</code>, <code>Comment</code>), an <strong>Indexes</strong> section if the table has any (name, columns, unique), and an <strong>Associations</strong> section if it has any (type, name, target, and how it was sourced: <code>DB FK</code> / <code>inferred</code> / <code>manual</code> / <code>code</code>).</li>
+<li><strong>Notes sheet</strong> — present only when any <a href="#notes">notes</a> are configured: one row per note (<code>#</code>, <code>ID</code>, <code>Scope</code>, <code>Target</code>, <code>Title</code>, <code>Text</code>, <code>Links</code>), sorted by note id. A <code>relation</code> note's Target shows <code>source_table → target_table</code>; a <code>table</code> note shows the table name; a <code>global</code> note leaves Target blank.</li>
+<li><strong>Groups sheet</strong> — present only when any <a href="#groups">groups</a> are configured: one row per group (<code>#</code>, <code>Group</code> id, <code>Title</code>, <code>Color</code>, <code>Tables</code> — a comma-separated, alphabetized member list), sorted by group id.</li>
 </ul>
+<p>Both new sheets — and the overview's Group column — are omitted entirely (not left present-but-empty) when there are no notes/groups, so a run with neither produces the exact same workbook bytes as before this feature existed.</p>
 <p>
 <code>--excel-template FILE.xlsx</code> lets you restyle the workbook — colors, fonts, borders —
 without touching erdscope's code, via a <strong>5-cell contract</strong>: on the template's first

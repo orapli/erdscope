@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Notes/Groups in the Excel workbook** (backlog #4) — `--excel` now renders
+  configured notes and groups instead of silently ignoring them (the
+  `write_excel(notes=, groups=)` parameters were wired but unused since notes/
+  groups Phase 1). A **Notes** sheet (one row per note: id/scope/target/
+  title/text/links, sorted by id) and a **Groups** sheet (one row per group:
+  id/title/color/tables, sorted by id) are appended when either is
+  configured; the overview sheet gains a trailing **Group** column (the
+  table's group title, or blank) when any groups are configured. Both
+  additions are omitted entirely — not left present-but-empty — when there
+  are no notes/groups, so a run with neither produces byte-identical output
+  to before this feature.
+
 ## [0.7.1] - 2026-07-18
 
 ### Added

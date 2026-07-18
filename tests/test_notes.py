@@ -537,8 +537,8 @@ class TestNotesBackwardCompatRegression(_NoDBDriver):
         self.assertNotIn('notes', data)
         self.assertIn('users', data['tables'])
 
-    def test_excel_still_generates_without_a_notes_sheet(self):
-        # Phase 1 write_excel(notes=...) is wiring-only — no Notes sheet yet
+    def test_excel_has_a_notes_sheet_when_notes_are_present(self):
+        # backlog #4: notes now activate a Notes sheet in the workbook
         import zipfile
         cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}},
                'notes': [{'id': 'n1', 'target': {'type': 'global'}, 'text': 'hi'}]}
@@ -547,6 +547,22 @@ class TestNotesBackwardCompatRegression(_NoDBDriver):
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', path, '-o', out, '--excel', xlsx)
         self.assertTrue(Path(xlsx).exists())
+        with zipfile.ZipFile(xlsx) as z:
+            wb = z.read('xl/workbook.xml').decode('utf-8')
+            sheet_names = re.findall(r'<sheet name="([^"]+)"', wb)
+            self.assertIn('Notes', sheet_names)
+            notes_idx = sheet_names.index('Notes')
+            sheet_xml = z.read(f'xl/worksheets/sheet{notes_idx + 1}.xml').decode('utf-8')
+        self.assertIn('hi', sheet_xml)
+        self.assertIn('global', sheet_xml)
+
+    def test_excel_has_no_notes_sheet_when_there_are_no_notes(self):
+        import zipfile
+        cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}}}
+        path = self._p('c.json')
+        Path(path).write_text(json.dumps(cfg))
+        out, xlsx = self._p('out.html'), self._p('defs.xlsx')
+        self._run('--config', path, '-o', out, '--excel', xlsx)
         with zipfile.ZipFile(xlsx) as z:
             names = z.namelist()
         self.assertFalse(any('notes' in n.lower() for n in names))

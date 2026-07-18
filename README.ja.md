@@ -160,7 +160,7 @@ python3 erd.py demo
 |---|---|
 | `--config PATH` | モデル入力、デフォルト値、スキーマ定義・修正、ノート、グループを読み込む |
 | `--models PATH` | 設定ファイルの`models`をRails、Prisma、Django入力で上書き。複数指定可能 |
-| `--excel FILE.xlsx` | テーブル定義のExcelワークブックも生成する |
+| `--excel FILE.xlsx` | テーブル定義のExcelワークブックも生成する（notes/groups設定時はNotes/Groupsシートも含む） |
 | `--emit-json FILE.json` | スキーマの正規JSONスナップショット（内容フィンガープリント付き）も書き出す（`-`で標準出力） |
 | `--emit-config FILE.yml\|.json` | スキーマを設定ファイル形式でも書き出す。`--config`で再取込可能（`-`で標準出力、常にJSON） |
 | `--diff SNAPSHOT.json` | 保存済みの`--emit-json`スナップショットと比較し、出力を生成する代わりに0/1/2で終了する（CIドリフトゲート） |
