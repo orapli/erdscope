@@ -649,6 +649,25 @@ class TestLTargetedLayout(unittest.TestCase):
                          'coupons should stay near its natural row, not get ejected '
                          'to the bottom of the Catalog frame')
 
+    def test_case_a_coupons_lands_close_to_order_coupons(self):
+        # L follow-up (2026-07-19): the ejection-past-the-frame bug above was
+        # only HALF the story — order_coupons (depth 1, orders' direct FK
+        # neighbor) used to get flipped into the "up" alternating sub-row
+        # (gridLayout's depth-1 wrap logic) while its only child, coupons
+        # (depth 2), still flowed into the normal "down" pass, landing ~700px
+        # apart with nothing forcing them together. The fix stable-partitions
+        # depth-1's row so a node with depth-2+ children never lands in the
+        # "up" band. Assert actual proximity, not just "not ejected downward".
+        pos = self.page.evaluate(
+            "({coupons: nodePos.coupons, order_coupons: nodePos.order_coupons, "
+            " orders: nodePos.orders})")
+        self.assertLess(abs(pos['coupons']['y'] - pos['order_coupons']['y']), 260,
+                         'coupons should land within about one row of order_coupons '
+                         'vertically, not on the opposite side of the orders hub')
+        self.assertGreater(pos['order_coupons']['y'], pos['orders']['y'],
+                            'order_coupons (a depth-1 parent) must land in the same '
+                            '"below the hub" band as its child, not flipped above it')
+
     def test_reviews_and_coupons_do_not_overlap_the_catalog_frame(self):
         overlap = self.page.evaluate('''() => {
             const bbox = groupFrameBBox(GROUPS[0].tables, new Set(getDisplayTables()));
@@ -661,6 +680,122 @@ class TestLTargetedLayout(unittest.TestCase):
         }''')
         self.assertFalse(overlap['reviews'], 'reviews must not overlap the Catalog frame')
         self.assertFalse(overlap['coupons'], 'coupons must not overlap the Catalog frame')
+
+
+def _build_html_depth1_wrap_with_mutual_cluster():
+    # L follow-up (2026-07-19): a synthetic hub with 7 depth-1 neighbors (wide
+    # enough via long comments to force gridLayout's depth-1 wrap into 2
+    # sub-rows) — Fable's design-review concern was that stable-partitioning
+    # depth-1's row (parents-with-children first, per the fix) could split a
+    # same-row "cluster" the earlier pass forms for mutually-referencing
+    # siblings (parent_x <-> leaf_a both point at each other) and force a
+    # long detour arc between them, or between parent_x and its own depth-2
+    # child (child_of_x). Neither happens (see the test below) but this
+    # fixture exists specifically so a future regression would show up as an
+    # absurd edge length rather than silently reappearing.
+    def c(t, name, dtype='bigint', ctype='bigint', null='YES', key='', default='', extra='', comment=''):
+        return (t, name, dtype, ctype, null, key, default, extra, comment)
+
+    table_rows = [('hub', ''), ('parent_x', ''), ('leaf_a', ''), ('leaf_b', ''),
+                  ('leaf_c', ''), ('leaf_d', ''), ('leaf_e', ''), ('leaf_f', ''),
+                  ('child_of_x', '')]
+    wide = 'a rather long comment to widen this box quite a bit for the wrap'
+    col_rows = [
+        c('hub', 'id', key='PRI'),
+        c('parent_x', 'id', key='PRI'),
+        c('parent_x', 'hub_id', key='MUL'),
+        c('parent_x', 'leaf_a_id', key='MUL', comment='mutual reference to leaf_a'),
+        c('leaf_a', 'id', key='PRI'),
+        c('leaf_a', 'hub_id', key='MUL'),
+        c('leaf_a', 'parent_x_id', key='MUL', comment='mutual reference to parent_x'),
+        c('leaf_b', 'id', key='PRI'), c('leaf_b', 'hub_id', key='MUL', comment=wide),
+        c('leaf_c', 'id', key='PRI'), c('leaf_c', 'hub_id', key='MUL', comment=wide),
+        c('leaf_d', 'id', key='PRI'), c('leaf_d', 'hub_id', key='MUL', comment=wide),
+        c('leaf_e', 'id', key='PRI'), c('leaf_e', 'hub_id', key='MUL', comment=wide),
+        c('leaf_f', 'id', key='PRI'), c('leaf_f', 'hub_id', key='MUL', comment=wide),
+        c('child_of_x', 'id', key='PRI'),
+        c('child_of_x', 'parent_x_id', key='MUL'),
+    ]
+    fk_rows = [
+        ('parent_x', 'hub_id', 'hub'), ('parent_x', 'leaf_a_id', 'leaf_a'),
+        ('leaf_a', 'hub_id', 'hub'), ('leaf_a', 'parent_x_id', 'parent_x'),
+        ('leaf_b', 'hub_id', 'hub'), ('leaf_c', 'hub_id', 'hub'),
+        ('leaf_d', 'hub_id', 'hub'), ('leaf_e', 'hub_id', 'hub'), ('leaf_f', 'hub_id', 'hub'),
+        ('child_of_x', 'parent_x_id', 'parent_x'),
+    ]
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestLDepth1WrapClusterInterference(unittest.TestCase):
+    """L follow-up (2026-07-19) — Fable's flagged regression surface: does
+    stable-partitioning depth-1's row (parents-with-children first) blow up
+    the edge length for a same-row mutually-referencing pair, or for a
+    parent's own depth-2 child? See _build_html_depth1_wrap_with_mutual_
+    cluster's docstring for the scenario."""
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_depth1_wrap_with_mutual_cluster()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.hub !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _dist(self, a, b):
+        return self.page.evaluate(f'''() => {{
+            const a = nodePos['{a}'], b = nodePos['{b}'];
+            return Math.hypot(a.x - b.x, a.y - b.y);
+        }}''')
+
+    def test_wrap_actually_happened(self):
+        # test setup sanity: 7 depth-1 siblings, wide enough to force >=2
+        # physical sub-rows — if this ever stops wrapping (e.g. viewport
+        # math changes), the rest of this class is testing nothing
+        ys = self.page.evaluate('''() => ['parent_x','leaf_a','leaf_b','leaf_c','leaf_d','leaf_e','leaf_f']
+            .map(n => nodePos[n].y)''')
+        self.assertGreater(len(set(ys)), 1, 'test setup: depth-1 should have split into 2+ sub-row bands')
+
+    def test_parent_lands_in_the_same_band_as_its_child(self):
+        hub_y, parent_y, child_y = self.page.evaluate(
+            "[nodePos.hub.y, nodePos.parent_x.y, nodePos.child_of_x.y]")
+        # both must be on the same side of the hub (both above or both below)
+        self.assertEqual(parent_y > hub_y, child_y > hub_y,
+                          'parent_x and its child child_of_x should be on the same '
+                          'side of the hub, not split across the up/down alternation')
+
+    def test_mutual_reference_edge_stays_reasonably_short(self):
+        self.assertLess(self._dist('parent_x', 'leaf_a'), 500,
+                         'parent_x<->leaf_a (mutually referencing depth-1 siblings) '
+                         'should not be forced into a long detour just because the '
+                         'depth-1 row got reordered by child-having-ness')
+
+    def test_parent_child_edge_stays_short(self):
+        self.assertLess(self._dist('parent_x', 'child_of_x'), 300,
+                         'parent_x and its own depth-2 child should still land close '
+                         'together (the whole point of the fix)')
 
 
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')

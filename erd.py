@@ -5482,6 +5482,36 @@ function gridLayout(tables, preferredHub) {
         row=row.slice().sort();
       }
 
+      // L follow-up (2026-07-19, Opus diagnosis + Fable design review): the
+      // up/below alternation below (subRows[i%2], right after the wrap) has
+      // no notion of a depth-1 node's OWN depth-2+ children — a leaf depth-1
+      // node (nothing hangs off it) costs nothing if flipped to the "up"
+      // band, but a depth-1 node that IS a parent gets stranded far from its
+      // children, which still flow downward in the normal depth>=2 pass
+      // further below regardless of which band their parent landed in
+      // (e.g. demo: order_coupons flipped up, its only child coupons still
+      // placed down — a ~700px gap with nothing forcing them apart on
+      // purpose). Stable-partition depth-1's row so every node with a
+      // depth-2+ neighbor sorts before every childless one, right before the
+      // wrap decides who lands in which sub-row — the cluster ordering above
+      // is preserved *within* each of the two groups (stable sort), only
+      // their relative order to each other changes (this reorders the
+      // single-row case too, harmlessly, since a lone row's own left-to-
+      // right order barely matters; only the >=2-sub-row case is what this
+      // fix is actually for). When the row DOES wrap, parents and leaves
+      // usually land in different sub-rows (different y, so no x collision
+      // between them) — "usually" because the wrap still splits by raw
+      // count (ceil(n/chunks)), not at the parent/leaf boundary, so a
+      // leftover leaf can share the parents' sub-row; that's fine, nothing
+      // here requires a clean split, only that no parent gets stranded in a
+      // sub-row with zero parents in it. A true no-op when every depth-1
+      // node is (or isn't) a parent already, since then the partition can't
+      // change the order.
+      if(d===1){
+        const hasDeeperChild=t=>[...adj.get(t)].some(n=>(depMap.get(n)??-1)>d);
+        row=[...row.filter(hasDeeperChild), ...row.filter(t=>!hasDeeperChild(t))];
+      }
+
       // wrap into at most 2 physical sub-rows when this depth is too wide —
       // capped at 2 (not "however many fit at rowTargetW") because a hub
       // with many direct children is still only *one* level deep, and
