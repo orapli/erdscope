@@ -1229,7 +1229,22 @@ class FrameworkOverlay(abc.ABC):
 
     @abc.abstractmethod
     def detect(self, root):
-        """True if `root` (a --models path) is a project this overlay handles."""
+        """True if `root` (a --models path) is a project this overlay handles.
+
+        Two legitimate detection strategies exist among the built-in overlays
+        (Fable design note, F1/F2): **marker-based** (Rails/Django/Prisma/
+        Laravel — a decisive, root-level artifact like `manage.py`/
+        `schema.prisma`/an `artisan`-style Eloquent base class exists, so a
+        SHALLOW, root-only check is correct; going recursive here would only
+        add false-positive risk from an unrelated nested project) vs.
+        **content-based** (SQLAlchemy — no marker file or fixed layout exists;
+        the models themselves, wherever they live in the tree, are the only
+        evidence). A content-based overlay's `detect()` MUST recurse exactly
+        as deep as its own `build()` does — a shallow content-based `detect()`
+        would create the opposite bug, silently reporting "not detected" for
+        a project `build()` could actually parse. When adding a new overlay,
+        classify it as one or the other first; that decision determines
+        whether `detect()` should recurse, not the other way around."""
         raise NotImplementedError
 
     @abc.abstractmethod
