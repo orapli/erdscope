@@ -8,7 +8,7 @@
   [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB)](https://pypi.org/project/erdscope/)
   [![License](https://img.shields.io/badge/license-MIT-14B8A6)](LICENSE)
 
-  [Live demo](https://orapli.github.io/erdscope/) · [User manual](https://orapli.github.io/erdscope/manual.html) · [日本語マニュアル](https://orapli.github.io/erdscope/manual.ja.html)
+  [Live demo](https://orapli.github.io/erdscope/) · [Recipes](https://orapli.github.io/erdscope/recipes.html) · [User manual](https://orapli.github.io/erdscope/manual.html) · [日本語 README](README.ja.md)
 </div>
 
 erdscope generates a **self-contained, interactive ER diagram** and, when you want it,
@@ -35,7 +35,7 @@ account, or project setup required.
 | Start from | What erdscope reads | Good for |
 |---|---|---|
 | **A database** | MySQL, PostgreSQL, or SQLite catalogs | Exploring the schema that is actually deployed |
-| **Application code** | Rails, Prisma, or Django projects | Reviewing a project without database access |
+| **Application code** | Rails, Prisma, Django, SQLAlchemy, or Laravel projects | Reviewing a project without database access |
 | **Config** | JSON or YAML source declarations, tables, relations, notes, and groups | Reusing settings, designing a schema, or adding documentation |
 
 Use just one source, or combine them. Physical database facts, application-level
@@ -63,7 +63,7 @@ erdscope sqlite:///path/to/app.db -o schema.html
 ### Review application models without a database
 
 ```bash
-# Rails, Prisma, or Django project — auto-detected
+# Rails, Prisma, Django, SQLAlchemy, or Laravel project — auto-detected
 erdscope --models ./my-app -o schema.html
 ```
 
@@ -157,7 +157,7 @@ explicit CLI argument wins.
 | Option | Purpose |
 |---|---|
 | `--config PATH` | Load model sources, defaults, schema definitions or patches, notes, and groups |
-| `--models PATH` | Override config `models` with Rails, Prisma, or Django input; repeatable |
+| `--models PATH` | Override config `models` with Rails, Prisma, Django, SQLAlchemy, or Laravel input; repeatable |
 | `--excel FILE.xlsx` | Also generate a table-definition workbook (includes Notes/Groups sheets when configured) |
 | `--emit-json FILE.json` | Also write a canonical JSON schema snapshot with a content fingerprint (`-` for stdout) |
 | `--emit-config FILE.yml\|.json` | Also write the schema as a config-authoring file, re-importable via `--config` (`-` for stdout, always JSON) |
@@ -176,13 +176,15 @@ For every option and config key, see the **[CLI and config reference](https://or
 ## Supported inputs
 
 erdscope is tested against MySQL 8.4, PostgreSQL 16, CPython's bundled SQLite, Rails
-7.x/8.x projects, Prisma 5/6 schemas, and Django 4.2/5.x models. Details and parser
+7.x/8.x projects, Prisma 5/6 schemas, Django 4.2/5.x models, SQLAlchemy declarative
+models (classic and 2.0 styles), and Laravel Eloquent models. Details and parser
 boundaries are listed in the
 [compatibility guide](https://orapli.github.io/erdscope/manual.html#verified-versions).
 
 ## Project resources
 
 - **[Live demo](https://orapli.github.io/erdscope/)** — explore a generated shop schema.
+- **[Recipes](https://orapli.github.io/erdscope/recipes.html)** — task-oriented guides with copy-paste commands ([日本語](https://orapli.github.io/erdscope/recipes.ja.html)).
 - **[User manual](https://orapli.github.io/erdscope/manual.html)** — complete setup, viewer, config, export, and troubleshooting guide.
 - **[Examples](examples/)** — ready-to-run SQLite and config-only inputs.
 - **[Changelog](CHANGELOG.md)** — features and behavior by release.

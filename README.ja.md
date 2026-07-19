@@ -8,7 +8,7 @@
   [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB)](https://pypi.org/project/erdscope/)
   [![License](https://img.shields.io/badge/license-MIT-14B8A6)](LICENSE)
 
-  [ライブデモ](https://orapli.github.io/erdscope/) · [ユーザーマニュアル](https://orapli.github.io/erdscope/manual.html) · [日本語マニュアル](https://orapli.github.io/erdscope/manual.ja.html)
+  [ライブデモ](https://orapli.github.io/erdscope/) · [レシピ集](https://orapli.github.io/erdscope/recipes.ja.html) · [日本語マニュアル](https://orapli.github.io/erdscope/manual.ja.html) · [English README](README.md)
 </div>
 
 erdscopeは、**自己完結型のインタラクティブなER図**と、必要に応じて
@@ -35,7 +35,7 @@ erdscope demo
 | 入力元 | erdscopeが読み取るもの | 向いている用途 |
 |---|---|---|
 | **データベース** | MySQL、PostgreSQL、SQLiteのカタログ | 実際にデプロイされているスキーマの調査 |
-| **アプリケーションコード** | Rails、Prisma、Djangoプロジェクト | データベースへ接続せずにプロジェクトをレビュー |
+| **アプリケーションコード** | Rails、Prisma、Django、SQLAlchemy、Laravelプロジェクト | データベースへ接続せずにプロジェクトをレビュー |
 | **設定ファイル** | JSONまたはYAMLの入力宣言、テーブル、リレーション、ノート、グループ | 設定の再利用、スキーマ設計、ドキュメントの追加 |
 
 入力元は1つだけでも、組み合わせても構いません。データベースの物理情報、
@@ -64,7 +64,7 @@ erdscope sqlite:///path/to/app.db -o schema.html
 ### データベースなしでアプリケーションモデルをレビューする
 
 ```bash
-# Rails、Prisma、Djangoプロジェクトを自動判定
+# Rails、Prisma、Django、SQLAlchemy、Laravelプロジェクトを自動判定
 erdscope --models ./my-app -o schema.html
 ```
 
@@ -159,7 +159,7 @@ python3 erd.py demo
 | オプション | 用途 |
 |---|---|
 | `--config PATH` | モデル入力、デフォルト値、スキーマ定義・修正、ノート、グループを読み込む |
-| `--models PATH` | 設定ファイルの`models`をRails、Prisma、Django入力で上書き。複数指定可能 |
+| `--models PATH` | 設定ファイルの`models`をRails、Prisma、Django、SQLAlchemy、Laravel入力で上書き。複数指定可能 |
 | `--excel FILE.xlsx` | テーブル定義のExcelワークブックも生成する（notes/groups設定時はNotes/Groupsシートも含む） |
 | `--emit-json FILE.json` | スキーマの正規JSONスナップショット（内容フィンガープリント付き）も書き出す（`-`で標準出力） |
 | `--emit-config FILE.yml\|.json` | スキーマを設定ファイル形式でも書き出す。`--config`で再取込可能（`-`で標準出力、常にJSON） |
@@ -178,13 +178,15 @@ python3 erd.py demo
 ## 対応する入力
 
 erdscopeは、MySQL 8.4、PostgreSQL 16、CPython同梱のSQLite、Rails 7.x/8.x
-プロジェクト、Prisma 5/6のスキーマ、Django 4.2/5.xのモデルでテストされています。
+プロジェクト、Prisma 5/6のスキーマ、Django 4.2/5.xのモデル、SQLAlchemy宣言的モデル
+（従来型・2.0スタイル両方）、Laravel Eloquentモデルでテストされています。
 詳しい条件とパーサーの対応範囲は、
 [互換性ガイド](https://orapli.github.io/erdscope/manual.ja.html#verified-versions)に記載しています。
 
 ## プロジェクト資料
 
 - **[ライブデモ](https://orapli.github.io/erdscope/)** — 生成されたショップスキーマを操作できます。
+- **[レシピ集](https://orapli.github.io/erdscope/recipes.ja.html)** — やりたいことから引ける実践ガイド（コピペで動くコマンド付き）。
 - **[ユーザーマニュアル](https://orapli.github.io/erdscope/manual.ja.html)** — セットアップ、ビューアー、設定、エクスポート、トラブルシューティングの完全なガイドです。
 - **[サンプル](examples/)** — すぐに実行できるSQLite入力と設定ファイルのみの入力です。
 - **[変更履歴](CHANGELOG.md)** — リリースごとの機能と動作変更です。
