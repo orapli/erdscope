@@ -12,9 +12,12 @@ python3 -m unittest tests.test_config_validation -v # strict config syntax
 python3 -m unittest tests.test_pipeline -v           # CLI-to-serialized-IR wiring
 python3 -m unittest tests.test_demo -v               # installed-style demo behavior
 python3 -m unittest tests.test_build -v              # amalgamation determinism
+python3 -m unittest tests.test_sqlalchemy_provider -v # SQLAlchemy AST provider
+python3 -m unittest tests.test_erd -v                # Laravel parser/provider behavior
+python3 -m unittest tests.test_provider_contract -v   # typed provider contracts
 ```
 
-Parser and exporter behavior is concentrated in `tests/test_erd.py`; golden compatibility is in `tests/test_characterization.py`.
+Parser and exporter behavior is concentrated in `tests/test_erd.py`; typed DBML/Mermaid input has dedicated `tests/test_dbml_input.py` and `tests/test_mermaid_input.py`; projection/diff contracts are in `tests/test_emit_*.py` and `tests/test_diff.py`; golden compatibility is in `tests/test_characterization.py`.
 
 ### Full dependency-free pass
 
@@ -57,7 +60,7 @@ The main `test` job performs:
 
 1. Dependency-free unittest discovery.
 2. Optional dependency and Chromium installation.
-3. Full unittest/browser pass.
+3. Full unittest/browser pass, including E2E coverage for alignment, auto-expanded-table promotion, and group obstacle layout.
 4. `python3 tools/build_single_file.py --check`.
 5. Deterministic `docs/index.html` regeneration and diff check.
 6. Screenshot generator smoke test.
@@ -114,12 +117,14 @@ For large image exports, the viewer caps PNG canvas dimensions and may reduce sc
 | `erd.py is out of date` | Rebuild from `src/erdscope/`; inspect changes rather than editing artifact |
 | YAML config fails | Install PyYAML or use JSON; inspect strict unknown/type errors |
 | Unknown DB scheme | Confirm URL and plugin loaded before dispatch; inspect adapter registry |
-| `--models` not detected | Check overlay `detect()` expectations and path; use `--table-map`/config for static-analysis gaps |
+| `--models` not detected | Check overlay `detect()` expectations and path: Rails/Django/Prisma/Laravel use shallow marker checks, while SQLAlchemy recursively detects model content at build depth; for Laravel project roots, verify `app/Models` contains Eloquent evidence; use typed `<overlay>.models` sources or `--table-map`/config for static-analysis gaps |
 | Unexpected duplicate/missing edge | Inspect association identity, FK/name aliases, and `reconcile_db_fks()` tests |
 | FK badge missing | Verify a final association has `foreign_key`; names alone do not produce `fk_columns` |
 | Empty result after filtering | Check comma/repeatable glob patterns; pipeline intentionally fails when no table remains |
 | Browser slow on huge schema | Narrow tables before generation; use benchmark to distinguish generation from layout cost |
 | Driver and CLI outputs differ | Reproduce with `tests/test_db_integration.py`; focus on TSV/COPY null and escaping paths |
+| Typed DBML/Mermaid input changes | Run `tests/test_dbml_input.py` and `tests/test_mermaid_input.py`; check source kind and merge rank |
+| Projection output changes | Run the matching `tests/test_emit_*.py` contract; preserve deterministic ordering and stdout/path collision rules |
 
 ## Pre-release checklist
 

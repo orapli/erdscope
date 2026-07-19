@@ -1,8 +1,8 @@
 # erdscope engineering quickstart
 
-erdscope is a Python 3.9+ CLI that produces a self-contained interactive ER-diagram HTML file and, optionally, an Excel table-definition workbook. A schema can come from any combination of a live MySQL/PostgreSQL/SQLite database, Rails/Prisma/Django model code, and declarative JSON/YAML config. The repository’s defining constraint is that development is split into readable source fragments, while distribution remains one zero-required-dependency `erd.py` file.
+erdscope is a Python 3.9+ CLI that produces a self-contained interactive ER-diagram HTML file and optional Excel, JSON/config/digest/DBML/Mermaid/PlantUML schema exports. A schema can come from any combination of a live MySQL/PostgreSQL/SQLite database, Rails/Prisma/Django/SQLAlchemy/Laravel model code, typed DBML or Mermaid `erDiagram` input, and declarative JSON/YAML config. The repository’s defining constraint is that development is split into readable source fragments, while distribution remains one zero-required-dependency `erd.py` file.
 
-This wiki documents local HEAD `b0e75a5` / release 0.4.1.
+This wiki documents local HEAD `6ebfccc` / release `v0.8.0` (2026-07-19).
 
 ## Start here
 
@@ -56,7 +56,7 @@ At least one database, model path, or non-empty config `tables:` map is required
 - [Engineering workflows](workflows/engineering.md) — changing engines, overlays, viewer, Excel, demos/docs, and releases.
 - [Operations and testing](operations-and-testing.md) — setup, test matrix, CI, integration variables, benchmark guidance, security, failure triage, and release checks.
 
-For exhaustive end-user CLI/viewer behavior, use `README.md`, `docs/manual.html`, and `docs/manual.ja.html`; this wiki is the engineering synthesis layer rather than a duplicate manual.
+Recent capabilities covered by the engineering pages include typed `dbml` and `mermaid.er` inputs, scriptable `--emit-*` schema formats, Excel notes/groups sheets, and viewer controls for alignment, auto-expanded-table promotion, and group-aware auto-layout. For exhaustive end-user CLI/viewer behavior, use `README.md`, `docs/manual.html`, and `docs/manual.ja.html`; this wiki is the engineering synthesis layer rather than a duplicate manual.
 
 ## Change routing
 
@@ -100,6 +100,6 @@ Real DB tests use `ERDSCOPE_IT_MYSQL_URL` and `ERDSCOPE_IT_POSTGRES_URL`. Creden
 
 ## Backlog
 
-- **Viewer internal state model** — `src/erdscope/viewer.html`; deferred because the current first pass documents ownership, build coupling, and test strategy, while a detailed 3,600-line JS state/layout guide warrants a focused update.
-- **Framework parser edge-case catalog** — `src/erdscope/frameworks/{rails,django,prisma}.py`; deferred in favor of stable extension boundaries and known static-analysis limitations. Add when parser maintenance becomes active.
+- **Viewer internal state model** — `src/erdscope/viewer.html`; deferred because the current first pass documents ownership, build coupling, and the recently changed layout interactions, while a detailed 3,600-line JS state/layout guide warrants a focused update.
+- **Framework parser edge-case catalog** — `src/erdscope/frameworks/{rails,django,prisma,sqlalchemy,laravel}.py`; deferred in favor of stable extension boundaries and known static-analysis limitations. Add when parser maintenance becomes active.
 - **Excel OOXML package internals** — `src/erdscope/exporters.py`; deferred beyond the public five-role template contract and change workflow because implementation detail is well covered by focused source/tests.

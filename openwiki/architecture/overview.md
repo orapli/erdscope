@@ -21,7 +21,7 @@ The primary entrypoint is `src/erdscope/cli.py:main()`.
 4. **Collect provider layers.** `db_provider()` dispatches a URL to a `DBAdapter`. Each repeatable `--models` path dispatches to a `FrameworkOverlay`. Config `tables:` and `relations:` become additional config providers.
 5. **Validate and merge.** Config drops are checked against lower layers before application. `merge_ir()` performs identity merge, association reconciliation, PK/index normalization, and derived fields. Final config references are checked afterward.
 6. **Post-process.** Optional `*_id` inference runs, then `--only`/`--exclude` filtering. `fk_columns` is derived from final associations rather than guessed in the viewer.
-7. **Serialize and export.** `serialize_for_viewer()` converts internal association provenance into the legacy flags consumed by HTML and Excel. `_finish()` safely embeds JSON into `HTML_TEMPLATE`, writes HTML, and optionally invokes `write_excel()`.
+7. **Serialize and export.** `serialize_for_viewer()` converts internal association provenance into the legacy flags consumed by HTML and Excel. `_finish()` safely embeds JSON into `HTML_TEMPLATE`, writes HTML, and optionally invokes `write_excel()` plus additive `--emit-json`, `--emit-config`, `--emit-digest`, `--emit-dbml`, `--emit-mermaid`, or `--emit-plantuml` projections. `--diff` is the non-generating comparison path for an earlier JSON snapshot.
 
 The pipeline deliberately skips database connection and password prompting when no DB URL is supplied (`src/erdscope/cli.py`).
 
@@ -63,13 +63,17 @@ The HTML template receives three substitutions: title, max rows, and serialized 
 
 Built-ins normalize into a common information-schema-like IR builder. Unique single-column FKs become `has_one`. Runtime plugins can register adapters or overlays through `--adapter`.
 
-### Framework overlays
+### Framework overlays and typed sources
 
-`src/erdscope/frameworks/base.py` defines `FrameworkOverlay`, its registry, and priority-based detection. Rails parsing is association-oriented; Django and Prisma also contribute columns. These are static parsers, so dynamic framework behavior may require `--table-map`, config corrections, or a custom plugin.
+`src/erdscope/frameworks/base.py` defines `FrameworkOverlay`, its registry, and priority-based detection. Rails parsing is association-oriented; Django and Prisma also contribute columns. SQLAlchemy (`sqlalchemy.models`) is a content-based static AST provider that retains declarative columns and relationships; its 2.0-style `class Base(DeclarativeBase)` hierarchy is treated as a base, not a phantom table. Laravel (`laravel.models`) is an association-only static provider, leaving physical columns to a database layer; it accepts either an `app/Models` directory or a Laravel project root and deliberately wins detection before Rails on case-insensitive filesystems. Dynamic framework behavior may require `--table-map`, config corrections, or a custom plugin.
+
+Detection strategy is part of each overlay’s contract: marker-based overlays (Rails, Django, Prisma, Laravel) use decisive shallow/root-level signals to avoid nested-project false positives, while content-based SQLAlchemy detection recurses over the same effective tree as `build()`. Typed source names are registered as `<overlay>.models`; typed dispatch bypasses detection and invokes the named builder.
+
+`src/erdscope/sources.py` normalizes legacy `--models`/config `models` and explicit config `sources[]` entries into ordered input specs. Typed `rails.schema`, `dbml`, `mermaid.er`, `sqlalchemy.models`, and `laravel.models` entries bypass auto-detection and call their named builders; `rails.project` expands to whichever `db/schema.rb` and `app/models` paths exist. DBML is a declared physical schema source, while Mermaid ER is the lowest-authority sketch source. Typed sources fail on empty results unless `allow_empty: true`, and file-based types validate that the path is a file.
 
 ### Viewer and exports
 
-`src/erdscope/viewer.html` is a standalone SVG application with no runtime data fetch. It provides exploration, filtering, layout editing, persistent named views, and PNG/SVG/Mermaid/PlantUML exports. State is stored in browser `localStorage`, namespaced by document title. `src/erdscope/exporters.py` writes XLSX directly with stdlib ZIP/XML and supports a five-style-cell template contract.
+`src/erdscope/viewer.html` is a standalone SVG application with no runtime data fetch. It provides exploration, filtering, layout editing, persistent named views, and PNG/SVG/Mermaid/PlantUML exports. Recent layout behavior treats group frames as obstacles only for newly auto-placed tables, adds right/bottom multi-select alignment, and lets auto-expanded neighbors become explicit selections. State is stored in browser `localStorage`, namespaced by document title. `src/erdscope/exporters.py` writes XLSX directly with stdlib ZIP/XML and supports a five-style-cell template contract.
 
 ## Generated build constraints
 

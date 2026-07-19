@@ -7,11 +7,11 @@ The schema merge is the product’s central business rule: heterogeneous evidenc
 `src/erdscope/cli.py:_run_pipeline()` constructs layers from low to high specification priority:
 
 1. Database provider, if a URL exists.
-2. Framework providers for each `--models`/config `models` path, in supplied order.
+2. Framework providers for each `--models`/config `models` path, in supplied order, plus typed config `sources[]` entries. `sources[].type` can explicitly dispatch `rails.schema`, `dbml`, `mermaid.er`, `sqlalchemy.models`, or `laravel.models`; `rails.project` expands into schema/models inputs.
 3. Config `tables:` provider.
 4. Config `relations:` provider.
 
-Any of the first three source categories is sufficient by itself. Relations are patches and need a base schema. Later equal-priority framework/plugin layers win ties, with conflict warnings where merge-visible values disagree.
+Any of the first three source categories is sufficient by itself. Relations are patches and need a base schema. Later equal-priority framework/plugin layers win ties, with conflict warnings where merge-visible values disagree. DBML has schema-level authority; Mermaid ER is deliberately the lowest-rank sketch layer, below framework code, because its types are informal.
 
 ## Sparse fragments
 
@@ -33,6 +33,7 @@ Field authority is defined in `src/erdscope/merge.py`.
 | Primary key and indexes | config > database > framework |
 | Table/column comments and association names | config > framework > database |
 | Equal-rank conflicts | later layer wins; differing top-rank values warn |
+| Typed source ranks | `dbml` matches declared schema; `mermaid.er` is rank 0 below framework for physical and logical fields |
 
 The practical intent is that the database owns physical truth, application code owns semantics the database cannot express, and config is an explicit operator correction with final authority.
 
@@ -48,9 +49,9 @@ The practical intent is that the database owns physical truth, application code 
 
 Name is intentionally part of identity so aliases such as Rails `user` and `author` can coexist on the same `user_id`. Conventional DB names can still merge with code declarations; renamed declarations remain distinct through Phase A.
 
-After identity merge, `reconcile_db_fks()` removes raw DB edges already covered by explicit framework/config semantics. Matching is FK-aware where possible. A unique single-column DB FK’s one-to-one signal is preserved by promoting a covering owner association to `has_one` rather than losing cardinality.
+After identity merge, `reconcile_db_fks()` removes raw DB edges already covered by explicit framework/config semantics. Matching is FK-aware where possible. A unique single-column DB FK’s one-to-one signal is preserved by promoting a covering owner association to `has_one` rather than losing cardinality. SQLAlchemy deduplicates relationships that restate the same FK while retaining declarative columns; its many-to-many `secondary` relationships become `has_and_belongs_to_many` with a resolvable `through` value. A 2.0-style `DeclarativeBase` subclass with no table/fields is classified as a declarative base, including chained base subclasses, so it does not create a phantom table; annotation-only relationships without an explicit `relationship()` target remain outside the static parser’s coverage.
 
-Polymorphic and through associations remain semantic constructs; viewer behavior may suppress or render them differently from ordinary direct edges.
+Laravel emits intentionally sparse, association-only fragments, so database physical columns remain authoritative. Eloquent `hasMany`/`hasOne`/`belongsTo`/`belongsToMany` map to the corresponding cardinalities, while morph relations carry `polymorphic: true`; `belongsToMany` may include a pivot `through`, and dynamic/unresolvable targets are warned and skipped. A typed Laravel input accepts either the model directory or a project root with conventional `app/Models`; when given the root, only that subtree is parsed so routes/tests/database PHP are not mistaken for models. Polymorphic and through associations remain semantic constructs; viewer behavior may suppress or render them differently from ordinary direct edges. DBML supports table/column/index/PK data and single- or block-style scalar `Ref` relations; composite refs, `TableGroup`, and standalone `Note` are recognized but warned/skipped. Mermaid `erDiagram` relationships provide cardinality and names but no column-level `foreign_key`, so they cannot create physical FK badges.
 
 ## Provenance
 
@@ -102,7 +103,7 @@ Connection config accepts separate `engine`, `host`, `port`, `user`, and `databa
 
 `--infer-fk` is off by default. `infer_fk_associations()` examines non-primary `*_id` columns, tries plural and singular table targets, and skips self, unknown, or already-related pairs. A unique single-column index promotes the inferred relation to `has_one`; otherwise it is `belongs_to`.
 
-After final associations, `fk_columns` is recomputed from actual association `foreign_key` values. The viewer does not infer FK badges from names. Tables with no columns receive `schema_missing: true`, which is common for association-only Rails models without a DB table.
+After final associations, `fk_columns` is recomputed from actual association `foreign_key` values. The viewer does not infer FK badges from names. Tables with no columns receive `schema_missing: true`, which is common for association-only Rails and Laravel models without a DB/physical source; SQLAlchemy models can provide physical columns directly.
 
 ## Invariants to protect
 
@@ -120,6 +121,8 @@ After final associations, `fk_columns` is recomputed from actual association `fo
 python3 -m unittest tests.test_merge_ir -v
 python3 -m unittest tests.test_config_validation -v
 python3 -m unittest tests.test_pipeline -v
+python3 -m unittest tests.test_sqlalchemy_provider -v
+python3 -m unittest tests.test_provider_contract -v
 python3 -m unittest tests.test_characterization -v
 python3 tools/build_single_file.py --check
 ```

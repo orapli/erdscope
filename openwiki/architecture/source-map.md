@@ -21,7 +21,8 @@ Use this page to move from a question or change request to the smallest relevant
 | Layer precedence and association reconciliation | `src/erdscope/merge.py` | `tests/test_merge_ir.py`, `tests/test_pipeline.py` |
 | Config parsing and strict syntactic validation | `src/erdscope/config.py` | `tests/test_config_validation.py`, `tests/test_erd.py` |
 | Config providers, drop/reference validation | `src/erdscope/providers.py` | `tests/test_pipeline.py`, `tests/test_merge_ir.py` |
-| Output serialization and filtering | `src/erdscope/cli.py:serialize_for_viewer`, `_finish` | `tests/test_pipeline.py`, `tests/test_characterization.py` |
+| Output serialization, projections, and filtering | `src/erdscope/cli.py:serialize_for_viewer`, `_finish`, `src/erdscope/{emit,digest,dbml,mermaid,plantuml}.py` | `tests/test_pipeline.py`, `tests/test_emit_*.py`, `tests/test_diff.py` |
+| Typed input normalization and dispatch | `src/erdscope/sources.py`, `src/erdscope/dbml.py`, `src/erdscope/mermaid.py` | `tests/test_dbml_input.py`, `tests/test_mermaid_input.py`, `tests/test_config_validation.py` |
 
 Read [Schema merge domain](../domain/schema-merge.md) before modifying this area. `REFACTOR_PLAN.md` provides historical design context, but current source and tests are authoritative where comments or plans are stale.
 
@@ -41,18 +42,20 @@ The integration suite compares driver and command-line fallback output for MySQL
 
 | Framework/concern | Source | Test anchors |
 |---|---|---|
-| Registry, detection, inflection, FK inference | `src/erdscope/frameworks/base.py` | `tests/test_pipeline.py`, `tests/test_erd.py` |
+| Registry, detection, inflection, FK inference | `src/erdscope/frameworks/base.py` | `tests/test_pipeline.py`, `tests/test_erd.py`, `tests/test_provider_contract.py` |
 | Rails static parser | `src/erdscope/frameworks/rails.py` | Rails fixtures under `tests/fixture_app` and parser tests |
 | Django AST parser | `src/erdscope/frameworks/django.py` | `tests/fixture_django/`, pipeline/parser tests |
 | Prisma parser | `src/erdscope/frameworks/prisma.py` | `tests/fixture_prisma`, pipeline/parser tests |
+| SQLAlchemy declarative-model parser | `src/erdscope/frameworks/sqlalchemy.py` | `tests/test_sqlalchemy_provider.py`, `tests/test_provider_contract.py`, `tests/fixture_sqlalchemy/` |
+| Laravel Eloquent association parser | `src/erdscope/frameworks/laravel.py` | `tests/test_erd.py`, `tests/test_provider_contract.py`, `tests/fixture_laravel/` |
 
-Detection is priority ordered; the first overlay whose `detect()` succeeds owns a `--models` path. Runtime plugin overlays use the same registry as built-ins.
+Detection is priority ordered; the first overlay whose `detect()` succeeds owns an untyped `--models` path, and the registry exposes each overlay as a typed `<overlay>.models` source. Marker-based overlays use shallow root-level detection, while content-based SQLAlchemy detection recurses to the same depth as its builder. Runtime plugin overlays use the same registry as built-ins.
 
 ## Viewer and exporters
 
 | Concern | Source | Verification |
 |---|---|---|
-| Interactive HTML/CSS/JS | `src/erdscope/viewer.html` | `tests/test_e2e.py`, `docs/gen_shots.py` |
+| Interactive HTML/CSS/JS and layout interactions | `src/erdscope/viewer.html` | `tests/test_e2e.py`, `docs/gen_shots.py` |
 | Excel generation and HTML sentinel | `src/erdscope/exporters.py` | `tests/test_erd.py`, optional `openpyxl` round trip |
 | Demo HTML | `docs/gen_demo.py` → `docs/index.html` | CI deterministic diff check |
 | User manuals | `docs/manual.html`, `docs/manual.ja.html` | Manual review; README links |
