@@ -1397,11 +1397,17 @@ class TestLoadConfig(unittest.TestCase):
         return SimpleNamespace(config=config, no_config=no_config)
 
     def test_no_config_no_discovery_returns_empty(self):
+        # chdir back via try/finally, not addCleanup: addCleanup only runs
+        # after the whole test method returns, which is AFTER this `with`
+        # block's __exit__ has already tried (and, on Windows, failed) to
+        # remove a directory that was still the process cwd.
         with tempfile.TemporaryDirectory() as tmp:
             orig = os.getcwd()
             os.chdir(tmp)
-            self.addCleanup(os.chdir, orig)
-            self.assertEqual(erd.load_config(self._args()), {})
+            try:
+                self.assertEqual(erd.load_config(self._args()), {})
+            finally:
+                os.chdir(orig)
 
     def test_explicit_config_loads_json(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1425,16 +1431,20 @@ class TestLoadConfig(unittest.TestCase):
             (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 99}')
             orig = os.getcwd()
             os.chdir(tmp)
-            self.addCleanup(os.chdir, orig)
-            self.assertEqual(erd.load_config(self._args(no_config=True)), {})
+            try:
+                self.assertEqual(erd.load_config(self._args(no_config=True)), {})
+            finally:
+                os.chdir(orig)
 
     def test_auto_discovers_erdscope_json_in_cwd(self):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 42}')
             orig = os.getcwd()
             os.chdir(tmp)
-            self.addCleanup(os.chdir, orig)
-            self.assertEqual(erd.load_config(self._args()), {'max_rows': 42})
+            try:
+                self.assertEqual(erd.load_config(self._args()), {'max_rows': 42})
+            finally:
+                os.chdir(orig)
 
     def test_connection_fields_allowed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1582,10 +1592,12 @@ class TestMainConfigIntegration(unittest.TestCase):
         orig_cwd = os.getcwd()
         self.addCleanup(lambda: setattr(erd, 'parse_mysql', orig_parse_mysql))
         self.addCleanup(lambda: setattr(sys, 'argv', orig_argv))
-        self.addCleanup(os.chdir, orig_cwd)
         erd.parse_mysql = lambda url: db_tables()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        # chdir-back registered last so it runs first (addCleanup is LIFO) —
+        # Windows can't rmtree a directory that's still the process cwd.
+        self.addCleanup(os.chdir, orig_cwd)
         os.chdir(self.tmp.name)
 
     def _run(self, *cli_args):

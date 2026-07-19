@@ -482,9 +482,14 @@ class _DiffDriver(unittest.TestCase):
         self._orig_cwd = os.getcwd()
         self.addCleanup(lambda: setattr(erd, 'parse_mysql', self._orig_parse))
         self.addCleanup(lambda: setattr(sys, 'argv', self._orig_argv))
-        self.addCleanup(os.chdir, self._orig_cwd)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        # chdir-back must be the LAST cleanup registered (addCleanup runs
+        # LIFO) so it runs BEFORE tmp.cleanup — otherwise the temp dir is
+        # still the process cwd when its own removal is attempted, which
+        # Windows refuses (WinError 32/5); POSIX allows it, which is why
+        # this only shows up there.
+        self.addCleanup(os.chdir, self._orig_cwd)
         os.chdir(self.tmp.name)
         erd.parse_mysql = lambda url: erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
 
