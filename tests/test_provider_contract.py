@@ -241,5 +241,17 @@ class TestMermaidErContract(_ProviderContract, unittest.TestCase):
         return f
 
 
+class TestSQLAlchemyContract(_ProviderContract, unittest.TestCase):
+    TYPE = 'sqlalchemy.models'
+    PATH = CONTRACT / 'sqlalchemy'
+    PROVENANCE = 'declared'
+    M2M_STYLE = 'habtm'
+
+    def _write_empty_variant(self, tmp):
+        f = tmp / 'models.py'
+        f.write_text('# no SQLAlchemy models here\n')
+        return f
+
+
 if __name__ == '__main__':
     unittest.main()

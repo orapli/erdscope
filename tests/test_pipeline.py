@@ -652,7 +652,12 @@ class TestFrameworkOverlayRegistry(unittest.TestCase):
         self.assertEqual(erd.detect_code_source(FIXTURE_RAILS), 'rails')
         self.assertEqual(erd.detect_code_source(FIXTURE_PRISMA), 'prisma')
         self.assertEqual(erd.detect_code_source(FIXTURE_DJANGO), 'django')
-        self.assertIsNone(erd.detect_code_source(Path(__file__).resolve().parent))
+        # the whole tests/ tree is not itself a Rails/Django/Prisma/Laravel root
+        # (those checks are shallow, root-relative marker files) but IS correctly
+        # detected as sqlalchemy: unlike the other four, its detect() is a
+        # recursive *.py scan (backlog F1), and tests/fixture_contract/sqlalchemy/
+        # models.py is genuine, detectable declarative-model code nested in it.
+        self.assertEqual(erd.detect_code_source(Path(__file__).resolve().parent), 'sqlalchemy')
 
     def test_base_is_abstract(self):
         with self.assertRaises(TypeError):
