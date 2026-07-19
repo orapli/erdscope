@@ -159,7 +159,7 @@ footer{border-top:1px solid var(--border); margin:0 auto; padding:20px 34px 60px
   <a class="route-card" href="#r2">
     <span class="route-num">RECIPE 2</span>
     <strong>An ER diagram from code, no database needed</strong>
-    <span>Model diagrams straight from a Rails / Django / Prisma repository.</span>
+    <span>Model diagrams straight from Rails / Django / Prisma / SQLAlchemy / Laravel code.</span>
   </a>
   <a class="route-card" href="#r3">
     <span class="route-num">RECIPE 3</span>
@@ -224,18 +224,18 @@ database, create a <b>read-only user with SELECT privileges only</b>:
 and want to see what its model changes do to the relationships — as a diagram.</div>
 
 <p>erdscope <b>statically parses</b> application code (it never executes it). Point it at a
-Rails / Django / Prisma project and it auto-detects the framework, then reads models and associations.</p>
+Rails / Django / Prisma / SQLAlchemy / Laravel project and it auto-detects the framework, then reads models and associations.</p>
 
-<pre><code># Just pass the project path (Rails / Django / Prisma auto-detected)
+<pre><code># Just pass the project path (Rails / Django / Prisma / SQLAlchemy / Laravel auto-detected)
 erdscope --models path/to/your-app -o schema.html</code></pre>
 
 <p>A code-only diagram is the <b>logical model</b> — the associations your application declares
-(<code>belongs_to</code>, <code>ForeignKey</code>, Prisma's <code>@relation</code>) become the edges.
+(<code>belongs_to</code>, <code>ForeignKey</code>, Prisma's <code>@relation</code>, Eloquent's <code>hasMany</code>) become the edges.
 Useful for spotting missing migrations, or associations that exist in code with no FK in the database.</p>
 
 <h3>What to look at</h3>
 <ul>
-  <li>Columns appear even without a database (from field definitions in Django / Prisma; Rails gets full columns when <code>db/schema.rb</code> is present).</li>
+  <li>Columns appear even without a database (from field definitions in Django / Prisma / SQLAlchemy; Rails gets full columns when <code>db/schema.rb</code> is present; Laravel is association-only — pair it with the database).</li>
   <li>Association names (<code>has_many :items, through:</code> …) label the edges.</li>
 </ul>
 

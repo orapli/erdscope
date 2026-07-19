@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`sources[].type: sqlalchemy.models`** (backlog F1) — a new typed input
+  source that statically parses SQLAlchemy declarative models (a single
+  `.py` file or a directory, recursively) with AST analysis only — no
+  import, no execution, no SQLAlchemy dependency. Recognizes both the
+  classic `declarative_base()` and the 2.0 `DeclarativeBase` styles:
+  `Column(...)`/`mapped_column(...)` with explicit type objects,
+  `ForeignKey('table.col')` → belongs_to (has_one when the column is
+  unique), and `relationship(secondary=...)` → many-to-many.
+  `--models`/`models` auto-detection recognizes SQLAlchemy projects by
+  content. Known limit: an annotation-only column (`Mapped[int]` with no
+  type argument) keeps the column with an empty type for now.
+- **`sources[].type: laravel.models`** (backlog F2) — a new typed input
+  source that statically parses a directory of Laravel Eloquent model
+  `*.php` files (typically `app/Models`; `vendor/` always excluded) with
+  regexes over comment-stripped source — no PHP runtime, never executes
+  the input. `hasMany`/`hasOne`/`belongsTo`/`belongsToMany` (pivot table
+  kept as `through`) and the `morph*` family (polymorphic) become
+  associations. Association-only / DB-first, like Rails models: pair it
+  with a live database (or another physical source) for the column layer.
+
+### Changed
+
+- **Viewer: obstacle avoidance picks the cheapest direction** (backlog L) —
+  when auto-placement must push a table out of a group frame it overlaps,
+  the push now goes down, left, or right, whichever clears the overlap
+  with the least travel (previously always down). A table shallowly
+  overlapping a tall frame's side edge no longer travels the full frame
+  height; related tables land beside their group instead of far below it.
+
 ## [0.8.0] - 2026-07-19
 
 ### Added

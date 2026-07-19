@@ -445,6 +445,8 @@ verified against:</p>
 <tr><td>Django</td><td>models as of Django <strong>4.2 / 5.x</strong> — FK / OneToOne / M2M (incl. <code>through=</code>), abstract bases, <code>db_table</code>/<code>db_column</code>, <code>GenericForeignKey</code> (kept as a polymorphic marker); a swappable <code>AUTH_USER_MODEL</code> FK keeps its column and skips the edge</td></tr>
 <tr><td>DBML (<code>sources[].type: dbml</code>)</td><td>the syntax documented at <a href="https://dbml.dbdiagram.io/docs/" target="_blank" rel="noopener">dbml.dbdiagram.io</a> — <code>Table</code>/column settings (<code>pk</code>/<code>not null</code>/<code>unique</code>/<code>increment</code>/<code>default</code>/<code>note</code>/inline <code>ref</code>), composite PK via <code>indexes { (a, b) [pk] }</code>, standalone and block <code>Ref</code> (all four symbols), <code>Enum</code> (recognized, consumed). <code>TableGroup</code>, a standalone <code>Note</code> object, and a composite (multi-column) <code>Ref</code> are out of scope this round — see <a href="#input-sources">Typed input sources</a></td></tr>
 <tr><td>Mermaid <code>erDiagram</code> (<code>sources[].type: mermaid.er</code>)</td><td>the <a href="https://mermaid.js.org/syntax/entityRelationshipDiagram.html" target="_blank" rel="noopener">erDiagram syntax</a> — entity blocks (<code>PK</code>/<code>FK</code>/<code>UK</code>, quoted comments) and relationship lines (all crow's-foot cardinality combinations, solid or dotted line). A single standalone <code>.mmd</code>/<code>.mermaid</code> file only — no Markdown-fence extraction yet</td></tr>
+<tr><td>SQLAlchemy (<code>sources[].type: sqlalchemy.models</code>)</td><td>declarative models in both the classic <code>declarative_base()</code> and the 2.0 <code>DeclarativeBase</code> styles — <code>Column(...)</code>/<code>mapped_column(...)</code> with explicit type objects, <code>ForeignKey</code>, <code>relationship(secondary=...)</code> many-to-many. Static AST analysis (never imports the models). An annotation-only column (<code>Mapped[int]</code>, no type argument) currently keeps the column with an empty type</td></tr>
+<tr><td>Laravel Eloquent (<code>sources[].type: laravel.models</code>)</td><td><code>hasMany</code>/<code>hasOne</code>/<code>belongsTo</code>/<code>belongsToMany</code> and <code>morphTo</code>/<code>morphMany</code>/<code>morphOne</code>/<code>morphToMany</code> over <code>*.php</code> model files (<code>vendor/</code> excluded); association-only — columns come from a live DB or another physical source</td></tr>
 <tr><td>Python</td><td>3.9+ (<code>requires-python</code>); CI runs the latest CPython 3.x</td></tr>
 </table>
 </section>
@@ -500,8 +502,9 @@ for a fully annotated sample (based on the live demo's schema) with every key ex
 <h3 id="input-sources">Typed input sources (<code>sources:</code>)</h3>
 <p>
 <code>--models</code>/config <code>models</code> auto-detect what kind of project a path is (a Rails
-<code>app/models</code> dir, a <code>schema.prisma</code>, a Django project — or, since a path can
-also be a <code>db/schema.rb</code> <em>file</em>, a static Rails schema dump). The config-only
+<code>app/models</code> dir, a <code>schema.prisma</code>, a Django project, a Laravel app, a
+directory of SQLAlchemy models — or, since a path can also be a <code>db/schema.rb</code>
+<em>file</em>, a static Rails schema dump). The config-only
 <code>sources:</code> key is the typed alternative: a list of <code>{ id, type, path }</code>
 objects, each naming its own <code>type</code> so nothing needs detecting. It's independent of
 <code>models</code> — both apply if both are given, in the order <code>sources</code> (declared
@@ -522,7 +525,8 @@ changes to key off.
 </p>
 <p>
 Every registered framework overlay gets a <code>&lt;name&gt;.models</code> type for free
-(<code>rails.models</code>, <code>prisma.models</code>, <code>django.models</code>, and any
+(<code>rails.models</code>, <code>prisma.models</code>, <code>django.models</code>,
+<code>sqlalchemy.models</code>, <code>laravel.models</code>, and any
 <code>--adapter</code>-registered overlay's own) — it calls that overlay's parser directly, the
 same as auto-detection would, just without the detection step. <code>type</code> isn't checked
 against the registry until the source actually runs, so a type an <code>--adapter</code> plugin
@@ -602,6 +606,32 @@ produces a (columnless) table for it. MVP scope: a single standalone <code>.mmd<
 <code>.mermaid</code> file — no Markdown-fence extraction yet.
 </p>
 
+<p>
+<strong><code>sqlalchemy.models</code></strong> statically parses SQLAlchemy declarative models —
+a single <code>.py</code> file or a directory (recursive; venv/migrations/tests directories are
+skipped) — with AST analysis only: <strong>no import, no execution, no SQLAlchemy
+dependency</strong>. Both the classic <code>declarative_base()</code> style and the 2.0
+<code>DeclarativeBase</code> style are recognized: <code>Column(...)</code>/<code>mapped_column(...)</code>
+with explicit type objects map onto erdscope's coarse column types,
+<code>ForeignKey('table.col')</code> becomes a <code>belongs_to</code> (a <code>has_one</code> when
+the column is unique), and <code>relationship(secondary=...)</code> becomes a many-to-many.
+Auto-detection recognizes a SQLAlchemy project by content (recursive scan), unlike the marker-file
+checks the other frameworks use. Known limit this round: an annotation-only column
+(<code>id: Mapped[int] = mapped_column(primary_key=True)</code>, no type argument) keeps the column
+but with an empty type.
+</p>
+<p>
+<strong><code>laravel.models</code></strong> statically parses a directory of Laravel Eloquent
+model <code>*.php</code> files (typically <code>app/Models</code>; <code>vendor/</code> is always
+excluded) — regex analysis over comment-stripped source, the same tactic as
+<code>rails.schema</code>: <strong>no PHP runtime, never executes the input</strong>.
+<code>hasMany</code>/<code>hasOne</code>/<code>belongsTo</code>/<code>belongsToMany</code> (the
+pivot table kept as <code>through</code>) and the <code>morph*</code> family (polymorphic) become
+associations. Like Rails models, this source is <strong>association-only / DB-first</strong>:
+Eloquent models declare no columns, so pair it with a live database (or another physical source)
+for the column layer. An unresolvable relation target is a <code>file:line</code> warning, never a
+silent omission.
+</p>
 <h3>Manual relations</h3>
 <p>
 <code>relations</code> declares a relation no other source (a real FK constraint, <code>*_id</code>
