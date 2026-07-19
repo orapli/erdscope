@@ -18,6 +18,7 @@ EMIT_CONFIG_SPEC.md
 SCHEMA_DIFF_SPEC.md
 EMIT_DIGEST_SPEC.md
 ERDSCOPE_OVERVIEW.html
+prompt-*.md
 dist/
 build/
 *.egg-info/
