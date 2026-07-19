@@ -1083,6 +1083,45 @@ class TestParseLaravel(unittest.TestCase):
         self.assertEqual(gadget['widget']['target'], 'widgets_v2')
 
 
+class TestLaravelProjectRoot(unittest.TestCase):
+    """A Laravel PROJECT ROOT (`--models ./my-app`, no .php files at the top,
+    models under the conventional app/Models) must both auto-detect as
+    laravel and parse the app/Models subtree (Sol release-review P2)."""
+
+    MODEL = (
+        '<?php\n'
+        'namespace App\\Models;\n'
+        'use Illuminate\\Database\\Eloquent\\Model;\n'
+        'class Post extends Model\n'
+        '{\n'
+        '    public function user() { return $this->belongsTo(User::class); }\n'
+        '}\n'
+    )
+
+    def _project_root(self, tmp):
+        models = Path(tmp) / 'app' / 'Models'
+        models.mkdir(parents=True)
+        (models / 'Post.php').write_text(self.MODEL)
+        (models / 'User.php').write_text(
+            '<?php\nnamespace App\\Models;\n'
+            'use Illuminate\\Database\\Eloquent\\Model;\n'
+            'class User extends Model {}\n')
+        return Path(tmp)
+
+    def test_detects_project_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project_root(tmp)
+            self.assertEqual(erd.detect_code_source(root), 'laravel')
+
+    def test_provider_parses_app_models_subtree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project_root(tmp)
+            result = erd.laravel_provider(root)
+            self.assertIn('posts', result['tables'])
+            assoc = {a['name']: a for a in result['tables']['posts']['associations']}
+            self.assertEqual(assoc['user']['target'], 'users')
+
+
 class TestGeneration(unittest.TestCase):
     def _args(self, **kw):
         base = dict(output='', models=None, excel=None, max_rows=15,

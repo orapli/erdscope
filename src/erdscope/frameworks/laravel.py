@@ -51,9 +51,14 @@ def _looks_like_laravel_models(root):
     either declares a class extending Model/Authenticatable/Pivot, or imports
     the Eloquent namespace (a weaker but still telling signal — e.g. a base
     class defined elsewhere in the same app whose OWN extends clause isn't in
-    this file). build()'s actual parse still descends recursively (see
-    _iter_php_files) once a project is already known to be Laravel."""
-    for path in sorted(root.glob('*.php')):
+    this file). A Laravel PROJECT ROOT (the directory you'd `--models ./my-app`)
+    has no .php files at the top, so the conventional `app/Models` marker
+    directory is checked the same shallow way — mirroring how Rails detection
+    accepts an app root via its own marker layout. build()'s actual parse
+    still descends recursively (see _iter_php_files) once a project is
+    already known to be Laravel."""
+    candidates = sorted(root.glob('*.php')) + sorted((root / 'app' / 'Models').glob('*.php'))
+    for path in candidates:
         try:
             content = path.read_text(encoding='utf-8', errors='replace')
         except OSError:
@@ -311,6 +316,12 @@ def laravel_provider(models_dir, table_map=None):
     inferring columns from it would misrepresent the schema; a typed
     `laravel.migrations` source is a plausible future addition, not this one.
     """
+    models_dir = Path(models_dir)
+    # accept a Laravel project root: when the conventional app/Models exists,
+    # parse that subtree instead of the whole app (routes/tests/database PHP
+    # is never model code) — the same root the detect() marker check accepts
+    if (models_dir / 'app' / 'Models').is_dir():
+        models_dir = models_dir / 'app' / 'Models'
     fragment = {}
     warnings = []
 
@@ -333,7 +344,12 @@ class LaravelOverlay(FrameworkOverlay):
     app/Models). Contributes associations only — no columns (DB-first, the
     same asymmetry as Rails)."""
     name = 'laravel'
-    priority = 5
+    # Must run BEFORE rails (priority 1): on a case-insensitive filesystem
+    # (macOS/Windows default) a Laravel root's `app/Models` satisfies Rails'
+    # weak `app/models`-directory-exists check, so the weak check would
+    # claim the project first. This detect() demands actual Eloquent
+    # evidence inside a .php file, so it can never claim a Rails project.
+    priority = 0
     expects = ('a directory of Eloquent model *.php files (typically '
                'app/Models) declaring at least one model')
 

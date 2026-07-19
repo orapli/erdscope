@@ -1764,10 +1764,11 @@ const GROUP_DEFAULT_COLOR = '#64748b'; // slate — used when a group has no con
 // majority of schemas/tests.
 //
 // Deliberately bounded, not a general collision solver: at most 3 passes,
-// and each conflict is resolved by pushing the non-member table straight
-// down past the frame (the same direction gridLayout already grows the
-// diagram in, so it reads as "the next row down" rather than an arbitrary
-// jump) — never sideways, never by rearranging anything else. A pushed
+// and each conflict is resolved by pushing the non-member table out of the
+// frame toward whichever of down / right / left clears the overlap with the
+// least travel (tie-break down > right > left, a fixed order for
+// determinism; up is never a candidate since rows grow top-to-bottom) —
+// never by rearranging anything else. A pushed
 // table can in principle end up overlapping some other unrelated node;
 // that residual risk is accepted the same way gridLayout's own placement
 // heuristics already accept it elsewhere (see overlapsPlaced's callers) —

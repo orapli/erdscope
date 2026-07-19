@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ForeignKey('table.col')` → belongs_to (has_one when the column is
   unique), and `relationship(secondary=...)` → many-to-many.
   `--models`/`models` auto-detection recognizes SQLAlchemy projects by
-  content. Known limit: an annotation-only column (`Mapped[int]` with no
-  type argument) keeps the column with an empty type for now.
+  content. Known limits: an annotation-only column (`Mapped[int]` with no
+  type argument) keeps the column with an empty type, and an
+  annotation-only `relationship()` (target named only in the annotation,
+  no first argument) is not picked up — declare the target explicitly.
 - **`sources[].type: laravel.models`** (backlog F2) — a new typed input
   source that statically parses a directory of Laravel Eloquent model
   `*.php` files (typically `app/Models`; `vendor/` always excluded) with

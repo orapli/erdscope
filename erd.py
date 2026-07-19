@@ -1603,9 +1603,14 @@ def _looks_like_laravel_models(root):
     either declares a class extending Model/Authenticatable/Pivot, or imports
     the Eloquent namespace (a weaker but still telling signal — e.g. a base
     class defined elsewhere in the same app whose OWN extends clause isn't in
-    this file). build()'s actual parse still descends recursively (see
-    _iter_php_files) once a project is already known to be Laravel."""
-    for path in sorted(root.glob('*.php')):
+    this file). A Laravel PROJECT ROOT (the directory you'd `--models ./my-app`)
+    has no .php files at the top, so the conventional `app/Models` marker
+    directory is checked the same shallow way — mirroring how Rails detection
+    accepts an app root via its own marker layout. build()'s actual parse
+    still descends recursively (see _iter_php_files) once a project is
+    already known to be Laravel."""
+    candidates = sorted(root.glob('*.php')) + sorted((root / 'app' / 'Models').glob('*.php'))
+    for path in candidates:
         try:
             content = path.read_text(encoding='utf-8', errors='replace')
         except OSError:
@@ -1863,6 +1868,12 @@ def laravel_provider(models_dir, table_map=None):
     inferring columns from it would misrepresent the schema; a typed
     `laravel.migrations` source is a plausible future addition, not this one.
     """
+    models_dir = Path(models_dir)
+    # accept a Laravel project root: when the conventional app/Models exists,
+    # parse that subtree instead of the whole app (routes/tests/database PHP
+    # is never model code) — the same root the detect() marker check accepts
+    if (models_dir / 'app' / 'Models').is_dir():
+        models_dir = models_dir / 'app' / 'Models'
     fragment = {}
     warnings = []
 
@@ -1885,7 +1896,12 @@ class LaravelOverlay(FrameworkOverlay):
     app/Models). Contributes associations only — no columns (DB-first, the
     same asymmetry as Rails)."""
     name = 'laravel'
-    priority = 5
+    # Must run BEFORE rails (priority 1): on a case-insensitive filesystem
+    # (macOS/Windows default) a Laravel root's `app/Models` satisfies Rails'
+    # weak `app/models`-directory-exists check, so the weak check would
+    # claim the project first. This detect() demands actual Eloquent
+    # evidence inside a .php file, so it can never claim a Rails project.
+    priority = 0
     expects = ('a directory of Eloquent model *.php files (typically '
                'app/Models) declaring at least one model')
 
@@ -2424,13 +2440,30 @@ def parse_sqlalchemy(root):
             classes[node.name] = {'bases': bases, 'tablename': tablename, 'abstract': abstract,
                                   'fields': fields, 'file': str(path), 'lineno': node.lineno}
 
+    # `class Base(DeclarativeBase): pass` (the 2.0-style app-defined base) is
+    # a declarative BASE, not a model: no __tablename__, no columns or
+    # relationships of its own. Promote such a class (transitively — a base
+    # can subclass another base) into root_bases so its subclasses still
+    # resolve as models, instead of letting the D7 fallback below fabricate a
+    # phantom to_snake('Base') table for the base itself.
+    changed = True
+    while changed:
+        changed = False
+        for name, c in classes.items():
+            if (name not in root_bases and not c['tablename'] and not c['fields']
+                    and any(b in root_bases for b in c['bases'])):
+                root_bases.add(name)
+                changed = True
+
     # a class is a model if any base (transitively, by bare name) resolves to
-    # a recognised declarative base — mirrors parse_django's model_keys walk
+    # a recognised declarative base — mirrors parse_django's model_keys walk.
+    # A class that IS a recognised base (root_bases, incl. the promotion
+    # above) is never itself a model.
     model_keys, changed = set(), True
     while changed:
         changed = False
         for name, c in classes.items():
-            if name in model_keys:
+            if name in model_keys or name in root_bases:
                 continue
             if (any(b in root_bases for b in c['bases'])
                     or any(b in model_keys for b in c['bases'])):
@@ -5906,10 +5939,11 @@ const GROUP_DEFAULT_COLOR = '#64748b'; // slate — used when a group has no con
 // majority of schemas/tests.
 //
 // Deliberately bounded, not a general collision solver: at most 3 passes,
-// and each conflict is resolved by pushing the non-member table straight
-// down past the frame (the same direction gridLayout already grows the
-// diagram in, so it reads as "the next row down" rather than an arbitrary
-// jump) — never sideways, never by rearranging anything else. A pushed
+// and each conflict is resolved by pushing the non-member table out of the
+// frame toward whichever of down / right / left clears the overlap with the
+// least travel (tie-break down > right > left, a fixed order for
+// determinism; up is never a candidate since rows grow top-to-bottom) —
+// never by rearranging anything else. A pushed
 // table can in principle end up overlapping some other unrelated node;
 // that residual risk is accepted the same way gridLayout's own placement
 // heuristics already accept it elsewhere (see overlapsPlaced's callers) —

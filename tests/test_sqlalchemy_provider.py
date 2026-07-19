@@ -238,5 +238,43 @@ class TestSQLAlchemyForeignKeyRelationshipDedup(unittest.TestCase):
         self.assertEqual(parents[0].get('foreign_key'), 'parent_id')
 
 
+class TestDeclarativeBaseSubclassIsABase(unittest.TestCase):
+    """`class Base(DeclarativeBase): pass` (the standard 2.0-style app-defined
+    base) must be treated as a declarative base, not as a model — no phantom
+    to_snake('Base') table, no missing-__tablename__ warning for it — while
+    its subclasses still resolve as models (Sol release-review P1)."""
+
+    SOURCE = (
+        'from sqlalchemy.orm import DeclarativeBase, mapped_column\n'
+        'from sqlalchemy import Integer, String\n'
+        'class Base(DeclarativeBase):\n'
+        '    pass\n'
+        'class User(Base):\n'
+        '    __tablename__ = "users"\n'
+        '    id = mapped_column(Integer, primary_key=True)\n'
+        '    email = mapped_column(String(255))\n'
+    )
+
+    def _parse(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'models.py').write_text(text)
+            return erd.parse_sqlalchemy(Path(tmp))
+
+    def test_no_phantom_base_table(self):
+        tables, warnings = self._parse(self.SOURCE)
+        self.assertIn('users', tables)
+        self.assertNotIn('base', tables)
+        self.assertEqual([w for w in warnings if "'Base'" in w or '"Base"' in w], [])
+
+    def test_chained_base_subclass_is_also_a_base(self):
+        chained = self.SOURCE.replace(
+            'class User(Base):',
+            'class ProjectBase(Base):\n    pass\nclass User(ProjectBase):')
+        tables, warnings = self._parse(chained)
+        self.assertIn('users', tables)
+        self.assertNotIn('base', tables)
+        self.assertNotIn('project_base', tables)
+
+
 if __name__ == '__main__':
     unittest.main()

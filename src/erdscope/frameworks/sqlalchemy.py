@@ -146,13 +146,30 @@ def parse_sqlalchemy(root):
             classes[node.name] = {'bases': bases, 'tablename': tablename, 'abstract': abstract,
                                   'fields': fields, 'file': str(path), 'lineno': node.lineno}
 
+    # `class Base(DeclarativeBase): pass` (the 2.0-style app-defined base) is
+    # a declarative BASE, not a model: no __tablename__, no columns or
+    # relationships of its own. Promote such a class (transitively — a base
+    # can subclass another base) into root_bases so its subclasses still
+    # resolve as models, instead of letting the D7 fallback below fabricate a
+    # phantom to_snake('Base') table for the base itself.
+    changed = True
+    while changed:
+        changed = False
+        for name, c in classes.items():
+            if (name not in root_bases and not c['tablename'] and not c['fields']
+                    and any(b in root_bases for b in c['bases'])):
+                root_bases.add(name)
+                changed = True
+
     # a class is a model if any base (transitively, by bare name) resolves to
-    # a recognised declarative base — mirrors parse_django's model_keys walk
+    # a recognised declarative base — mirrors parse_django's model_keys walk.
+    # A class that IS a recognised base (root_bases, incl. the promotion
+    # above) is never itself a model.
     model_keys, changed = set(), True
     while changed:
         changed = False
         for name, c in classes.items():
-            if name in model_keys:
+            if name in model_keys or name in root_bases:
                 continue
             if (any(b in root_bases for b in c['bases'])
                     or any(b in model_keys for b in c['bases'])):
