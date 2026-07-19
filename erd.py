@@ -78,6 +78,12 @@ from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse
 
+# Single source of truth for the package version (mirrored, not read
+# dynamically, into pyproject.toml's `version` — kept in sync by
+# tests/test_version.py). erd.py must stay importable/runnable standalone,
+# so this can't be sourced from pyproject.toml at runtime.
+__version__ = '0.9.0'
+
 # ---------------------------------------------------------------------------
 # Provider / provenance contracts
 # ---------------------------------------------------------------------------
@@ -11918,7 +11924,9 @@ def main():
     p = argparse.ArgumentParser(
         description='Generate an interactive ER diagram (and optional Excel table definitions) '
                     'from a MySQL / PostgreSQL / SQLite database, application code '
-                    '(Rails / Prisma / Django), and/or a config schema — any one source is enough')
+                    '(Rails / Prisma / Django / SQLAlchemy / Laravel), and/or a config schema '
+                    '— any one source is enough')
+    p.add_argument('--version', '-V', action='version', version=f'erdscope {__version__}')
     p.add_argument('database',
                    metavar='mysql://user@host/db | postgres://user@host/db | sqlite:///file.db',
                    nargs='?',
@@ -11938,7 +11946,8 @@ def main():
                    help='Output HTML file (default: erd.html)')
     p.add_argument('--models', metavar='PATH', action='append', default=argparse.SUPPRESS,
                    help='Merge association semantics parsed from application code '
-                        '(Rails project/app/models dir, schema.prisma, or Django project). '
+                        '(Rails project/app/models dir, schema.prisma, a Django project, '
+                        'a SQLAlchemy models dir, or a Laravel app/Models dir). '
                         'Repeatable to merge several frameworks; later ones win on ties')
     p.add_argument('--adapter', metavar='PATH', action='append', default=argparse.SUPPRESS,
                    help='Load a Python plugin file that registers a custom database '
@@ -12018,7 +12027,7 @@ def main():
                         'can be wrong, and both the FK badge and the "PK/FK" column '
                         'view only ever show columns from real associations)')
     p.add_argument('--table-map', action='append', metavar='Class=table', default=argparse.SUPPRESS,
-                   help="Rails only: override a model's table when static analysis "
+                   help="Rails / Laravel only: override a model's table when static analysis "
                         "can't determine it (e.g. table_name set inside a concern "
                         "that lives in a gem). Repeatable; comma-separated lists "
                         "accepted, e.g. --table-map 'Widget=crm_widgets,Foo=bar_table'")

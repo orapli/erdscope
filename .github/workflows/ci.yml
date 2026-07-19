@@ -49,6 +49,47 @@ jobs:
       - name: Screenshot script smoke test
         run: python3 docs/gen_shots.py
 
+  # The zero-dependency unittest pass (only — full E2E/playwright stays
+  # latest-Python/Ubuntu-only, matching the `test` job above) also runs on
+  # 3.9, the oldest version pyproject.toml's requires-python promises.
+  # src/erdscope/ has been checked to be 3.9-syntax-compatible via AST, but
+  # that doesn't catch a runtime-only incompatibility, hence actually running
+  # the suite here.
+  test-oldest-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - run: python3 -m unittest discover -s tests
+
+  # erd.py is promised to run zero-dependency on Windows too, but nothing
+  # previously exercised that — only Ubuntu ran CI. This does not attempt
+  # browser E2E or the DB integration tests (both stay Ubuntu-only); it's
+  # a minimal smoke pass to catch Windows-only failures (encoding defaults,
+  # path separators) in the zero-dependency code path.
+  windows-smoke:
+    runs-on: windows-latest
+    # erd.py itself always opens files with encoding='utf-8' explicitly, but
+    # the test suite's many Path.read_text()/write_text() calls don't, so
+    # they fall back to locale.getencoding() — cp1252 on this runner, which
+    # can't decode the UTF-8 erd.py just wrote. PYTHONUTF8 makes that default
+    # UTF-8 (PEP 540) without touching every call site; this is a test-harness
+    # fix, not a product one, since the actual CLI never relied on the locale
+    # default in the first place.
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Unit tests (no optional dependencies)
+        run: python -m unittest discover -s tests
+      - name: erd.py demo smoke test
+        run: python erd.py demo -o out.html --no-open
+
   # Runs against real MySQL/PostgreSQL service containers, independently of
   # (and in parallel with) the `test` job above. tests/test_db_integration.py
   # skips itself cleanly (unittest.skipUnless) whenever the ERDSCOPE_IT_*_URL

@@ -78,6 +78,12 @@ from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse
 
+# Single source of truth for the package version (mirrored, not read
+# dynamically, into pyproject.toml's `version` — kept in sync by
+# tests/test_version.py). erd.py must stay importable/runnable standalone,
+# so this can't be sourced from pyproject.toml at runtime.
+__version__ = '0.9.0'
+
 # ---------------------------------------------------------------------------
 # Provider / provenance contracts
 # ---------------------------------------------------------------------------

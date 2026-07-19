@@ -295,9 +295,11 @@ class _EmitDigestDriver(unittest.TestCase):
         self._orig_cwd = os.getcwd()
         self.addCleanup(lambda: setattr(erd, 'parse_mysql', self._orig_parse))
         self.addCleanup(lambda: setattr(sys, 'argv', self._orig_argv))
-        self.addCleanup(os.chdir, self._orig_cwd)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        # chdir-back registered last so it runs first (addCleanup is LIFO) —
+        # Windows can't rmtree a directory that's still the process cwd.
+        self.addCleanup(os.chdir, self._orig_cwd)
         os.chdir(self.tmp.name)
         erd.parse_mysql = lambda url: erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
 

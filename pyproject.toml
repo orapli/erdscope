@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "erdscope"
 version = "0.9.0"
-description = "Interactive, self-contained ER-diagram HTML and Excel table definitions from a MySQL, PostgreSQL, or SQLite database and/or application code (Rails / Prisma / Django) — single file, zero required dependencies"
+description = "Interactive, self-contained ER-diagram HTML and Excel table definitions from a MySQL, PostgreSQL, or SQLite database and/or application code (Rails / Prisma / Django / SQLAlchemy / Laravel) — single file, zero required dependencies"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [{ name = "tas6" }]
-keywords = ["erd", "er-diagram", "database", "schema", "mysql", "postgresql", "postgres", "sqlite", "rails", "prisma", "django", "documentation"]
+keywords = ["erd", "er-diagram", "database", "schema", "mysql", "postgresql", "postgres", "sqlite", "rails", "prisma", "django", "sqlalchemy", "laravel", "documentation"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

@@ -7,7 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+0.9.x is a stabilization pass — no new input sources, exports, or CLI
+capabilities. It closes the gap between what erdscope actually supports and
+what its CLI help, packaging metadata, and docs claimed, and adds the
+support/release-safety scaffolding a public PyPI package should have had
+from the start.
+
+### Added
+
+- **`erdscope --version` / `-V`** — the version string only ever lived in
+  `pyproject.toml`, so there was no way to check what a running `erd.py`
+  actually was. `__version__` now lives in `src/erdscope/header.py`
+  (included in the single-file build, so `erd.py` still works standalone)
+  and is kept in sync with `pyproject.toml` by `tests/test_version.py`.
+- **`.github/ISSUE_TEMPLATE/bug_report.yml`** — structured bug report form
+  (erdscope/Python/OS versions, which input source(s) are involved, a
+  secret-free repro command, minimal repro input, actual vs. expected).
+- **`SECURITY.md`** — vulnerability reports go through GitHub Security
+  Advisories; also documents that generated HTML embeds the full schema
+  (treat it like a schema dump before sharing), that a read-only DB account
+  is recommended, and that erdscope makes no network calls of its own.
+- **Release safety gate** (`release.yml`) — a `verify` job now runs between
+  `build` and `publish` on every `v*` tag push, and must pass before
+  anything reaches PyPI: the tag must match `pyproject.toml`'s version,
+  `CHANGELOG.md` must have a heading for that version, and the built wheel
+  must actually install and pass `erdscope --version` / `erdscope demo`.
+- **CI now runs on Python 3.9 and Windows** (`ci.yml`) — the
+  zero-dependency unit test pass (only) now also runs on Python 3.9 (the
+  oldest version `pyproject.toml` promises) and on `windows-latest` (plus
+  an `erd.py demo` smoke test there). Full E2E/playwright and the
+  MySQL/PostgreSQL integration tests remain Ubuntu + latest-Python only.
+- **README: "Who this helps" / "Why trust it with your schema"** — three
+  concrete use cases (onboarding onto an existing DB, DB-less code review,
+  client/audit handoff) and the trust properties (local-only, no
+  telemetry, read-only account is enough, self-contained output), added
+  right after the quickstart in `README.md`/`README.ja.md`.
+
 ### Fixed
+
+- **SQLAlchemy/Laravel were invisible in `--help` and packaging metadata**
+  — both frameworks were fully supported (0.8.0/earlier) but the CLI
+  `description`, the `--models` help text, `pyproject.toml`'s `description`
+  and `keywords`, and the manual's intro copy / `--table-map` FAQ still
+  only mentioned Rails/Prisma/Django, and `--table-map`'s help called
+  itself "Rails only" despite Laravel consuming it too. All now list every
+  registered framework; a new test asserts every registered framework
+  overlay name appears in `--help`, so a future overlay addition can't
+  silently repeat this drift.
 
 - **Viewer: coupons/order_coupons still landing far apart after the L
   layout fix** — a follow-up to the earlier group-obstacle direction fix

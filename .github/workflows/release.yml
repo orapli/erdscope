@@ -22,8 +22,55 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  # Gate before publish: any v* tag push reaches `build` above, but nothing
+  # confirms the tag actually matches what's about to be published, that the
+  # CHANGELOG documents it, or that the built wheel even installs and runs —
+  # so a bad tag (or a forgotten CHANGELOG entry, or a broken wheel) would
+  # otherwise go straight to PyPI. All three checks must pass before `publish`
+  # runs.
+  verify:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Tag must match pyproject.toml version
+        run: |
+          set -eu
+          tag_version="${GITHUB_REF_NAME#v}"
+          pyproject_version=$(grep -m1 -oP '(?<=^version = ")[^"]+' pyproject.toml)
+          if [ "$tag_version" != "$pyproject_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME (version $tag_version) does not match pyproject.toml version $pyproject_version"
+            exit 1
+          fi
+
+      - name: CHANGELOG.md must have a heading for this version
+        run: |
+          set -eu
+          pyproject_version=$(grep -m1 -oP '(?<=^version = ")[^"]+' pyproject.toml)
+          if ! grep -qE "^## \[${pyproject_version//./\\.}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${pyproject_version}]' heading"
+            exit 1
+          fi
+
+      - name: Install the built wheel and smoke test it
+        run: |
+          set -eu
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install dist/*.whl
+          /tmp/smoke-venv/bin/erdscope --version
+          /tmp/smoke-venv/bin/erdscope demo -o /tmp/smoke.html --no-open
+          test -s /tmp/smoke.html
+
+  publish:
+    needs: [build, verify]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

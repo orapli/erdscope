@@ -278,7 +278,7 @@ h3{font-size:18px}
 <figure class="flow-figure"><img src="img/input-flow.svg" alt="Database, application code, and config merge through erdscope into interactive HTML and an optional Excel workbook"></figure>
 <div class="flow-mobile" aria-label="erdscope input and output flow">
   <div class="mobile-source"><strong>Database</strong><span>MySQL · PostgreSQL · SQLite</span></div>
-  <div class="mobile-source"><strong>Application code</strong><span>Rails · Prisma · Django</span></div>
+  <div class="mobile-source"><strong>Application code</strong><span>Rails · Prisma · Django · SQLAlchemy · Laravel</span></div>
   <div class="mobile-source"><strong>Config</strong><span>JSON · YAML</span></div>
   <div class="mobile-merge">↓ ANY ONE OR COMBINE ↓</div>
   <div class="mobile-output"><strong>erdscope</strong><span>Interactive HTML · optional Excel workbook</span></div>
@@ -287,7 +287,7 @@ h3{font-size:18px}
 <p class="route-heading">Choose what you want to do</p>
 <div class="route-grid">
   <a class="route-card" href="#quickstart"><strong>Try it with no setup</strong><span>Open the bundled shop schema and learn the basic workflow.</span></a>
-  <a class="route-card" href="#input-sources"><strong>Generate from what I have</strong><span>Use a database, Rails, Prisma, Django, config, or several sources together.</span></a>
+  <a class="route-card" href="#input-sources"><strong>Generate from what I have</strong><span>Use a database, Rails, Prisma, Django, SQLAlchemy, Laravel, config, or several sources together.</span></a>
   <a class="route-card" href="#viewer-guide"><strong>Explore a generated diagram</strong><span>Search, focus, rearrange, save views, and understand relation types.</span></a>
   <a class="route-card" href="#exports"><strong>Share or hand off the result</strong><span>Export PNG, SVG, Mermaid, PlantUML, or an Excel definition workbook.</span></a>
   <a class="route-card wide" href="#troubleshooting"><strong>Something is not working</strong><span>Find connection, relation, display, and large-schema troubleshooting guidance.</span></a>
@@ -313,7 +313,7 @@ no longer required:
 <li><strong>Database</strong> (MySQL / PostgreSQL / SQLite) — the source of truth for tables, columns,
 comments, indexes, and real foreign keys, read from the database catalog
 (<code>information_schema</code> on MySQL, <code>pg_catalog</code> on PostgreSQL, <code>PRAGMA</code> queries on SQLite).</li>
-<li><strong>Application code</strong> (<code>--models</code>: Rails / Prisma / Django) — adds
+<li><strong>Application code</strong> (<code>--models</code>: Rails / Prisma / Django / SQLAlchemy / Laravel) — adds
 association semantics the database alone can't express (<code>has_many :through</code>,
 polymorphic, …), and can stand on its own when there is no DB to point at.</li>
 <li><strong>Config file</strong> (a <code>tables:</code> section) — declare or patch a schema
@@ -336,7 +336,7 @@ diagram will be.
 
 <div class="grid-cards">
   <div class="card"><h4>Database truth</h4><p>Tables, columns (full SQL types, defaults, extras), comments, indexes, and real FK constraints — read directly from the database.</p></div>
-  <div class="card"><h4>Code semantics on top</h4><p><code>--models</code> merges in Rails/Prisma/Django associations; DB FKs already covered by an association are deduplicated, the rest get a "DB FK" badge.</p></div>
+  <div class="card"><h4>Code semantics on top</h4><p><code>--models</code> merges in Rails/Prisma/Django/SQLAlchemy/Laravel associations; DB FKs already covered by an association are deduplicated, the rest get a "DB FK" badge.</p></div>
   <div class="card"><h4>Interactive exploration</h4><p>Focus with depth and direction, two-level hiding, table and column search, named views, share links.</p></div>
   <div class="card"><h4>Readable layouts</h4><p>Viewport-aware packing, drag-to-snap, multi-select align/distribute, Auto-tidy, undo/redo.</p></div>
   <div class="card"><h4>Exports</h4><p>PNG, SVG, Mermaid, PlantUML — each with copy and download — plus an Excel workbook.</p></div>
@@ -896,7 +896,7 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
 <tr><td><code>--infer-fk</code></td><td>Guess relations from <code>*_id</code> column names when no real association/FK backs them. Off by default — see <a href="#faq-infer-fk">Troubleshooting</a></td></tr>
-<tr><td><code>--table-map 'Widget=crm_widgets'</code></td><td>Rails only: override a model's table when static analysis can't determine it. Repeatable; comma-separated lists accepted — see <a href="#faq-table-map">Troubleshooting</a></td></tr>
+<tr><td><code>--table-map 'Widget=crm_widgets'</code></td><td>Rails / Laravel only: override a model's table when static analysis can't determine it. Repeatable; comma-separated lists accepted — see <a href="#faq-table-map">Troubleshooting</a></td></tr>
 <tr><td><code>--config PATH</code></td><td>Load defaults from a config file. Auto-discovered as <code>.erdscope.json</code>/<code>.yml</code>/<code>.yaml</code> in the current directory if not given</td></tr>
 <tr><td><code>--no-config</code></td><td>Skip config auto-discovery even if <code>.erdscope.*</code> exists in the cwd</td></tr>
 <tr><td><code>--no-open</code></td><td>Skip automatically opening a browser after generating. Only relevant to <code>demo</code> (which opens one by default); accepted but has no effect on a normal run</td></tr>
@@ -1339,9 +1339,10 @@ faint dotted line, see <a href="#viewer-edges">Edge types</a>) rather than looki
 verified relation.</p>
 
 <h3 id="faq-table-map">When do I need <code>--table-map</code>?</h3>
-<p>It's a Rails-only escape hatch for the rare case where erdscope's static analysis can't work out
-a model's real table — most commonly, a <code>self.table_name = ...</code> assignment that lives
-inside a <code>concern</code> module shipped by a gem rather than in the app itself, so there's no
+<p>It's a Rails / Laravel escape hatch for the rare case where erdscope's static analysis can't work out
+a model's real table — most commonly, a Rails <code>self.table_name = ...</code> assignment (or a
+Laravel <code>protected $table = ...</code>) that lives inside a <code>concern</code>/trait or base
+class shipped by a gem/package rather than in the app itself, so there's no
 app-local source to scan. Pass <code>--table-map 'Widget=crm_widgets'</code> (repeatable,
 comma-separated lists accepted) to override it explicitly; the override also fixes up any other
 model's association that points <em>at</em> that model, so right-pane links resolve to the correct
