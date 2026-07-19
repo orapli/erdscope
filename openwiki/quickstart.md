@@ -2,13 +2,14 @@
 
 erdscope is a Python 3.9+ CLI that produces a self-contained interactive ER-diagram HTML file and optional Excel, JSON/config/digest/DBML/Mermaid/PlantUML schema exports. A schema can come from any combination of a live MySQL/PostgreSQL/SQLite database, Rails/Prisma/Django/SQLAlchemy/Laravel model code, typed DBML or Mermaid `erDiagram` input, and declarative JSON/YAML config. The repository’s defining constraint is that development is split into readable source fragments, while distribution remains one zero-required-dependency `erd.py` file.
 
-This wiki documents local HEAD `6ebfccc` / release `v0.8.0` (2026-07-19).
+This wiki documents local HEAD `01b638d` / stabilization line `0.9.x` (2026-07-19). The package version is exposed by `erdscope --version` / `-V` and kept aligned with `pyproject.toml` by `tests/test_version.py`.
 
 ## Start here
 
 ```bash
 # zero-setup product smoke test
 python3 erd.py demo --no-open
+python3 erd.py --version
 
 # use the committed SQLite example
 python3 erd.py sqlite:///examples/demo_shop.db -o /tmp/shop.html

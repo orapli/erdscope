@@ -92,7 +92,7 @@ python3 docs/gen_demo.py
 python3 docs/gen_shots.py
 ```
 
-Then verify `python3 tools/build_single_file.py --check` and inspect `git diff`. `docs/index.html` is deterministic and must be committed when changed. Screenshots are rendering-dependent; CI smoke-tests generation but does not require byte identity. Recent viewer changes are covered by `tests/test_e2e.py`: align-right/bottom actions affect multi-select only; auto-expanded neighbors can be promoted to explicit roots; and group frames repel only freshly auto-placed tables. For group-frame conflicts, the bounded resolver chooses the least-travel direction among down, right, and left, with deterministic down > right > left ties; it never moves up. Avoid `"""` in viewer source because the builder embeds it in a raw triple-double-quoted string.
+Then verify `python3 tools/build_single_file.py --check` and inspect `git diff`. `docs/index.html` is deterministic and must be committed when changed. Screenshots are rendering-dependent; CI smoke-tests generation but does not require byte identity. Recent viewer changes are covered by `tests/test_e2e.py`: align-right/bottom actions affect multi-select only; auto-expanded neighbors can be promoted to explicit roots; and group frames repel only freshly auto-placed tables; a depth-1 node with deeper children stays in the same below/above band as those children when the row wraps. For group-frame conflicts, the bounded resolver chooses the least-travel direction among down, right, and left, with deterministic down > right > left ties; it never moves up. Avoid `"""` in viewer source because the builder embeds it in a raw triple-double-quoted string.
 
 ### Excel
 
@@ -119,7 +119,7 @@ When changing sample schema/content:
 
 ## Release workflow
 
-The current `.github/workflows/release.yml` triggers on `v*`, builds wheel/sdist, and publishes to PyPI through trusted publishing/OIDC. It does not independently run the full CI matrix, so treat successful pre-tag verification as mandatory.
+The current `.github/workflows/release.yml` triggers on `v*`, builds wheel/sdist, then runs a `verify` job before publishing to PyPI through trusted publishing/OIDC. Verification checks that the tag matches `pyproject.toml`, that `CHANGELOG.md` has the version heading, and that the built wheel installs and passes `erdscope --version` plus `erdscope demo`; `publish` depends on both build and verify. It does not independently run the full CI matrix, so treat successful pre-tag verification as mandatory.
 
 Recommended sequence:
 

@@ -65,7 +65,9 @@ The main `test` job performs:
 5. Deterministic `docs/index.html` regeneration and diff check.
 6. Screenshot generator smoke test.
 
-The DB integration job runs independently. The project advertises Python 3.9+, but CI currently selects one latest `3.x` Linux interpreter rather than a version/OS matrix.
+Two additional zero-dependency jobs protect the supported runtime boundary: `test-oldest-python` runs the suite on Python 3.9, and `windows-smoke` runs the suite plus `python erd.py demo -o out.html --no-open` on Windows. The Windows job sets `PYTHONUTF8=1` for test-harness text-file defaults; full Playwright/browser E2E and MySQL/PostgreSQL integration remain Ubuntu-only.
+
+The DB integration job runs independently. The project advertises Python 3.9+; CI now exercises the oldest promised Python version and Windows in addition to the main latest-Python Linux job.
 
 ## Generated-artifact runbook
 
@@ -109,6 +111,7 @@ For large image exports, the viewer caps PNG canvas dimensions and may reduce sc
 - Provider metadata strips URL passwords.
 - Runtime `--adapter` files are imported Python and must be trusted.
 - Generated HTML contains schema names/comments and possibly defaults; treat it as sensitive documentation if the source schema is sensitive.
+- Report suspected vulnerabilities through GitHub Security Advisories as described in `SECURITY.md`; do not put secrets or sensitive schema data in a public issue.
 
 ## Troubleshooting guide
 
@@ -134,7 +137,8 @@ Before pushing a `v*` tag:
 - Full dependency-free and optional/browser suites pass.
 - Real DB integration passes for DB-layer changes.
 - `erd.py --check`, demo regeneration diff, and screenshot smoke test pass.
-- `pyproject.toml`, `CHANGELOG.md`, and tag version agree.
+- `pyproject.toml`, `CHANGELOG.md`, and tag version agree; `tests/test_version.py` also keeps the standalone runtime version aligned with package metadata.
 - `python -m build` succeeds and package contents are inspected.
+- The release workflow's `verify` job passes: tag/version and CHANGELOG checks succeed, and the built wheel installs and passes `erdscope --version` plus the demo smoke test before `publish` can run.
 
 The tag workflow uses PyPI trusted publishing and requires no API token in repository secrets (`.github/workflows/release.yml`).

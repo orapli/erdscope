@@ -13,7 +13,7 @@ This is an amalgamation, **not a conventional importable `erdscope` package**. F
 
 ## End-to-end pipeline
 
-The primary entrypoint is `src/erdscope/cli.py:main()`.
+The primary entrypoint is `src/erdscope/cli.py:main()`. `--version`/`-V` reports the single-file runtime's `__version__`, defined in `src/erdscope/header.py` and checked against `pyproject.toml` by `tests/test_version.py`.
 
 1. **Parse CLI and select demo or normal execution.** `demo` delegates to `src/erdscope/demo.py`, creates a temporary SQLite database from embedded SQL, disables config discovery for determinism, and re-enters `_run_pipeline()`.
 2. **Load and validate config.** `src/erdscope/config.py:load_config()` discovers `.erdscope.json`, then `.yml`, then `.yaml`, unless disabled. CLI-provided mirror options take precedence because argparse suppresses their defaults.
@@ -73,7 +73,7 @@ Detection strategy is part of each overlay’s contract: marker-based overlays (
 
 ### Viewer and exports
 
-`src/erdscope/viewer.html` is a standalone SVG application with no runtime data fetch. It provides exploration, filtering, layout editing, persistent named views, and PNG/SVG/Mermaid/PlantUML exports. Recent layout behavior treats group frames as obstacles only for newly auto-placed tables, adds right/bottom multi-select alignment, and lets auto-expanded neighbors become explicit selections. State is stored in browser `localStorage`, namespaced by document title. `src/erdscope/exporters.py` writes XLSX directly with stdlib ZIP/XML and supports a five-style-cell template contract.
+`src/erdscope/viewer.html` is a standalone SVG application with no runtime data fetch. It provides exploration, filtering, layout editing, persistent named views, and PNG/SVG/Mermaid/PlantUML exports. Recent layout behavior treats group frames as obstacles only for newly auto-placed tables, adds right/bottom multi-select alignment, lets auto-expanded neighbors become explicit selections, and keeps depth-1 parents in the same vertical band as their deeper children when wrapped rows alternate. State is stored in browser `localStorage`, namespaced by document title. `src/erdscope/exporters.py` writes XLSX directly with stdlib ZIP/XML and supports a five-style-cell template contract.
 
 ## Generated build constraints
 
@@ -102,6 +102,6 @@ See `CHANGELOG.md` and targeted commits around the split build, plugin loading, 
 - Treat runtime plugin paths as trusted code execution.
 - Keep merge order deterministic; never emit from unordered sets.
 - Preserve the internal/output provenance boundary unless coordinating viewer, Excel, and compatibility tests.
-- Static framework parsing is intentionally bounded; do not claim runtime equivalence.
+- Static framework parsing is intentionally bounded; do not claim runtime equivalence. Laravel accepts either its `app/Models` directory or a project root and narrows the latter before parsing; SQLAlchemy excludes empty declarative base classes, including transitively promoted 2.0-style bases, so they do not become phantom tables.
 - Composite PKs exist, but composite FK semantics are not end-to-end supported.
 - For very large schemas, browser layout—not CLI generation—is the dominant cost; see [Operations and testing](../operations-and-testing.md).

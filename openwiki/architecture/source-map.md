@@ -6,7 +6,7 @@ Use this page to move from a question or change request to the smallest relevant
 
 | Concern | Primary source | Verification / companion evidence |
 |---|---|---|
-| Package metadata and console script | `pyproject.toml` | `README.md`, `CHANGELOG.md` |
+| Package metadata, runtime version, and console script | `pyproject.toml`, `src/erdscope/header.py`, `src/erdscope/cli.py` | `tests/test_version.py`, `tests/test_cli_help.py`, `README.md`, `CHANGELOG.md` |
 | CLI arguments and orchestration | `src/erdscope/cli.py` | `tests/test_pipeline.py`, `tests/test_erd.py` |
 | Zero-setup sample | `src/erdscope/demo.py` | `tests/test_demo.py`, `examples/`, `docs/gen_demo.py` |
 | Generated distributable | `tools/build_single_file.py`, `erd.py` | `tests/test_build.py`, CI build-drift check |
@@ -67,7 +67,7 @@ Viewer changes normally require rebuilding `erd.py` and regenerating `docs/index
 
 | Concern | Source |
 |---|---|
-| Main CI and real-DB services | `.github/workflows/ci.yml` |
+| Main CI, oldest-Python/Windows smoke, and real-DB services | `.github/workflows/ci.yml` |
 | Tag-driven PyPI trusted publishing | `.github/workflows/release.yml` |
 | Scheduled OpenWiki refresh | `.github/workflows/openwiki-update.yml` |
 | Unit/characterization/pipeline suites | `tests/test_*.py` |
