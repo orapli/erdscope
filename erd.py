@@ -78,6 +78,12 @@ from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse
 
+# Single source of truth for the package version (mirrored, not read
+# dynamically, into pyproject.toml's `version` — kept in sync by
+# tests/test_version.py). erd.py must stay importable/runnable standalone,
+# so this can't be sourced from pyproject.toml at runtime.
+__version__ = '0.9.0'
+
 # ---------------------------------------------------------------------------
 # Provider / provenance contracts
 # ---------------------------------------------------------------------------
@@ -11918,7 +11924,9 @@ def main():
     p = argparse.ArgumentParser(
         description='Generate an interactive ER diagram (and optional Excel table definitions) '
                     'from a MySQL / PostgreSQL / SQLite database, application code '
-                    '(Rails / Prisma / Django), and/or a config schema — any one source is enough')
+                    '(Rails / Prisma / Django / SQLAlchemy / Laravel), and/or a config schema '
+                    '— any one source is enough')
+    p.add_argument('--version', '-V', action='version', version=f'erdscope {__version__}')
     p.add_argument('database',
                    metavar='mysql://user@host/db | postgres://user@host/db | sqlite:///file.db',
                    nargs='?',
