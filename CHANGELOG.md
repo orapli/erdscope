@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Viewer: coupons/order_coupons still landing far apart after the L
+  layout fix** — a follow-up to the earlier group-obstacle direction fix
+  (0.8.0): gridLayout's depth-1 row, when it wraps into 2 physical
+  sub-rows, alternates them above/below the hub with no notion of whether
+  a depth-1 node has its own depth-2+ children. A childless depth-1
+  sibling flipped to the "up" band costs nothing, but a depth-1 node that
+  IS a parent gets stranded from its children, which always flow downward
+  regardless of which band the parent landed in. Depth-1's row is now
+  stable-partitioned (parents-with-descendants first) right before the
+  wrap decides sub-row membership. Demo measurement: the
+  coupons/order_coupons gap went from 716px to 216px (and now sit almost
+  directly above/below each other on the x axis too).
+
 ## [0.9.0] - 2026-07-19
 
 ### Added
