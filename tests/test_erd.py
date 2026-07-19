@@ -956,6 +956,133 @@ class TestParseDjangoAdvanced(unittest.TestCase):
         self.assertIn('title', art_cols)        # neighbours unaffected
 
 
+class TestParseLaravel(unittest.TestCase):
+    """Laravel Eloquent overlay: regex-based static analysis over a directory
+    of *.php model files (tests/fixture_laravel), association-only like Rails
+    (no `columns` key — see laravel_provider's docstring)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parent / 'fixture_laravel'
+        cls.result = erd.laravel_provider(cls.root)
+        cls.tables = cls.result['tables']
+
+    def _assocs(self, table):
+        return {a['name']: a for a in self.tables[table]['associations']}
+
+    def test_detect_code_source(self):
+        self.assertEqual(erd.detect_code_source(self.root), 'laravel')
+
+    def test_no_columns_key(self):
+        # association-only: an absent `columns` key, not an empty list, is
+        # what tells merge_ir to keep the lower (DB) layer's columns intact
+        self.assertNotIn('columns', self.tables['posts'])
+
+    def test_has_many_and_has_one(self):
+        user = self._assocs('users')
+        self.assertEqual(user['posts']['type'], 'has_many')
+        self.assertEqual(user['posts']['target'], 'posts')
+        self.assertEqual(user['profile']['type'], 'has_one')
+        self.assertEqual(user['profile']['target'], 'profiles')
+
+    def test_belongs_to_backfills_conventional_foreign_key(self):
+        # Post::user() gives no explicit foreign key — must default to the
+        # Eloquent convention (<name>_id), not come out unset
+        post = self._assocs('posts')
+        self.assertEqual(post['user']['type'], 'belongs_to')
+        self.assertEqual(post['user']['target'], 'users')
+        self.assertEqual(post['user']['foreign_key'], 'user_id')
+
+    def test_belongs_to_explicit_foreign_key_wins(self):
+        post = self._assocs('posts')
+        self.assertEqual(post['author']['foreign_key'], 'created_by_id')
+
+    def test_commented_out_relation_is_ignored(self):
+        # Post::user()'s body has a commented-out `belongsTo(Tag::class)` —
+        # comment-stripping must keep it from being read as a real relation
+        post = self._assocs('posts')
+        self.assertNotEqual(post['user']['target'], 'tags')
+
+    def test_self_reference_both_directions(self):
+        post = self._assocs('posts')
+        self.assertEqual(post['parent']['type'], 'belongs_to')
+        self.assertEqual(post['parent']['target'], 'posts')
+        self.assertEqual(post['parent']['foreign_key'], 'parent_id')
+        self.assertEqual(post['replies']['type'], 'has_many')
+        self.assertEqual(post['replies']['target'], 'posts')
+
+    def test_belongs_to_many_pivot_table_becomes_through(self):
+        post = self._assocs('posts')
+        self.assertEqual(post['tags']['type'], 'has_and_belongs_to_many')
+        self.assertEqual(post['tags']['target'], 'tags')
+        self.assertEqual(post['tags']['through'], 'posts_tags_pivot')
+        tag = self._assocs('tags')
+        self.assertEqual(tag['posts']['through'], 'posts_tags_pivot')
+
+    def test_morph_to_has_no_edge_only_details(self):
+        # Comment::commentable() is `morphTo()` with no related-model
+        # argument at all — same "guessed pseudo-target, no real edge" shape
+        # as Rails' polymorphic belongs_to and Django's GenericForeignKey
+        comment = self._assocs('comments')
+        self.assertEqual(comment['commentable']['type'], 'belongs_to')
+        self.assertTrue(comment['commentable'].get('polymorphic'))
+        self.assertNotIn(comment['commentable']['target'], self.tables)
+
+    def test_morph_many_draws_a_real_polymorphic_edge(self):
+        post = self._assocs('posts')
+        self.assertEqual(post['comments']['type'], 'has_many')
+        self.assertEqual(post['comments']['target'], 'comments')
+        self.assertTrue(post['comments'].get('polymorphic'))
+
+    def test_morph_one_and_morph_to_many(self):
+        video = self._assocs('videos')
+        self.assertEqual(video['thumbnail']['type'], 'has_one')
+        self.assertEqual(video['thumbnail']['target'], 'images')
+        self.assertTrue(video['thumbnail'].get('polymorphic'))
+        self.assertEqual(video['relatedTags']['type'], 'has_and_belongs_to_many')
+        self.assertEqual(video['relatedTags']['target'], 'tags')
+        self.assertTrue(video['relatedTags'].get('polymorphic'))
+
+    def test_table_override_redirects_naive_references(self):
+        # RenamedWidget declares `protected $table = 'crm_widgets'` — the
+        # naive class_to_table('RenamedWidget') guess ('renamed_widgets')
+        # must never surface, and Gadget's bare `RenamedWidget::class`
+        # reference must be redirected to the real table
+        self.assertIn('crm_widgets', self.tables)
+        self.assertNotIn('renamed_widgets', self.tables)
+        gadget = self._assocs('gadgets')
+        self.assertEqual(gadget['widget']['target'], 'crm_widgets')
+
+    def test_non_model_class_is_not_a_table(self):
+        self.assertNotIn('helpers', self.tables)
+
+    def test_vendor_directory_is_excluded(self):
+        # vendor/VendorModel.php is a syntactically valid Eloquent model, but
+        # under vendor/ — must never surface as a table or contribute a tags
+        # association that isn't in the fixture's own model set
+        self.assertNotIn('vendor_models', self.tables)
+        tag = self._assocs('tags')
+        self.assertNotIn('vendor_model', tag)
+
+    def test_unresolvable_target_warns_with_file_line_and_is_skipped(self):
+        # DynamicTarget::owner() passes a variable (not Foo::class / a quoted
+        # string) as the related model — genuinely unresolvable by static
+        # analysis. Must be a file:line warning and a skipped association,
+        # never a silent drop and never a guessed-wrong target.
+        self.assertNotIn('owner', self._assocs('dynamic_targets'))
+        self.assertTrue(any('DynamicTarget.php' in w and 'belongsTo' in w
+                            for w in self.result['warnings']))
+        self.assertTrue(any(re.search(r':\d+:', w) for w in self.result['warnings']))
+
+    def test_table_map_override_wins_over_everything(self):
+        # --table-map beats even an explicit $table assignment, and every
+        # naive reference to the class (Gadget::widget()) is redirected too
+        result = erd.laravel_provider(self.root, table_map={'RenamedWidget': 'widgets_v2'})
+        self.assertIn('widgets_v2', result['tables'])
+        self.assertNotIn('crm_widgets', result['tables'])
+        gadget = {a['name']: a for a in result['tables']['gadgets']['associations']}
+        self.assertEqual(gadget['widget']['target'], 'widgets_v2')
+
+
 class TestGeneration(unittest.TestCase):
     def _args(self, **kw):
         base = dict(output='', models=None, excel=None, max_rows=15,

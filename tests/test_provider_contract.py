@@ -253,5 +253,15 @@ class TestSQLAlchemyContract(_ProviderContract, unittest.TestCase):
         return f
 
 
+class TestLaravelContract(_ProviderContract, unittest.TestCase):
+    TYPE = 'laravel.models'
+    PATH = CONTRACT / 'laravel'
+    PROVENANCE = 'declared'
+    M2M_STYLE = 'habtm'
+
+    def _write_empty_variant(self, tmp):
+        return tmp  # a directory with no .php files at all
+
+
 if __name__ == '__main__':
     unittest.main()
