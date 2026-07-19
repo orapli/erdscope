@@ -15,6 +15,7 @@ Run from the repository root:
     python3 -m unittest tests.test_sqlalchemy_provider -v
 """
 import importlib.util
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -117,10 +118,14 @@ class TestSQLAlchemyIRSnapshot(unittest.TestCase):
         self.assertIn(str(FIXTURE / 'models.py'), self.warnings[0])
         self.assertIn("'Account'", self.warnings[0])
         self.assertIn('account', self.warnings[0])
-        # file:line — a bare number after the path, colon-separated
-        path_part, rest = self.warnings[0].split(':', 1)
-        self.assertEqual(path_part, str(FIXTURE / 'models.py'))
-        self.assertTrue(rest.split(':', 1)[0].isdigit())
+        # file:line — a bare number after the path, colon-separated. Split on
+        # the LAST ':<digits>:' rather than the first ':': a Windows path's
+        # drive letter ('D:\...') is itself a colon that a naive
+        # split(':', 1) would mistake for the file/line separator.
+        m = re.match(r'^(.*):(\d+):', self.warnings[0])
+        self.assertIsNotNone(m, self.warnings[0])
+        self.assertEqual(m.group(1), str(FIXTURE / 'models.py'))
+        self.assertTrue(m.group(2).isdigit())
 
     def test_detect_code_source(self):
         self.assertEqual(erd.detect_code_source(FIXTURE), 'sqlalchemy')
