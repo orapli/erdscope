@@ -104,6 +104,12 @@ body.dark .srch-tgl.active{color:#93c5fd;background:#1e3a5f;border-color:#3b82f6
 body.dark .table-item.word-hit label{box-shadow:inset 3px 0 0 #fbbf24}
 /* auto-expanded (in current focus view) indicator */
 .table-item.inview .tname::after{content:'●';color:#3b82f6;font-size:7px;margin-left:5px;vertical-align:middle}
+/* AUTO/KEPT text tag — the sole blue dot above reads the same for both, so
+   this is the actual (non-color-only) way to tell "shown live by auto-expand"
+   apart from "kept after auto-expand was turned off" in the list */
+.kind-tag{font-size:9px;font-weight:700;letter-spacing:.03em;color:#64748b;
+  background:#f1f5f9;padding:1px 4px;border-radius:3px;flex-shrink:0}
+.table-item.kept .kind-tag{color:#0f766e;background:#ccfbf1}
 /* fully-hidden (banned) tables */
 .hide-btn{visibility:hidden;border:none;background:none;cursor:pointer;font-size:10px;
   padding:0 2px;opacity:.45;flex-shrink:0;line-height:1;filter:grayscale(1)}
@@ -349,6 +355,11 @@ body.dark .grp-label-text{fill:#f1f5f9}
 /* auto-expanded (shown by expansion, not by its own checkbox) */
 .er-node.auto .n-hdr{fill:#64748b}
 .er-node.auto .n-bg{stroke-dasharray:5 3}
+/* kept (auto-expand was turned off, but this table was left on screen
+   rather than yanked away) — a visibly different, finer dash than 'auto'
+   so the two dashed states never look identical side by side */
+.er-node.kept .n-hdr{fill:#52606d}
+.er-node.kept .n-bg{stroke-dasharray:2 2}
 /* ✓ badge on expansion roots (checked tables) */
 .er-node .n-root{fill:#4ade80;font-size:11px;font-weight:700}
 .er-node.sel .n-hdr,.er-node.center .n-hdr{fill:#1d4ed8}
@@ -419,6 +430,8 @@ body.dark .table-item.selected label{background:#172554}
 body.dark .table-item.focused label{background:#1e3a8a;color:#bfdbfe}
 body.dark .rel-badge{background:#1e293b;color:#94a3b8}
 body.dark .col-hit{background:#164e63;color:#a5f3fc}
+body.dark .kind-tag{background:#1e293b;color:#94a3b8}
+body.dark .table-item.kept .kind-tag{background:#134e4a;color:#5eead4}
 body.dark #center-pane{background:#0b1220;
   background-image:linear-gradient(rgba(148,163,184,.07) 1px,transparent 1px),
     linear-gradient(90deg,rgba(148,163,184,.07) 1px,transparent 1px)}
@@ -463,6 +476,9 @@ body.dark .er-node .n-wordhit{fill:#92400e}
    body tone instead, matching their already-subdued border treatment */
 body.dark .er-node .n-hdr{fill:#475569}
 body.dark .er-node.auto .n-hdr{fill:#334155}
+/* kept: distinct from both the plain dark header and 'auto' — same finer
+   dash pattern carries over from the light-mode rule above */
+body.dark .er-node.kept .n-hdr{fill:#3f4b5c}
 body.dark .er-node.ring-1 .n-hdr{fill:#2952cc}
 body.dark .er-node.ring-2 .n-hdr{fill:#4a5f8f}
 body.dark .er-node.ring-3 .n-hdr{fill:#525f78}
@@ -492,7 +508,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
   <button id="view-del" class="tb-btn" title="Delete the selected view">🗑</button>
   <button id="view-share" class="tb-btn" title="Copy a share link with the current view embedded (opening it reproduces this view)">🔗</button>
   <span id="info-bar"></span>
-  <label id="ae-label">
+  <label id="ae-label" title="ON: automatically shows tables related to every checked root. OFF: stops expanding further — tables it already showed stay on screen (dashed KEPT) until you promote or remove them individually.">
     <input type="checkbox" id="auto-expand"> Auto-expand
   </label>
   <div id="depth-ctrl">
@@ -553,7 +569,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <div class="lr"><svg class="lsvg" width="30" height="12" viewBox="0 0 30 12"><path d="M2 6 H28 M7 2 V10 M23 2 V10" stroke="#64748b" stroke-width="1.2" fill="none"/></svg>one to one</div>
         <div class="lr"><svg class="lsvg" width="30" height="12" viewBox="0 0 30 12"><path d="M10 6 H20" stroke="#64748b" stroke-width="1.2" stroke-dasharray="3 2" fill="none"/><path d="M2 6 L10 2 M2 6 L10 10 M2 6 L10 6 M28 6 L20 2 M28 6 L20 10 M28 6 L20 6" stroke="#64748b" stroke-width="1.2" fill="none"/></svg>many to many (via join table)</div>
         <div class="lr" style="color:#94a3b8">⇢name … join-table label (toggle with Labels)</div>
-        <div class="lr" style="color:#94a3b8">✓ = expansion root (checked)　dashed frame = shown by auto-expand</div>
+        <div class="lr" style="color:#94a3b8">✓ = expansion root (checked)　dashed AUTO = shown live by auto-expand　finer-dashed KEPT = left on screen after auto-expand was turned off</div>
         <div class="lr" style="color:#94a3b8">faint dotted = relation inferred from FK column name</div>
         <div class="lhint">Framework association names (has_many etc.) appear in the right pane<br>
           Diagram: click = select, shift/ctrl-click = multi-select, double-click = focus, drag = move (whole selection if multi-selected)<br>
@@ -741,6 +757,16 @@ let manualExpanded = new Set(); // tables added with ⊕ while focused (not pers
 // whenever auto-expand is on, because the newly-checked tables immediately
 // expand again on the next getDisplayTables() pass). Not persisted.
 let noAutoExpandRoot = new Set();
+// tables that were shown only by auto-expand at the moment it was turned
+// OFF — kept visible so switching Auto-expand off reads as "stop expanding
+// further" rather than "throw away what was already shown". Distinct from
+// excludedTables (still unchecked) and noAutoExpandRoot (only meaningful
+// while auto-expand is actually running its BFS): a retained table is
+// neither an explicit selection nor a fresh BFS root. Cleared whenever
+// auto-expand is turned back ON (getDisplayTables() ignores it while ON —
+// its own BFS recomputes from scratch), or when the table is promoted,
+// removed, or the overview is reset via All/None/a saved view.
+let retainedExpandedTables = new Set();
 let autoLayout     = false; // re-layout automatically whenever the display set changes
 let colHighlight   = null;  // {table, match} — column-search hit to highlight in the node
 // left-pane #search's own regex/case toggles — independent of the toolbar
@@ -883,6 +909,7 @@ const erMain = document.getElementById('er-main');
 function saveState() {
   setLS(LS('excl'), JSON.stringify([...excludedTables]));
   setLS(LS('hid'),  JSON.stringify([...hiddenTables]));
+  setLS(LS('ret'),  JSON.stringify([...retainedExpandedTables]));
   setLS(LS('ae'),   String(autoExpand));
   setLS(LS('dep'),  String(expandDepth));
   setLS(LS('cm'),   String(colMode));
@@ -903,6 +930,13 @@ function saveState() {
 function loadState() {
   try { excludedTables = new Set(JSON.parse(localStorage.getItem(LS('excl')) || '[]')); } catch{}
   try { hiddenTables   = new Set(JSON.parse(localStorage.getItem(LS('hid'))  || '[]')); } catch{}
+  // old saves predate this field entirely, and ret:null / ret:{} / a
+  // corrupted value / an unknown table name must all fall back to an empty
+  // set without ever aborting the rest of loadState()
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS('ret')) || '[]');
+    retainedExpandedTables = new Set(Array.isArray(raw) ? raw.filter(t => DATA.tables[t]) : []);
+  } catch { retainedExpandedTables = new Set(); }
   try { colOverride    = JSON.parse(localStorage.getItem(LS('cov')) || '{}') || {}; } catch{}
   autoExpand  = localStorage.getItem(LS('ae'))  === 'true';
   expandDepth = parseInt(localStorage.getItem(LS('dep')) || '1', 10);
@@ -928,6 +962,13 @@ function loadState() {
   if (![0,1,2].includes(exportNameMode)) exportNameMode = 0;
   if (!['both','out','in'].includes(expandDir)) expandDir = 'both';
   for (const [k,v] of Object.entries(colOverride)) if (![0,1,2].includes(v)) delete colOverride[k];
+  // retainedExpandedTables only has meaning while auto-expand is off — a
+  // save made (or hand-edited) with ae:true carrying a stale/foreign ret
+  // must not resurrect it once auto-expand's own BFS takes over again
+  if (autoExpand) retainedExpandedTables.clear();
+  // a table that's explicitly checked wins over a contradictory "also
+  // retained" entry — retained never overrides an explicit selection
+  for (const t of retainedExpandedTables) if (!excludedTables.has(t)) retainedExpandedTables.delete(t);
 }
 
 // ── Table helpers ──────────────────────────────────────────────────────────
@@ -979,13 +1020,20 @@ function getRelated(rootName, depth) {
 
 // Overview: checkbox selection minus hidden. With auto-expand on, every
 // checked table becomes a BFS root and its neighbors are pulled in too.
+// With auto-expand off, tables retained from the last time it WAS on stay
+// visible too (see retainedExpandedTables above) — turning the toggle off
+// stops further expansion, it does not retract what's already shown.
 // Focus: always shows the table + relations up to expandDepth —
 // that is the point of focusing, so it does not depend on the auto-expand toggle.
 // Checkboxes never limit expansion (uncheck ≠ ban; use 🚫 to ban).
 function getDisplayTables() {
   if (!focusedTable) {
+    if (!autoExpand) {
+      return allTables().filter(t => !hiddenTables.has(t)
+        && (!excludedTables.has(t) || retainedExpandedTables.has(t)));
+    }
     const base = allTables().filter(t => !hiddenTables.has(t) && !excludedTables.has(t));
-    if (!autoExpand || base.length === 0) return base;
+    if (base.length === 0) return base;
     const seen = new Set(base);
     const total = allTables().filter(t => !hiddenTables.has(t)).length;
     for (const root of base) {
@@ -997,6 +1045,21 @@ function getDisplayTables() {
   }
   const rel = getRelated(focusedTable, expandDepth);
   return allTables().filter(t => (rel.has(t) || manualExpanded.has(t)) && !hiddenTables.has(t));
+}
+
+// Pure classifier (no side effects) for how `name` is currently shown in the
+// non-focused Overview — shared by drawNode() and renderTableList() so the
+// canvas and the list never disagree about root/checked/auto/retained/
+// excluded/banned state. `displaySet` is getDisplayTables() computed ONCE
+// by the caller (a Set) — this must never call getDisplayTables() itself,
+// or a full-list render becomes O(n²).
+function overviewDisplayKind(name, displaySet) {
+  if (hiddenTables.has(name)) return 'banned';
+  if (!displaySet.has(name)) return 'excluded';
+  if (!excludedTables.has(name)) {
+    return (autoExpand && !noAutoExpandRoot.has(name)) ? 'root' : 'checked';
+  }
+  return retainedExpandedTables.has(name) ? 'retained' : 'auto';
 }
 
 // Add tables to the current view: while focused they join manualExpanded
@@ -1642,20 +1705,32 @@ function exitFocusMode() {
   clearUndoStacks(); // back to the overview's nodePos; focus-mode history doesn't apply
 }
 
+// Tables actually rendered by the last renderDiagram() call (kept current
+// by renderDiagram() itself, so it stays right regardless of which caller
+// triggered that render — see refreshView() below). Deliberately NOT
+// derived from nodePos's keys: nodePos is a coordinate cache that outlives
+// a table leaving the display set (so a manually-dragged table reappears
+// where it was left, with Auto-tidy off) — using its keys as "was this
+// already on screen" conflated "has a remembered position" with "was
+// actually visible a moment ago", so a table that had been unchecked and
+// was now being re-checked could be wrongly treated as not-newly-visible
+// (it still had a stale leftover entry in nodePos from before), silently
+// skipping the fit and leaving it wherever gridLayout happened to drop it
+// — potentially off-screen, needing a manual scroll/pan to find.
+let lastDisplayedTables = new Set();
+
 // re-render; with auto-tidy on, the overview is re-packed first so the
 // layout always tracks the current display set
 function refreshView(forceFit){
-  // snapshot which tables already had a position *before* this render —
-  // used below to scope the in-view check to only what's newly appearing,
-  // not the whole display set
-  const hadPos=new Set(Object.keys(nodePos));
+  const previouslyDisplayed = lastDisplayedTables;
+  let relayoutedAll = false;
   if(!focusedTable && autoLayout){
     const ts=getDisplayTables();
     ts.forEach(t=>delete nodePos[t]);
     ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
-      if(ts.length) gridLayout(ts);
+    if(ts.length){ gridLayout(ts); relayoutedAll=true; }
   }
-  renderDiagram();
+  renderDiagram(); // also refreshes lastDisplayedTables to the new current set
   // don't yank the viewport back to fit-all for a change that didn't
   // actually move it out of view — checking one more table in the list, or
   // any change with Auto-tidy off (existing positions are untouched, new
@@ -1665,17 +1740,25 @@ function refreshView(forceFit){
   // tweak, so it always fits — otherwise the old viewport can happen to
   // already "contain" the new, smaller focused layout and never zoom in.
   //
-  // Scoped to newly-placed tables only (not the full display set): once a
+  // Scoped to newly-visible tables only (not the full display set): once a
   // user has manually zoomed in past "everything fits," the full display
   // set's bbox essentially never fits the viewport by definition — so
   // checking the whole set meant *any* refreshView call (even unchecking
-  // a table, which places nothing new) silently zoomed back out to fit-
-  // all on the very next interaction. A removal has nothing new to bring
-  // into view, so it must never force a fit; auto-tidy wipes and re-lays-
-  // out every table, so everything counts as "newly placed" there and the
-  // full-set check still applies as before.
-  const newlyPlaced=getDisplayTables().filter(t=>!hadPos.has(t));
-  if(forceFit || !isDisplayInView(newlyPlaced)) requestAnimationFrame(fitView);
+  // a table, which brings nothing new into view) silently zoomed back out
+  // to fit-all on the very next interaction. A removal-only change must
+  // never force a fit; Auto-tidy re-packing the *entire* display set always
+  // does, since the new layout can land anywhere.
+  //
+  // Going from 0 displayed tables to 1+ always fits too, even though that
+  // lone table is technically "newly visible" either way — called out
+  // separately because it's the common "None, then check one table" path,
+  // and it must never depend on isDisplayInView() guessing right about an
+  // empty-viewport starting point.
+  const currentDisplayed = getDisplayTables();
+  const newlyVisible = currentDisplayed.filter(t => !previouslyDisplayed.has(t));
+  const wasEmptyBefore = previouslyDisplayed.size===0 && currentDisplayed.length>0;
+  if(forceFit || relayoutedAll || wasEmptyBefore || !isDisplayInView(newlyVisible))
+    requestAnimationFrame(fitView);
 }
 
 // is the given set of tables' bounding box (already) inside the viewport,
@@ -1734,6 +1817,8 @@ function svgPt(cx, cy) {
 function renderDiagram() {
   erMain.innerHTML='';
   const tables = getDisplayTables();
+  const displaySet = new Set(tables); // passed into drawNode() so
+    // overviewDisplayKind() doesn't recompute getDisplayTables() per node
   const edges  = getDisplayEdges(tables);
   layoutAll(tables, edges);
   // group-layer goes in first — it's the backmost layer (§5.2), so group
@@ -1747,10 +1832,10 @@ function renderDiagram() {
   erMain.appendChild(nodeG);
   edgeObstacles=tables;
   edges.forEach(e => drawEdge(edgeG, e));
-  tables.forEach(n => drawNode(nodeG, n));
+  tables.forEach(n => drawNode(nodeG, n, displaySet));
   // group frames are computed from nodePos/nodeSize, which layoutAll() and
   // drawNode() above just finalized for this render — draw after both.
-  drawGroups(groupG, new Set(tables));
+  drawGroups(groupG, displaySet);
   updateEdgeHighlight();
   updateInfoBar(tables.length);
   const ce=document.getElementById('canvas-empty');
@@ -1759,6 +1844,10 @@ function renderDiagram() {
     ce.innerHTML='No tables are displayed<br>Check tables in the list on the left, or press "All"'
       +(hiddenTables.size?`<br>(${hiddenTables.size} table(s) banned with 🚫 stay hidden)`:'');
   }
+  // keep this in sync regardless of which caller invoked renderDiagram()
+  // directly (not every caller goes through refreshView()) — see its
+  // declaration for why this must not be nodePos's keys instead.
+  lastDisplayedTables = displaySet;
 }
 
 function updateInfoBar(shown) {
@@ -1955,7 +2044,7 @@ function startGroupDrag(e, g){
   svg.classList.add('node-drag');
 }
 
-function drawNode(parent, name) {
+function drawNode(parent, name, displaySet) {
   const t     = DATA.tables[name];
   const pos   = nodePos[name] || {x:0,y:0};
   const sz    = nodeSize[name] || calcSize(name);
@@ -1966,15 +2055,19 @@ function drawNode(parent, name) {
 
   const depth = ringDepth[name] ?? -1;
   const ringCls = depth===0?'':depth===1?' ring-1':depth===2?' ring-2':depth>=3?' ring-3':'';
-  // overview + auto-expand: roots (checked) get a ✓ badge,
-  // expansion-pulled tables get the dashed 'auto' style
-  const isOverviewAuto = !focusedTable && autoExpand;
-  const isRoot = isOverviewAuto && !excludedTables.has(name);
-  const isAuto = isOverviewAuto && excludedTables.has(name);
+  // overview only (not focused): roots (checked BFS roots while auto-expand
+  // is on) get a ✓ badge; tables shown only because expansion pulled them in
+  // get the dashed 'auto' style; tables kept visible after auto-expand was
+  // turned OFF get the dashed 'kept' style — see overviewDisplayKind().
+  const kind = focusedTable ? null : overviewDisplayKind(name, displaySet || new Set([name]));
+  const isRoot = kind === 'root';
+  const isAuto = kind === 'auto';
+  const isKept = kind === 'retained';
   const isWordHit = wordHit(name);
   const hasLogical = !!logicalName(name);
   const g = svgEl('g', {
-    class: 'er-node' + (selectedTables.has(name)?' sel':'') + (name===focusedTable?' center':'') + (isAuto?' auto':'') + ringCls
+    class: 'er-node' + (selectedTables.has(name)?' sel':'') + (name===focusedTable?' center':'')
+      + (isAuto?' auto':'') + (isKept?' kept':'') + ringCls
       + (isWordHit?' word-hit':'') + (wordMatcher&&!isWordHit?' word-dim':'') + (hasLogical?' has-logical':''),
     transform: `translate(${lx},${ty})`,
     'data-name': name,
@@ -2028,17 +2121,21 @@ function drawNode(parent, name) {
     rbTitle.textContent='Checked (expansion root)';
     rb.appendChild(rbTitle);
     g.appendChild(rb);
-  } else if(isAuto){
-    // dashed/auto-expanded table: shown only because some other root pulled
-    // it in (its list checkbox is disabled — see renderTableList) — this is
-    // the one direct way to promote it to an explicit root (same effect as
-    // checking that checkbox would have), so it keeps its place even if
-    // auto-expand's roots/depth/direction later change and would otherwise
-    // have dropped it.
+  } else if(isAuto || isKept){
+    // dashed table: shown but not itself checked — either 'auto' (some other
+    // root is currently pulling it in live; its list checkbox is disabled,
+    // see renderTableList) or 'kept' (auto-expand pulled it in before being
+    // turned OFF, and it was left on screen rather than yanked away; its
+    // list checkbox is enabled, unchecked). Either way this ＋ is the one
+    // direct way to promote it to an explicit root, so it keeps its place
+    // even if auto-expand's roots/depth/direction/on-off state later change
+    // and would otherwise have dropped it.
     const rb=svgEl('text',{x:12,y:HDR_H/2+1,'text-anchor':'middle','dominant-baseline':'middle',class:'n-mode'});
     rb.textContent='＋';
     const rbTitle=svgEl('title',{});
-    rbTitle.textContent='Promote to an explicit selection (keep this table even if auto-expand changes)';
+    rbTitle.textContent = isKept
+      ? 'Kept after Auto-expand was turned off — click to promote to an explicit selection'
+      : 'Promote to an explicit selection (keep this table even if auto-expand changes)';
     rb.appendChild(rbTitle);
     rb.addEventListener('mousedown', e=>e.stopPropagation());
     rb.addEventListener('dblclick', e=>e.stopPropagation());
@@ -2471,28 +2568,47 @@ function toggleBan(name){
   showDetails();
 }
 
-// Exclude a table from the current view — the same effect as unchecking
+// Remove a table from the current Overview — the same effect as unchecking
 // its list checkbox, kept separate from toggleBan() above because it's a
 // much smaller commitment (easy to bring back by re-checking the box or
 // via ⊕ on a related table; doesn't survive auto-expand pulling it back
 // in as someone else's neighbor, unlike a ban).
+//
+// A *kept* (retained-after-auto-expand-OFF) table is already unchecked, so
+// simply re-adding it to excludedTables (the old body of this function)
+// was a no-op — it never actually left the screen. Drop it from
+// retainedExpandedTables instead; only fall back to excludedTables.add for
+// a table that's actually explicit right now.
 function excludeTable(name){
-  excludedTables.add(name);
+  if(retainedExpandedTables.has(name)){ retainedExpandedTables.delete(name); }
+  else { excludedTables.add(name); }
   noAutoExpandRoot.delete(name); // matches the checkbox handler's own intent: explicit removal, not a stale auto-expand root
   saveState();
   refreshView(); renderTableList();
 }
 
-// The mirror image of excludeTable(): promote a currently auto-expanded
-// (dashed, not-yet-explicit) table to an explicit root — exactly what
-// checking its list checkbox would do (excludedTables.delete), which is
-// otherwise unreachable for one of these tables since renderTableList()
-// disables the checkbox while auto-expand is what's actually showing it.
+// The mirror image of excludeTable(): promote a currently auto-expanded or
+// kept (dashed, not-yet-explicit) table to an explicit root — exactly what
+// checking its list checkbox does (see renderTableList()), and otherwise
+// unreachable for an 'auto' table since its checkbox there is disabled.
+// Shared by the list checkbox and the node's own ＋ button (drawNode) so
+// the two never disagree about what "promote" does.
 function promoteAuto(name){
+  // whether there was actually something to promote (vs. a plain checkbox
+  // check on a table with no auto/retained history) — gates the flash/toast
+  // below so routing every ordinary checkbox-check through this function
+  // doesn't spam a "promoted!" toast for the common case
+  const wasImplicit = excludedTables.has(name) || retainedExpandedTables.has(name);
   excludedTables.delete(name);
+  retainedExpandedTables.delete(name);
   noAutoExpandRoot.delete(name); // a direct promotion is explicit intent — full root, not a stale auto-expand root
   saveState();
+  if(focusedTable){ renderTableList(); showDetails(); return; } // the focus view ignores checkboxes
   refreshView(); renderTableList(); showDetails();
+  if(wasImplicit){
+    flashNode(name);
+    showToast(`${name}: promoted to an explicit selection — stays shown even if Auto-expand is turned off`);
+  }
 }
 
 // Would excludeTable(name) actually remove it from what's currently
@@ -2519,7 +2635,10 @@ function renderTableList(){
   searchBox.classList.toggle('bad-re', !!filterMatcher?.error);
   const prevScroll = list.scrollTop;
   list.innerHTML='';
-  const inView = (focusedTable||autoExpand) ? new Set(getDisplayTables()) : null;
+  // Computed once for the whole list render (not per row) — overviewDisplayKind()
+  // relies on this instead of calling getDisplayTables() itself, which would
+  // otherwise make a full list render O(n²) in the table count.
+  const displaySet = new Set(getDisplayTables());
   const colHit = t => filterMatcher && !filterMatcher.test(t)
     ? (DATA.tables[t]?.columns||[]).find(c=>filterMatcher.test(c.name) || filterMatcher.test(c.comment||''))?.name
     : null;
@@ -2555,15 +2674,21 @@ function renderTableList(){
     .forEach(name => {
       const t=DATA.tables[name];
       const isHidden=hiddenTables.has(name);
-      // shown because auto-expansion pulled it in (not by its own checkbox)
-      const autoShown=!isHidden && !!inView && inView.has(name)
-        && (focusedTable ? focusedTable!==name : excludedTables.has(name));
+      // shown because auto-expansion (or a kept-after-OFF leftover) pulled
+      // it in, not by its own checkbox — while focused, every related table
+      // other than the focus target itself counts the same way
+      const kind = focusedTable
+        ? (isHidden ? 'banned' : focusedTable===name ? 'focused'
+           : displaySet.has(name) ? 'focus-related' : 'excluded')
+        : overviewDisplayKind(name, displaySet);
+      const autoShown = kind==='auto' || kind==='retained' || kind==='focus-related';
       const item=document.createElement('div');
       item.className='table-item'
         +(focusedTable===name?' focused':'')
         +(selectedTables.has(name)&&focusedTable!==name?' selected':'')
         +(isHidden?' hidden':'')
         +(autoShown?' inview':'')
+        +(kind==='retained'?' kept':'')
         +(wordHit(name)?' word-hit':'');
       const lbl=document.createElement('label');
       lbl.addEventListener('click', e => {
@@ -2576,25 +2701,26 @@ function renderTableList(){
         e.preventDefault();
         focusedTable===name ? clearFocus() : focusTable(name); // double click = filter
       });
-      // Overview auto-expand (not focus mode): the checkbox stays enabled
-      // and doubles as the promote-to-explicit-root action (same
-      // excludedTables.delete the change handler below already does) — the
-      // list-side counterpart to the node's own ＋ button (drawNode/
-      // promoteAuto). Focus mode's own "every other table looks auto-shown"
-      // case is left locked, unchanged: focus ignores checkboxes for
-      // visibility entirely, so unlocking there would silently update
-      // excludedTables with no visible effect until the user exits focus —
-      // more confusing than useful.
+      // Overview auto-expand or kept-after-OFF (not focus mode): the
+      // checkbox stays enabled and doubles as the promote-to-explicit-root
+      // action, routed through the same promoteAuto() the node's own ＋
+      // button uses (drawNode) — one shared function so the two never
+      // disagree about what "promote" actually does. Focus mode's own
+      // "every other table looks auto-shown" case is left locked, unchanged:
+      // focus ignores checkboxes for visibility entirely, so unlocking
+      // there would silently update excludedTables with no visible effect
+      // until the user exits focus — more confusing than useful.
       const isOverviewAutoShown = autoShown && !focusedTable;
       const cb=document.createElement('input');
       cb.type='checkbox'; cb.checked=!excludedTables.has(name);
       cb.disabled=isHidden||(autoShown && !isOverviewAutoShown);
-      if(isOverviewAutoShown) cb.title='Shown by auto-expansion — check to promote it to an explicit selection';
+      if(kind==='retained') cb.title='Kept after Auto-expand was turned off — check to promote it to an explicit selection';
+      else if(isOverviewAutoShown) cb.title='Shown by auto-expansion — check to promote it to an explicit selection';
       else if(autoShown) cb.title='Shown by auto-expansion (checkbox locked while focused)';
       cb.addEventListener('change', e => {
         e.stopPropagation();
-        if(cb.checked){ excludedTables.delete(name); }
-        else { excludedTables.add(name); }
+        if(cb.checked){ promoteAuto(name); return; }
+        excludedTables.add(name);
         noAutoExpandRoot.delete(name); // a direct checkbox click is explicit intent — full root again
         saveState();
         // showDetails() so a selected table's note sections re-render against
@@ -2607,6 +2733,14 @@ function renderTableList(){
       });
       const nm=document.createElement('span'); nm.className='tname'; nm.textContent=name;
       lbl.appendChild(cb); lbl.appendChild(nm);
+      if(kind==='auto'||kind==='retained'){
+        const kt=document.createElement('span'); kt.className='kind-tag';
+        kt.textContent = kind==='auto' ? 'AUTO' : 'KEPT';
+        kt.title = kind==='auto'
+          ? 'Shown live by auto-expansion'
+          : 'Kept on screen after auto-expand was turned off';
+        lbl.appendChild(kt);
+      }
       const lg=logicalName(name);
       if(lg){const lgEl=document.createElement('span');lgEl.className='tlogical';lgEl.textContent=lg;lbl.appendChild(lgEl);}
       const hit=colHit(name);
@@ -3051,6 +3185,8 @@ const EXPORT_CSS = `
 .er-node .n-mode{display:none}
 .er-node.auto .n-hdr{fill:#64748b}
 .er-node.auto .n-bg{stroke-dasharray:5 3}
+.er-node.kept .n-hdr{fill:#52606d}
+.er-node.kept .n-bg{stroke-dasharray:2 2}
 .er-node .n-root{fill:#4ade80;font-size:11px;font-weight:bold}
 .er-node .n-sctrack{fill:#e2e8f0}
 .er-node .n-scthumb{fill:#94a3b8}
@@ -3662,11 +3798,12 @@ document.body.classList.toggle('dark', localStorage.getItem(LS('dk'))==='true');
   showToast(autoLayout?'Auto-tidy ON — the layout follows display changes':'Auto-tidy OFF');
 });
 document.getElementById('btn-all').addEventListener('click',()=>{
-  excludedTables.clear(); saveState();
+  excludedTables.clear(); retainedExpandedTables.clear(); noAutoExpandRoot.clear(); saveState();
   refreshView(); renderTableList();
 });
 document.getElementById('btn-none').addEventListener('click',()=>{
   allTables().forEach(t=>excludedTables.add(t));
+  retainedExpandedTables.clear(); noAutoExpandRoot.clear();
   if(focusedTable){ focusedTable=null; exitFocusMode(); updateDepthCtrl(); updateFocusUI(); }
   selectedTables=new Set(); selectionAnchor=null;
   saveState(); refreshView(); renderTableList(); showDetails();
@@ -3678,6 +3815,7 @@ document.getElementById('focus-bar-apply').addEventListener('click',()=>{
   if(!focusedTable) return;
   const shown=new Set(getDisplayTables());
   allTables().forEach(t=>{ if(shown.has(t)) excludedTables.delete(t); else excludedTables.add(t); });
+  retainedExpandedTables.clear(); noAutoExpandRoot.clear();
   saveState();
   clearFocus();
   showToast('Applied the focused view to the checkboxes');
@@ -3701,7 +3839,32 @@ function updateFocusUI(){
 // Auto-expand toggle — expands the overview from all checked tables
 // (focus always expands regardless of this toggle)
 document.getElementById('auto-expand').addEventListener('change', e=>{
-  autoExpand=e.target.checked;
+  const turningOn = e.target.checked;
+  // Both branches below are skipped entirely while focused: the Overview's
+  // own retained/checked bookkeeping isn't the active view at that point
+  // (getDisplayTables() while focused reads focusedTable/manualExpanded,
+  // never autoExpand or retainedExpandedTables), so touching either set
+  // here would be invisible until the user exits focus and could silently
+  // wipe out — or fabricate from the FOCUS view's own unrelated display set
+  // — Overview state the user never asked to change. The flag itself still
+  // flips either way; only its Overview-side bookkeeping effects wait.
+  if (!focusedTable) {
+    if (!turningOn) {
+      // ON -> OFF: freeze whatever auto-expand alone is currently showing
+      // (still-unchecked tables pulled in as someone's BFS neighbor) into
+      // retainedExpandedTables *before* flipping the flag — getDisplayTables()
+      // below still reads the old (true) autoExpand value at this point.
+      const shownNow = getDisplayTables();
+      retainedExpandedTables = new Set(shownNow.filter(t => excludedTables.has(t)));
+    } else {
+      // OFF -> ON: auto-expand's own BFS recomputes the expanded set from
+      // scratch every render, so a stale retained set would only cause
+      // confusion (and — combined with noAutoExpandRoot not applying to it —
+      // would let repeated OFF/ON cycles creep the display outward).
+      retainedExpandedTables.clear();
+    }
+  }
+  autoExpand=turningOn;
   document.getElementById('ae-label').className=autoExpand?'ae-on':'';
   updateDepthCtrl();
   saveState();
@@ -3874,14 +4037,22 @@ function persistViews(v){ setLS(LS('views'), JSON.stringify(v)); }
 function snapshotView(){
   const pos={};
   getDisplayTables().forEach(t=>{ const p=nodePos[t]; if(p) pos[t]={x:Math.round(p.x),y:Math.round(p.y)}; });
-  return {excl:[...excludedTables], hid:[...hiddenTables],
+  return {excl:[...excludedTables], hid:[...hiddenTables], ret:[...retainedExpandedTables],
           ae:autoExpand, dep:expandDepth, dir:expandDir, cm:colMode, pos};
 }
 
 function applyView(v){
   excludedTables=new Set(v.excl||[]); hiddenTables=new Set(v.hid||[]);
+  // always REPLACE — a view/share payload predating this field (or one an
+  // older erdscope wrote) has no `ret` at all, and even a well-formed one
+  // must never merge with whatever is currently retained, or applying a
+  // saved view could silently resurrect stale, unrelated retained tables
+  const retRaw = Array.isArray(v.ret) ? v.ret : [];
+  retainedExpandedTables = new Set(retRaw.filter(t => DATA.tables[t]));
   autoExpand=!!v.ae; expandDepth=v.dep??1; expandDir=v.dir||'both';
-  colMode=v.cm??0; colOverride={}; manualExpanded.clear();
+  if(autoExpand) retainedExpandedTables.clear(); // meaningless (and never produced) while auto-expand is on
+  for (const t of retainedExpandedTables) if (!excludedTables.has(t)) retainedExpandedTables.delete(t);
+  colMode=v.cm??0; colOverride={}; manualExpanded.clear(); noAutoExpandRoot.clear();
   if(focusedTable){ focusedTable=null; selectedTables=new Set(); selectionAnchor=null; exitFocusMode(); updateFocusUI(); }
   Object.keys(nodePos).forEach(k=>delete nodePos[k]);
   Object.keys(basePos).forEach(k=>delete basePos[k]);
