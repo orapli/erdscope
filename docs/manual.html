@@ -862,10 +862,9 @@ unchecked or banned (🚫) from the current view, its detail panel simply isn't 
 don't appear anywhere either — nothing forces a hidden table's note into view. A <code>global</code>
 note's legend entry is a separate, always-available block, unaffected by which tables are shown.
 </p>
-<div class="warn"><strong>Excel: wiring only, not implemented yet</strong>
-<code>write_excel</code> accepts the same resolved notes as the HTML viewer, so the data already
-exists in the shape a future Notes sheet would need — but this release doesn't write one. Passing
-<code>notes:</code> in your config has no effect on the <code>--excel</code> workbook today.</div>
+<div class="note"><strong>Excel picks these up too</strong>
+If at least one note is configured, the <code>--excel</code> workbook gains a
+<strong>Notes sheet</strong> — see <a href="#excel-template">Excel workbook</a> for what it contains.</div>
 </section>
 
 <section id="groups" class="prose">
@@ -920,10 +919,10 @@ PNG and SVG exports include the visible frames.
 survive filtering; a group left with zero surviving members is dropped from the output entirely,
 same as a design note whose target didn't survive.
 </p>
-<div class="warn"><strong>Excel: wiring only, not implemented yet</strong>
-<code>write_excel</code> accepts the same resolved groups as the HTML viewer, so the data already
-exists in the shape a future sheet would need — but this release doesn't write one. Passing
-<code>groups:</code> in your config has no effect on the <code>--excel</code> workbook today.</div>
+<div class="note"><strong>Excel picks these up too</strong>
+If at least one group is configured, the <code>--excel</code> workbook gains a
+<strong>Groups sheet</strong>, and the overview sheet gains a <strong>Group</strong> column showing
+each table's membership — see <a href="#excel-template">Excel workbook</a> for details.</div>
 </section>
 
 <section id="cli-reference" class="prose">
@@ -936,7 +935,7 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL/SQLite can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there; for <code>engine: sqlite</code>, <code>database</code> is a file path and <code>host</code>/<code>port</code>/<code>user</code> don't apply — see <a href="#config-file">Config file</a>).</td></tr>
 <tr><td><code>demo</code></td><td>Positional. Generate from a bundled sample e-commerce database instead of a real one — builds a throwaway SQLite copy in a temp directory, runs the normal pipeline, and opens the result in a browser. Every other option in this table still applies. Config auto-discovery is force-disabled and an explicit <code>--config</code> is ignored with a warning, so the demo always looks the same regardless of the cwd. Default output is <code>erd_demo.html</code> (not <code>erd.html</code>), so it never clobbers a real run's output</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
-<tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, a Django project, or a Rails <code>db/schema.rb</code> file — source auto-detected. For an unambiguous, typed alternative see config <a href="#input-sources"><code>sources:</code></a></td></tr>
+<tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, a Django project, a SQLAlchemy models dir, a Laravel <code>app/Models</code> dir, or a Rails <code>db/schema.rb</code> file — source auto-detected. Repeatable to merge several frameworks; later ones win on ties. For an unambiguous, typed alternative see config <a href="#input-sources"><code>sources:</code></a></td></tr>
 <tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
@@ -959,6 +958,8 @@ exists in the shape a future sheet would need — but this release doesn't write
 <tr><td><code>--config PATH</code></td><td>Load defaults from a config file. Auto-discovered as <code>.erdscope.json</code>/<code>.yml</code>/<code>.yaml</code> in the current directory if not given</td></tr>
 <tr><td><code>--no-config</code></td><td>Skip config auto-discovery even if <code>.erdscope.*</code> exists in the cwd</td></tr>
 <tr><td><code>--no-open</code></td><td>Skip automatically opening a browser after generating. Only relevant to <code>demo</code> (which opens one by default); accepted but has no effect on a normal run</td></tr>
+<tr><td><code>--version, -V</code></td><td>Print the version string and exit</td></tr>
+<tr><td><code>-h, --help</code></td><td>Print the full option help and exit</td></tr>
 </table>
 </section>
 
@@ -1487,7 +1488,7 @@ one intermediate representation (IR), documented in <code>erd.py</code>'s own mo
 </p>
 <pre><code>tables = {
   "table_name": {
-    "primary_key": "id" | None,
+    "primary_key": "id" | None,     # composite PK: each member column has primary=True
     "comment"?: str,
     "schema_missing"?: bool,        # model exists but no DB table
     "columns": [{"name","type","nullable","primary",
@@ -1496,15 +1497,21 @@ one intermediate representation (IR), documented in <code>erd.py</code>'s own mo
     "associations": [{"type": has_many|belongs_to|has_one|has_and_belongs_to_many,
                       "name", "target",
                       "through"?, "foreign_key"?, "polymorphic"?,
-                      "db_fk"?, "inferred"?}],
+                      "db_fk"?, "inferred"?, "manual"?, "schema_fk"?}],
   }
 }</code></pre>
+<p>
+The association origin flags (<code>db_fk</code> / <code>schema_fk</code> / <code>manual</code> /
+<code>inferred</code> — none of them means a plain declared association) are exactly what plugins
+return. Internally the pipeline normalizes them into a provenance/sources form and writes the same
+flags back just before serialization, so plugin authors never deal with the internal representation.
+</p>
 <p>
 Both input layers are <strong>pluggable</strong>: a <em>database adapter</em> turns a URL scheme
 into this shape, and a <em>framework overlay</em> turns a <code>--models</code> project into it.
 Each is a small class registered under the scheme / project kind it handles, so adding one never
 touches the dispatch code. The built-in <code>db/mysql.py</code>, <code>db/postgres.py</code>,
-<code>db/sqlite.py</code> and <code>frameworks/{rails,prisma,django}.py</code> are the working examples;
+<code>db/sqlite.py</code> and <code>frameworks/{rails,prisma,django,sqlalchemy,laravel}.py</code> are the working examples;
 <code>parse_postgres()</code> in particular reuses the MySQL adapter's IR builder wholesale
 (shaping <code>pg_catalog</code> results into the same five-column row layout), so PK detection,
 unique-index 1:1 promotion, and index assembly are shared rather than duplicated.

@@ -38,8 +38,9 @@
     <g transform="translate(36 132)">
       <rect width="270" height="96" rx="16" fill="#fff" stroke="#CBD5E1"/>
       <path d="M29 29l-13 19 13 19M59 29l13 19-13 19M51 23L37 73" fill="none" stroke="#7C3AED" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="82" y="40" fill="#0F172A" font-size="20" font-weight="750">Application code</text>
-      <text x="82" y="66" fill="#64748B" font-size="14">Rails · Prisma · Django</text>
+      <text x="82" y="34" fill="#0F172A" font-size="20" font-weight="750">Application code</text>
+      <text x="82" y="59" fill="#64748B" font-size="14">Rails · Prisma · Django</text>
+      <text x="82" y="79" fill="#64748B" font-size="14">SQLAlchemy · Laravel</text>
     </g>
     <g transform="translate(36 240)">
       <rect width="270" height="96" rx="16" fill="#fff" stroke="#CBD5E1"/>
