@@ -1488,7 +1488,8 @@ one intermediate representation (IR), documented in <code>erd.py</code>'s own mo
 </p>
 <pre><code>tables = {
   "table_name": {
-    "primary_key": "id" | None,     # composite PK: each member column has primary=True
+    "primary_key": "id" | ["order_id","item_id"] | None,
+                                    # composite PKs use the list form; member columns also carry primary=True
     "comment"?: str,
     "schema_missing"?: bool,        # model exists but no DB table
     "columns": [{"name","type","nullable","primary",
