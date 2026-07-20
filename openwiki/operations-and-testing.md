@@ -60,7 +60,7 @@ The main `test` job performs:
 
 1. Dependency-free unittest discovery.
 2. Optional dependency and Chromium installation.
-3. Full unittest/browser pass, including E2E coverage for alignment, auto-expanded-table promotion, and group obstacle layout.
+3. Full unittest/browser pass, including E2E coverage for alignment, retained `KEPT` tables across Auto-expand transitions, ROOT/AUTO/KEPT promotion and removal feedback, reload/view persistence and compatibility, viewport refit after reappearance, and group obstacle layout.
 4. `python3 tools/build_single_file.py --check`.
 5. Deterministic `docs/index.html` regeneration and diff check.
 6. Screenshot generator smoke test.

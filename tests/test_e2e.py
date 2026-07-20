@@ -109,6 +109,35 @@ def _build_html_with_multiple_isolated_tables():
     return out
 
 
+def _build_html_chain():
+    # a plain linear chain chain_a -> chain_b -> chain_c (each belongs_to the
+    # next, depth-1 hops only) — deliberately NOT the star-shaped TABLE_ROWS
+    # fixture: retention/repeated-toggle tests need a shape where a depth-1
+    # BFS from one end does NOT already reach the far end, so re-expanding
+    # from a newly-promoted middle table is actually observable.
+    table_rows = [('chain_a', ''), ('chain_b', ''), ('chain_c', '')]
+    col_rows = [
+        _col('chain_a', 'id', key='PRI'),
+        _col('chain_b', 'id', key='PRI'),
+        _col('chain_b', 'chain_a_id', key='MUL'),
+        _col('chain_c', 'id', key='PRI'),
+        _col('chain_c', 'chain_b_id', key='MUL'),
+    ]
+    fk_rows = [
+        ('chain_b', 'chain_a_id', 'chain_a'),
+        ('chain_c', 'chain_b_id', 'chain_b'),
+    ]
+    index_rows = [('chain_a', 'PRIMARY', 0, 1, 'id')]
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
 def _build_html_with_comments():
     # users: short English comment (typical case). posts: Japanese comment
     # long enough to exercise the 16-display-width-unit truncation cap
@@ -1202,6 +1231,22 @@ class TestClientJS(unittest.TestCase):
         self.assertEqual(zoomed, after,
             'unchecking a table (nothing new appears) must not undo a manual zoom-in')
 
+    def test_autotidy_relayout_always_refits(self):
+        # Auto-tidy ON wipes and re-lays-out the *entire* display set on
+        # every refreshView() — the new layout can land anywhere, so this
+        # must always re-fit, unlike an incidental incremental change
+        self.page.click('#btn-autolayout')
+        self.page.wait_for_timeout(50)
+        self.assertTrue(self.page.evaluate('autoLayout'))
+        self.page.evaluate('vx=-99999; vy=-99999; vs=3; setTransform();')
+        before = self.page.evaluate('({vx, vy, vs})')
+        self.page.locator('.table-item:has(.tname:text-is("likes")) input[type=checkbox]').uncheck()
+        self.page.wait_for_timeout(100)
+        after = self.page.evaluate('({vx, vy, vs})')
+        self.assertNotEqual(before, after,
+            'a full Auto-tidy re-layout must always re-fit the viewport, even for a change '
+            '(a removal) that would otherwise skip the fit')
+
     def _click_remove_button(self, name):
         box = self.page.evaluate(f'''() => {{
             const g = document.querySelector('.er-node[data-name="{name}"]');
@@ -1657,6 +1702,393 @@ class TestClientJS(unittest.TestCase):
         self.assertTrue(0 <= sx <= rect['width'] and 0 <= sy <= rect['height'],
                         f'focused table should be visible on screen, got screen pos ({sx},{sy}) '
                         f'in a {rect["width"]}x{rect["height"]} viewport')
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestAutoExpandRetention(unittest.TestCase):
+    # Auto-expand OFF used to make dashed auto-expanded tables vanish
+    # immediately (getDisplayTables() dropped anything still unchecked the
+    # instant autoExpand flipped false) — reported as "turning auto-expand
+    # off throws away what it had already shown, instead of just stopping
+    # further expansion". retainedExpandedTables (viewer.html) freezes
+    # whatever was auto-shown at the moment of the ON->OFF flip so it stays
+    # on screen; these tests exercise that plus the checkbox-promotion path
+    # for a retained (not just a live 'auto') table, reload persistence, and
+    # its interaction with All/None/Ban/saved views.
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+        self.page.click('#legend-head')  # collapse: keep it off node clicks
+        self.page.click('#btn-none')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _check(self, name):
+        self.page.evaluate('''(name) => {
+            const item = [...document.querySelectorAll('.table-item')]
+                .find(el => el.querySelector('.tname')?.textContent === name);
+            item.querySelector('input[type=checkbox]').click();
+        }''', name)
+
+    def _make_posts_retained(self):
+        # users checked + auto-expand ON pulls in posts (and the other three
+        # spokes) live; turning auto-expand back OFF should freeze 'posts'
+        # into retainedExpandedTables rather than dropping it
+        self._check('users')
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(50)
+        self.assertIn('posts', self.page.evaluate('getDisplayTables()'),
+                       'test setup: posts should be auto-expanded live')
+        self.page.locator('#auto-expand').uncheck()
+        self.page.wait_for_timeout(50)
+
+    def test_retained_after_autoexpand_off(self):
+        self._make_posts_retained()
+        self.assertIn('posts', self.page.evaluate('getDisplayTables()'),
+                       'posts must stay visible after auto-expand is turned off')
+        self.assertFalse(self.page.evaluate('autoExpand'))
+        self.assertTrue(self.page.evaluate("excludedTables.has('posts')"),
+                         'posts is retained, not promoted — its checkbox stays unchecked')
+        self.assertTrue(self.page.evaluate("retainedExpandedTables.has('posts')"))
+        self.assertFalse(self.page.evaluate("noAutoExpandRoot.has('posts')"))
+        cls = self.page.evaluate(
+            'document.querySelector(\'[data-name="posts"]\').className.baseVal')
+        self.assertIn('kept', cls)
+        self.assertNotIn(' auto', ' ' + cls)
+
+    def test_viewport_unchanged_when_toggling_off_with_everything_already_visible(self):
+        self._check('users')
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(100)  # let the ON-triggered fit settle
+        self.assertTrue(self.page.evaluate('isDisplayInView()'),
+                         'test setup: everything should already be on screen before toggling off')
+        before = self.page.evaluate('({vx, vy, vs})')
+        self.page.locator('#auto-expand').uncheck()
+        self.page.wait_for_timeout(100)
+        after = self.page.evaluate('({vx, vy, vs})')
+        self.assertEqual(before, after,
+                          'freezing the auto-expanded set into retained must not itself '
+                          'move the viewport when nothing new needs to come into view')
+
+    def test_toggling_off_while_focused_does_not_materialize_overview_state(self):
+        self._make_posts_retained()
+        # promote it back to plain-checked so we start this part from a
+        # clean, unambiguous baseline: nothing retained, nothing auto
+        self.page.evaluate("promoteAuto('posts')")
+        self.page.wait_for_timeout(50)
+        self.page.evaluate("excludedTables.add('posts'); noAutoExpandRoot.delete('posts'); "
+                            "refreshView(); renderTableList();")
+        before_excl = self.page.evaluate('[...excludedTables].sort()')
+        before_ret = self.page.evaluate('[...retainedExpandedTables].sort()')
+        self.page.evaluate("focusTable('comments')")
+        self.page.wait_for_timeout(50)
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(50)
+        self.page.locator('#auto-expand').uncheck()
+        self.page.wait_for_timeout(50)
+        self.page.evaluate('clearFocus()')
+        self.page.wait_for_timeout(50)
+        after_excl = self.page.evaluate('[...excludedTables].sort()')
+        after_ret = self.page.evaluate('[...retainedExpandedTables].sort()')
+        self.assertEqual(before_excl, after_excl,
+                          'toggling auto-expand while focused must not change the overview checks')
+        self.assertEqual(before_ret, after_ret,
+                          'toggling auto-expand while focused must not materialize retained state')
+
+    def test_reload_preserves_retained_state(self):
+        self._make_posts_retained()
+        self.page.reload()
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+        self.assertFalse(self.page.evaluate('autoExpand'))
+        self.assertIn('posts', self.page.evaluate('getDisplayTables()'),
+                       'a retained table must still be shown after a reload')
+        self.assertTrue(self.page.evaluate("retainedExpandedTables.has('posts')"))
+        self.assertTrue(self.page.evaluate("excludedTables.has('posts')"))
+
+    def test_checkbox_promotes_a_retained_table(self):
+        self._make_posts_retained()
+        row = '.table-item:has(.tname:text-is("posts"))'
+        self.assertEqual(self.page.inner_text(f'{row} .kind-tag'), 'KEPT',
+                          'test setup: the list should tag posts as KEPT before promotion')
+        cb = self.page.locator(f'{row} input[type=checkbox]')
+        self.assertTrue(cb.is_enabled(),
+                         "a retained table's checkbox must be checkable, not locked")
+        self.assertIn('Kept', cb.get_attribute('title') or '')
+        cb.check()
+        self.page.wait_for_timeout(100)
+        self.assertFalse(self.page.evaluate("excludedTables.has('posts')"))
+        self.assertFalse(self.page.evaluate("retainedExpandedTables.has('posts')"))
+        cls = self.page.evaluate(
+            'document.querySelector(\'[data-name="posts"]\').className.baseVal')
+        self.assertNotIn('kept', cls)
+        # A plain checked row deliberately has no kind-tag at all (a ticked
+        # checkbox is already unambiguous) — tagging every ordinary row was
+        # tried per an earlier review pass and reverted, since it squeezed
+        # real schemas' name/logical-name columns enough to wrap table
+        # names onto a second line. The toast + node flash already fired
+        # above are the "something changed" confirmation instead.
+        self.assertEqual(self.page.locator(f'{row} .kind-tag').count(), 0,
+            'a plain checked row should have no kind-tag')
+
+    def test_root_tag_shown_only_for_a_live_bfs_root(self):
+        self._check('users')
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(50)
+        self.assertEqual(
+            self.page.inner_text('.table-item:has(.tname:text-is("users")) .kind-tag'), 'ROOT',
+            'a checked table that is actually a live BFS root should be tagged ROOT')
+        self.page.locator('#auto-expand').uncheck()
+        self.page.wait_for_timeout(50)
+        self.assertEqual(
+            self.page.locator('.table-item:has(.tname:text-is("users")) .kind-tag').count(), 0,
+            'once Auto-expand is off, a checked table is no longer a BFS root, so it '
+            'should have no kind-tag (not a stale ROOT)')
+
+    def test_promote_toast_and_flash_only_fire_for_auto_or_retained(self):
+        # regression (Sol review): promoteAuto()'s old wasImplicit check was
+        # `excludedTables.has(name)`, true for ANY unchecked table — not
+        # just ones actually being shown live via auto-expand or kept. So
+        # simply checking a plain, previously-excluded table (e.g. right
+        # after "None") wrongly fired the "promoted!" toast and node flash.
+        toast_shown = lambda: self.page.evaluate("document.getElementById('toast').classList.contains('show')")
+        self.page.evaluate("document.getElementById('toast').classList.remove('show')")
+        self._check('comments')  # plain table, never auto/retained/checked before
+        self.page.wait_for_timeout(100)
+        self.assertFalse(toast_shown(),
+                          'checking a plain previously-excluded table must not show a "checked" toast')
+
+        self._make_posts_retained()
+        self.page.evaluate("document.getElementById('toast').classList.remove('show')")
+        cb = self.page.locator('.table-item:has(.tname:text-is("posts")) input[type=checkbox]')
+        cb.check()
+        self.page.wait_for_timeout(100)
+        self.assertTrue(toast_shown(),
+                         'promoting an actually-retained table should show a confirmation toast')
+
+    def test_node_plus_button_promotes_a_retained_table(self):
+        self._make_posts_retained()
+        box = self.page.evaluate('''() => {
+            const g = document.querySelector('.er-node[data-name="posts"]');
+            const btn = [...g.querySelectorAll('text')].find(t => t.textContent.startsWith('＋'));
+            const r = btn.getBoundingClientRect();
+            return {x: r.x + r.width/2, y: r.y + r.height/2};
+        }''')
+        self.page.mouse.click(box['x'], box['y'])
+        self.page.wait_for_timeout(100)
+        self.assertFalse(self.page.evaluate("retainedExpandedTables.has('posts')"))
+        self.assertFalse(self.page.evaluate("excludedTables.has('posts')"))
+
+    def test_remove_button_drops_a_retained_table_from_the_overview(self):
+        # regression: excludeTable() only ever did excludedTables.add(name),
+        # a no-op for a table that's already unchecked — so the ⊖ button had
+        # no effect at all on a retained table before this fix
+        self._make_posts_retained()
+        box = self.page.evaluate('''() => {
+            const g = document.querySelector('.er-node[data-name="posts"]');
+            const btn = [...g.querySelectorAll('text')].find(t => t.textContent.startsWith('⊖'));
+            const r = btn.getBoundingClientRect();
+            return {x: r.x + r.width/2, y: r.y + r.height/2};
+        }''')
+        self.page.mouse.click(box['x'], box['y'])
+        self.page.wait_for_timeout(100)
+        self.assertNotIn('posts', self.page.evaluate('getDisplayTables()'))
+        self.assertFalse(self.page.evaluate("retainedExpandedTables.has('posts')"))
+
+    def test_zero_to_one_centers_a_stale_far_away_position(self):
+        # regression: refreshView() used nodePos's own keys to guess whether
+        # a table was "already on screen" — but nodePos keeps a table's last
+        # coordinate even after it leaves the display set (so a manual
+        # layout survives uncheck/recheck with Auto-tidy off). Re-checking a
+        # table that happened to have a stale entry from before was
+        # therefore never treated as "newly visible", so fitView() never
+        # ran, silently leaving it wherever that stale position was.
+        self.assertEqual(self.page.evaluate('autoLayout'), False)
+        self.assertIsNotNone(self.page.evaluate('nodePos.users'),
+                              'test precondition: users should have a leftover position from the initial layout')
+        self.page.evaluate('nodePos.users = {x: 100000, y: 100000};')
+        self._check('users')
+        self.page.wait_for_timeout(100)
+        box = self.page.evaluate('''() => {
+            const el = document.querySelector('.er-node[data-name="users"]');
+            const r = el.getBoundingClientRect();
+            const s = document.querySelector('svg').getBoundingClientRect();
+            return {x0: r.x - s.x, y0: r.y - s.y, x1: r.x + r.width - s.x, y1: r.y + r.height - s.y,
+                    w: s.width, h: s.height};
+        }''')
+        self.assertTrue(box['x1'] > 0 and box['x0'] < box['w'] and box['y1'] > 0 and box['y0'] < box['h'],
+                         f'users should be visible on screen after being the only checked table, got {box}')
+        self.assertEqual(self.page.evaluate('({...nodePos.users})'), {'x': 100000, 'y': 100000},
+                          'the world-coordinate position must be left alone — only the viewport should move')
+
+    def test_all_clears_retained(self):
+        self._make_posts_retained()
+        self.page.click('#btn-all')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('retainedExpandedTables.size'), 0)
+        self.assertEqual(self.page.evaluate('excludedTables.size'), 0)
+
+    def test_none_clears_retained_and_shows_nothing(self):
+        self._make_posts_retained()
+        self.page.click('#btn-none')
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('retainedExpandedTables.size'), 0)
+        self.assertEqual(self.page.evaluate('getDisplayTables().length'), 0)
+
+    def test_banning_a_retained_table_hides_it_without_dropping_retained_state(self):
+        self._make_posts_retained()
+        self._ban_via_hide_btn('posts')
+        self.page.wait_for_timeout(50)
+        self.assertNotIn('posts', self.page.evaluate('getDisplayTables()'))
+        self.assertTrue(self.page.evaluate("retainedExpandedTables.has('posts')"),
+                         'a ban must not itself clear the retained record')
+        self._ban_via_hide_btn('posts')  # unban
+        self.page.wait_for_timeout(50)
+        self.assertIn('posts', self.page.evaluate('getDisplayTables()'),
+                       'unbanning should restore the same retained-kept display, since auto-expand is still off')
+
+    def _ban_via_hide_btn(self, name):
+        self.page.evaluate('''(name) => {
+            const item = [...document.querySelectorAll('.table-item')]
+                .find(el => el.querySelector('.tname')?.textContent === name);
+            item.querySelector('.hide-btn').click();
+        }''', name)
+
+    def test_saved_view_round_trips_retained_state(self):
+        self._make_posts_retained()
+        snap = self.page.evaluate('snapshotView()')
+        self.assertIn('posts', snap['ret'])
+        # clear everything, then re-apply the snapshot
+        self.page.click('#btn-all')
+        self.page.wait_for_timeout(50)
+        self.page.evaluate('(v) => applyView(v)', snap)
+        self.page.wait_for_timeout(100)
+        self.assertIn('posts', self.page.evaluate('getDisplayTables()'))
+        self.assertTrue(self.page.evaluate("retainedExpandedTables.has('posts')"))
+        self.assertFalse(self.page.evaluate('autoExpand'))
+
+    def test_apply_view_replaces_rather_than_merges_retained_state(self):
+        self._make_posts_retained()
+        # a view saved with nothing retained must CLEAR the currently-active
+        # retained set, not merge with it (applyView is a full replacement)
+        self.page.evaluate("applyView({excl:[], hid:[], ae:false, dep:1, dir:'both', cm:0, pos:{}})")
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.page.evaluate('retainedExpandedTables.size'), 0)
+
+    def test_apply_view_tolerates_missing_null_and_stale_ret(self):
+        cases = [
+            {},  # pre-'ret'-field legacy payload
+            {'ret': None},
+            {'ret': {}},
+            {'ret': ['no_such_table', 'posts']},
+        ]
+        for v in cases:
+            payload = {'excl': [], 'hid': [], 'ae': False, 'dep': 1, 'dir': 'both', 'cm': 0, 'pos': {}, **v}
+            self.page.evaluate('(v) => applyView(v)', payload)
+            self.page.wait_for_timeout(50)
+            size = self.page.evaluate('retainedExpandedTables.size')
+            has_bogus = self.page.evaluate("retainedExpandedTables.has('no_such_table')")
+            self.assertFalse(has_bogus, f'a nonexistent table name in ret must be dropped: {v}')
+            self.assertIsInstance(size, int, f'applyView must not throw for {v}')
+
+    def test_apply_view_with_autoexpand_on_ignores_any_ret(self):
+        self.page.evaluate(
+            "applyView({excl:[], hid:[], ret:['posts'], ae:true, dep:1, dir:'both', cm:0, pos:{}})")
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('retainedExpandedTables.size'), 0,
+                          'ret is meaningless while auto-expand is on and must not be resurrected')
+
+    def test_focus_display_ignores_retained_tables(self):
+        # 'audit_logs' is a spoke of 'users', unrelated to whatever is
+        # retained — focusing it must depend only on focusedTable/
+        # manualExpanded, never on retainedExpandedTables
+        self._make_posts_retained()
+        self.page.evaluate("focusTable('audit_logs')")
+        self.page.wait_for_timeout(50)
+        shown = self.page.evaluate('getDisplayTables()')
+        self.assertIn('audit_logs', shown)
+        self.assertIn('users', shown)  # audit_logs' own depth-1 neighbor
+        self.assertNotIn('posts', shown,
+                          "focus must not pull in 'posts' just because it's retained in the overview")
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestAutoExpandRetentionChain(unittest.TestCase):
+    # Uses the linear chain_a -> chain_b -> chain_c fixture (not the star
+    # fixture above) specifically because a depth-1 BFS from one end does
+    # NOT already reach the far end — so if turning auto-expand back ON
+    # after an OFF cycle treated a retained table as a fresh BFS root, one
+    # more hop (chain_c) would leak into view, which this catches.
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_chain()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.chain_a !== "undefined"')
+        self.page.wait_for_timeout(50)
+        self.page.click('#legend-head')
+        self.page.click('#btn-none')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_off_on_cycle_does_not_cascade_expansion_further(self):
+        self.page.evaluate("excludedTables.delete('chain_a'); refreshView(); renderTableList();")
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(50)
+        shown = self.page.evaluate('getDisplayTables()')
+        self.assertIn('chain_b', shown)
+        self.assertNotIn('chain_c', shown,
+                          'test setup: depth 1 from chain_a alone should not yet reach chain_c')
+
+        self.page.locator('#auto-expand').uncheck()  # chain_b -> retained
+        self.page.wait_for_timeout(50)
+        self.assertIn('chain_b', self.page.evaluate('getDisplayTables()'))
+
+        self.page.locator('#auto-expand').check()  # back ON
+        self.page.wait_for_timeout(50)
+        shown_again = self.page.evaluate('getDisplayTables()')
+        self.assertIn('chain_b', shown_again,
+                       "chain_b should still show (it's still one hop from the checked root chain_a)")
+        self.assertNotIn('chain_c', shown_again,
+                          'chain_b must not have become a fresh BFS root just from being retained then '
+                          'un-retained across an OFF/ON cycle — otherwise repeated toggling would keep '
+                          'creeping the display outward')
+        self.assertEqual(self.page.evaluate('retainedExpandedTables.size'), 0,
+                          'retained must be cleared once auto-expand is back on')
 
 
 # Regression fixture for the "same-row skip" family of layout bugs: 'hub' is

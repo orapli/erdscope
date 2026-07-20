@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-21
+
 0.9.x is a stabilization pass — no new input sources, exports, or CLI
 capabilities. It closes the gap between what erdscope actually supports and
 what its CLI help, packaging metadata, and docs claimed, and adds the
@@ -67,6 +69,34 @@ from the start.
   wrap decides sub-row membership. Demo measurement: the
   coupons/order_coupons gap went from 716px to 216px (and now sit almost
   directly above/below each other on the x axis too).
+
+- **Viewer: turning Auto-expand off dropped every table it had pulled in**
+  — `getDisplayTables()` re-evaluated the display set the instant the
+  toggle flipped, so a still-unchecked auto-expanded table vanished
+  immediately, reading as "throw away what was shown" instead of "stop
+  expanding further". A new `retainedExpandedTables` set now freezes
+  exactly those tables at the ON→OFF instant so they stay on screen — with
+  a finer-dashed `KEPT` border and node/list tooltips distinct from a live
+  `AUTO` table — until promoted (the node's `＋`, or its now-unlocked list
+  checkbox), removed (`⊖`), banned, or the overview is reset. Repeatedly
+  toggling Auto-expand on and off no longer creeps the display outward:
+  turning it back on clears the kept set and recomputes the expansion from
+  scratch. Persisted through `localStorage`, named views, and share links
+  (old saves/links without the new field, or with a corrupted/foreign
+  value, load as an empty kept set rather than failing).
+- **Viewer: a table could reappear off-screen after "None" then re-checking
+  it** — `refreshView()` decided whether a table was "newly visible" (and
+  therefore worth re-fitting the viewport for) by checking `nodePos`'s own
+  keys, but `nodePos` deliberately keeps a table's last coordinate even
+  after it leaves the display set (so a manually-dragged layout survives
+  toggling Auto-tidy-off tables in and out). A table that had been shown
+  before and was re-checked therefore still had a stale leftover entry
+  there, so it was wrongly treated as already on screen and the viewport
+  was never refit — silently leaving it wherever the layout happened to
+  place it, sometimes off-screen with no visible cue to scroll or pan.
+  `refreshView()` now tracks the actual previously-rendered display set
+  instead, always re-fits going from 0 displayed tables to 1+, and always
+  re-fits after Auto-tidy repacks the whole layout.
 
 ## [0.9.0] - 2026-07-19
 
