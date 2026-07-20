@@ -3445,5 +3445,378 @@ class TestHelpMenu(unittest.TestCase):
             self.page.get_attribute('#help-menu .help-link', 'target'), '_blank')
 
 
+# ── Auto-tidy layout quality acceptance fixtures ─────────────────────────────
+def _build_html_wide_fanout():
+    # one hub, 10 direct children with unequal (increasing) name widths, and
+    # one depth-2 grandchild off the first child — exercises gridLayout's
+    # bounded row-width candidates on a shallow, wide fan-out that used to
+    # wrap into extra vertical bands even when a wider single row would
+    # have fit the viewport just fine.
+    children = ['c_a', 'c_bb', 'c_ccc', 'c_dddd', 'c_eeeee',
+                'c_ffffff', 'c_ggggggg', 'c_hhhhhhhh', 'c_iiiiiiiii', 'c_jjjjjjjjjj']
+    table_rows = [('hub', '')] + [(c, '') for c in children] + [('grandchild', '')]
+    col_rows = [_col('hub', 'id', key='PRI')]
+    fk_rows = []
+    for c in children:
+        col_rows.append(_col(c, 'id', key='PRI'))
+        col_rows.append(_col(c, 'hub_id', key='MUL'))
+        fk_rows.append((c, 'hub_id', 'hub'))
+    col_rows.append(_col('grandchild', 'id', key='PRI'))
+    col_rows.append(_col('grandchild', 'parent_id', key='MUL'))
+    fk_rows.append(('grandchild', 'parent_id', children[0]))
+    index_rows = [('hub', 'PRIMARY', 0, 1, 'id')]
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'wide_fanout.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
+def _build_html_many_isolated():
+    # the star schema (TABLE_ROWS) plus 20 isolated tables — enough to
+    # expose the old single-unbounded-column behavior in gridLayout's
+    # `singles` placement.
+    names = [f'iso_{i:02d}' for i in range(20)]
+    table_rows = TABLE_ROWS + [(n, '') for n in names]
+    col_rows = COL_ROWS + [_col(n, 'id', key='PRI') for n in names]
+    tables = erd.mysql_ir(table_rows, col_rows, FK_ROWS, INDEX_ROWS)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'many_isolated.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestIncrementalIsolatedColumnWraps(unittest.TestCase):
+    """Regression: layoutAll's incremental isolated-column continuation (the
+    'placedIsolated' branch) used to measure the wrap threshold against the
+    bbox of the WHOLE display set, which always includes the column itself
+    — making `ciy1-ciy0 > diagramH*1.5` mathematically unsatisfiable, so the
+    column grew straight down forever no matter how many isolated tables
+    were checked in one at a time. The threshold must be measured against
+    the connected (edged) tables' own bbox instead."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_many_isolated()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    CHECKBOX = '.table-item:has(.tname:text-is("{0}")) input[type=checkbox]'
+
+    def test_many_one_at_a_time_additions_eventually_start_a_new_column(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.wait_for_timeout(50)
+            page.evaluate('localStorage.clear()')
+            page.reload()
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.click('#btn-none')
+            for name in ('users', 'posts', 'comments', 'likes', 'audit_logs'):
+                page.click(self.CHECKBOX.format(name))
+            page.reload()  # persisted state -> fresh gridLayout of the connected group
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            names = [f'iso_{i:02d}' for i in range(20)]
+            for name in names:
+                page.click(self.CHECKBOX.format(name))  # each its own incremental layoutAll() pass
+                page.wait_for_timeout(20)
+            names_js = '[' + ','.join(f'"{n}"' for n in names) + ']'
+            xs = page.evaluate(f'''() => {names_js}.map(t => nodePos[t].x)''')
+            self.assertGreater(len(set(xs)), 1,
+                f'20 one-at-a-time isolated additions should eventually wrap into a new '
+                f'column instead of stacking into one unbounded column, got x values {set(xs)}')
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestAutoTidyLayoutQuality(unittest.TestCase):
+    """Acceptance fixtures for the bounded row-width candidate selection,
+    the multi-column isolated-table shelf, and their interaction with
+    group-obstacle resolution and viewport fitting."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def _open(self, path):
+        page = self.browser.new_page()
+        page.goto(path.as_uri())
+        page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+        page.wait_for_timeout(50)
+        return page
+
+    def _boxes(self, page):
+        return page.evaluate('''() => {
+            const out = {};
+            for (const t of getDisplayTables()) {
+                const p = nodePos[t], s = nodeSize[t];
+                out[t] = {x0:p.x-s.w/2, y0:p.y-s.h/2, x1:p.x+s.w/2, y1:p.y+s.h/2};
+            }
+            return out;
+        }''')
+
+    def _assert_no_overlap(self, boxes, msg=''):
+        names = list(boxes)
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                a, b = boxes[names[i]], boxes[names[j]]
+                separated = (a['x1'] <= b['x0'] or b['x1'] <= a['x0'] or
+                             a['y1'] <= b['y0'] or b['y1'] <= a['y0'])
+                self.assertTrue(separated, f'{names[i]} and {names[j]} overlap {msg}: {a} vs {b}')
+
+    def test_wide_shallow_fanout_avoids_excess_wrapping_and_fits_well(self):
+        # 10 direct children at MIN_W each need ~1960px in one row — wider
+        # than even the MAX_ROW_W ceiling, so 2 physical sub-rows is the
+        # correct, necessary outcome here (not a bug); what the bounded
+        # candidate selection must still guarantee is that it never wraps
+        # into MORE than that, and that the winning candidate's fit scale
+        # (the actual selection metric, exposed via the pure helpers added
+        # alongside gridLayout) is reasonably high, not "compact but tiny".
+        page = self._open(_build_html_wide_fanout())
+        try:
+            boxes = self._boxes(page)
+            self._assert_no_overlap(boxes)
+            children_y = {round(boxes[t]['y0']) for t in boxes if t.startswith('c_')}
+            self.assertLessEqual(len(children_y), 2,
+                'a hub with only one BFS depth of direct children must not wrap into '
+                f'more than 2 physical sub-rows, got y0 values {children_y}')
+            fit_scale = page.evaluate('''() => {
+                const tables = getDisplayTables();
+                const bbox = layoutBBoxOf(tables);
+                const r = document.querySelector('svg').getBoundingClientRect();
+                return fitScaleFor(bbox, r, tables.length);
+            }''')
+            self.assertGreater(fit_scale, 0.3,
+                f'the chosen candidate should fit the viewport reasonably well, got scale {fit_scale}')
+        finally:
+            page.close()
+
+    def test_many_isolated_tables_wrap_into_multiple_columns(self):
+        page = self._open(_build_html_many_isolated())
+        try:
+            boxes = self._boxes(page)
+            self._assert_no_overlap(boxes)
+            iso_x = [round(boxes[t]['x0']) for t in boxes if t.startswith('iso_')]
+            distinct_cols = len(set(iso_x))
+            self.assertGreater(distinct_cols, 1,
+                '20 isolated tables should wrap into more than one column, '
+                f'got a single column (x values: {set(iso_x)})')
+            iso_top = min(boxes[t]['y0'] for t in boxes if t.startswith('iso_'))
+            iso_bottom = max(boxes[t]['y1'] for t in boxes if t.startswith('iso_'))
+            connected_top = min(boxes[t]['y0'] for t in boxes if not t.startswith('iso_'))
+            connected_bottom = max(boxes[t]['y1'] for t in boxes if not t.startswith('iso_'))
+            self.assertLess(iso_bottom - iso_top, (connected_bottom - connected_top) * 2.5,
+                'the isolated shelf should not be dramatically taller than the connected '
+                'component beside it once it has wrapped into columns')
+        finally:
+            page.close()
+
+    def test_mixed_graph_isolated_shelf_does_not_overlap_component(self):
+        page = self._open(_build_html_many_isolated())
+        try:
+            boxes = self._boxes(page)
+            connected_x1 = max(boxes[t]['x1'] for t in boxes if not t.startswith('iso_'))
+            for t in boxes:
+                if t.startswith('iso_'):
+                    self.assertGreaterEqual(boxes[t]['x0'], connected_x1,
+                        f'{t} (isolated) must not overlap the connected component')
+        finally:
+            page.close()
+
+    def test_tall_and_wide_nodes_still_produce_a_clean_layout(self):
+        page = self._open(_build_html_demo_grouped())
+        try:
+            page.click('#colmode-group [data-cm="0"]')   # All columns
+            page.click('#namemode-group [data-nm="2"]')  # Logical names
+            page.select_option('#max-rows', '30')
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
+            boxes = self._boxes(page)
+            self._assert_no_overlap(boxes, 'in All-columns/Logical-name/30-row mode')
+            r = page.evaluate("document.querySelector('svg').getBoundingClientRect()")
+            view = page.evaluate('({vx, vy, vs})')
+            for name, b in boxes.items():
+                sx0 = b['x0'] * view['vs'] + view['vx']
+                sy0 = b['y0'] * view['vs'] + view['vy']
+                sx1 = b['x1'] * view['vs'] + view['vx']
+                sy1 = b['y1'] * view['vs'] + view['vy']
+                self.assertGreaterEqual(sx0, -25, f'{name} left edge should be within the fitted viewport')
+                self.assertGreaterEqual(sy0, -25, f'{name} top edge should be within the fitted viewport')
+                self.assertLessEqual(sx1, r['width'] + 25, f'{name} right edge should be within the fitted viewport')
+                self.assertLessEqual(sy1, r['height'] + 25, f'{name} bottom edge should be within the fitted viewport')
+        finally:
+            page.close()
+
+    def test_layout_is_deterministic_across_reloads(self):
+        page = self._open(_build_html_wide_fanout())
+        try:
+            before = page.evaluate('({...nodePos})')
+            page.evaluate('localStorage.clear()')
+            page.reload()
+            page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+            page.wait_for_timeout(50)
+            after = page.evaluate('({...nodePos})')
+            self.assertEqual(set(before), set(after))
+            for t in before:
+                self.assertAlmostEqual(before[t]['x'], after[t]['x'], delta=0.5,
+                    msg=f'{t}.x should be identical across two full layouts of the same data')
+                self.assertAlmostEqual(before[t]['y'], after[t]['y'], delta=0.5,
+                    msg=f'{t}.y should be identical across two full layouts of the same data')
+        finally:
+            page.close()
+
+    def test_groups_hidden_makes_resolve_group_obstacles_a_noop(self):
+        page = self._open(_build_html_with_groups())
+        try:
+            self.assertTrue(page.evaluate('showGroups'), 'groups should be visible by default')
+            page.click('#btn-groups')  # hide groups
+            self.assertFalse(page.evaluate('showGroups'))
+            setup = page.evaluate('''() => {
+                const bbox = groupFrameBBox(GROUPS[0].tables, new Set(getDisplayTables()));
+                nodePos.audit_logs = {x: (bbox.x0 + bbox.x1) / 2, y: (bbox.y0 + bbox.y1) / 2};
+                return {...nodePos.audit_logs};
+            }''')
+            page.evaluate("resolveGroupObstacles(['audit_logs'])")
+            after = page.evaluate('({...nodePos.audit_logs})')
+            self.assertEqual(setup, after,
+                'resolveGroupObstacles must not move a node for a hidden group frame')
+        finally:
+            page.close()
+
+    def test_groups_visible_no_overlap_after_full_layout(self):
+        page = self._open(_build_html_demo_grouped())
+        try:
+            self.assertTrue(page.evaluate('showGroups'))
+            boxes = self._boxes(page)
+            self._assert_no_overlap(boxes, 'with groups visible')
+            hits = page.evaluate('''() => {
+                const bbox = groupFrameBBox(GROUPS[0].tables, new Set(getDisplayTables()));
+                const members = new Set(GROUPS[0].tables);
+                return getDisplayTables().filter(t => !members.has(t)).some(t => {
+                    const p = nodePos[t], s = nodeSize[t];
+                    const x0=p.x-s.w/2, y0=p.y-s.h/2, x1=p.x+s.w/2, y1=p.y+s.h/2;
+                    return x0 < bbox.x1 && x1 > bbox.x0 && y0 < bbox.y1 && y1 > bbox.y0;
+                });
+            }''')
+            self.assertFalse(hits, 'no non-member table should intersect the visible group frame')
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestAutoTidyBoundedBehavior(unittest.TestCase):
+    """↺ (re-layout) must perform exactly one full layout and always fit
+    regardless of Auto-tidy state; Auto-tidy itself must skip a global
+    re-layout when neither the display set nor any node's size actually
+    changed, while still reacting to a genuine change."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html()
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+        self.page.wait_for_timeout(50)
+
+    def tearDown(self):
+        self.page.close()
+
+    def _wrap_gridlayout_counter(self):
+        self.page.evaluate('''() => {
+            window.__gridLayoutCalls = 0;
+            window.__origGridLayout = gridLayout;
+            gridLayout = function(...args) {
+                window.__gridLayoutCalls++;
+                return window.__origGridLayout(...args);
+            };
+        }''')
+
+    def test_reset_does_exactly_one_layout_and_fits_with_autotidy_off(self):
+        self.assertFalse(self.page.evaluate('autoLayout'))
+        self._wrap_gridlayout_counter()
+        self.page.evaluate('vx=-99999; vy=-99999; vs=3; setTransform();')
+        self.page.click('#btn-reset')
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.page.evaluate('window.__gridLayoutCalls'), 1,
+            '↺ should perform exactly one full layout')
+        after = self.page.evaluate('({vx, vy, vs})')
+        self.assertNotEqual(after['vs'], 3,
+            '↺ must always fit the viewport, even with Auto-tidy off')
+
+    def test_reset_does_exactly_one_layout_and_fits_with_autotidy_on(self):
+        self.page.click('#btn-autolayout')
+        self.assertTrue(self.page.evaluate('autoLayout'))
+        self._wrap_gridlayout_counter()
+        self.page.evaluate('vx=-99999; vy=-99999; vs=3; setTransform();')
+        self.page.click('#btn-reset')
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.page.evaluate('window.__gridLayoutCalls'), 1,
+            '↺ should perform exactly one full layout, not once here and again via Auto-tidy')
+        after = self.page.evaluate('({vx, vy, vs})')
+        self.assertNotEqual(after['vs'], 3,
+            '↺ must always fit the viewport with Auto-tidy on too')
+
+    def test_autotidy_on_skips_relayout_when_nothing_changed(self):
+        self.page.click('#btn-autolayout')
+        self.assertTrue(self.page.evaluate('autoLayout'))
+        self.page.wait_for_timeout(50)
+        self._wrap_gridlayout_counter()
+        self.page.click('#btn-all')  # everything is already displayed -> no genuine change
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.evaluate('window.__gridLayoutCalls'), 0,
+            'Auto-tidy must not re-layout when neither the display set nor node sizes changed')
+
+    def test_autotidy_on_still_reacts_to_a_real_display_change(self):
+        self.page.click('#btn-autolayout')
+        self.assertTrue(self.page.evaluate('autoLayout'))
+        self.page.wait_for_timeout(50)
+        self._wrap_gridlayout_counter()
+        self.page.locator('.table-item:has(.tname:text-is("likes")) input[type=checkbox]').uncheck()
+        self.page.wait_for_timeout(50)
+        self.assertGreaterEqual(self.page.evaluate('window.__gridLayoutCalls'), 1,
+            'Auto-tidy should still re-layout for a genuine display-set change')
+
+
 if __name__ == '__main__':
     unittest.main()

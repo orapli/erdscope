@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Viewer: Auto-tidy layout quality.** The overview's automatic layout
+  (`Auto-tidy` and the `↺` re-layout button) picks the best of a few bounded
+  row-width candidates instead of one fixed heuristic, and isolated
+  (unrelated) tables now shelf-pack into multiple columns instead of one
+  ever-growing column — both aimed at the diagram spreading too far
+  vertically. Group frames no longer act as layout obstacles while hidden.
+  `↺` now always performs exactly one layout pass and always re-fits the
+  viewport, regardless of the Auto-tidy setting. Auto-tidy itself no longer
+  re-packs the overview when neither the displayed tables nor their sizes
+  actually changed.
+
 ## [0.9.1] - 2026-07-21
 
 0.9.x is a stabilization pass — no new input sources, exports, or CLI

@@ -1051,7 +1051,7 @@ KEPT テーブルはクリアされ、展開は最初から再計算されるた
 <li><strong>ドラッグで移動</strong> — 選択中のテーブルをドラッグすると、選択中のもの全体が一緒に動きます。ドラッグ中の端は近くのテーブルの端/中心に数ピクセル以内でスナップし、赤いガイド線（Figma のような）が表示されます — ドラッグ中に <kbd>Alt</kbd> を押すとスナップを無効化できます。</li>
 <li><strong><a href="#groups">グループ</a>のドラッグ</strong> — グループのタイトルチップをドラッグすると、そのグループのメンバー全員が一緒に動きます（スナップなし）。グループの枠もリアルタイムに追従します。</li>
 <li><strong>整列 / 分布</strong> — 2つ以上選択すると、右ペインに <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span> が表示されます。3つ以上選択すると <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> の分布も使えるようになります（両端のテーブルは固定したまま、間の間隔を均等にします）。</li>
-<li><strong>Auto-tidy</strong> — 表示中のテーブル集合が変わるたびに、レイアウトを自動的に再配置・再フィットするツールバーのトグルです。<code>↺</code> ボタンは Auto-tidy の設定に関わらず、その場で即座に再配置します。</li>
+<li><strong>Auto-tidy</strong> — 表示中のテーブルやそのサイズが変わるたびに、全体のレイアウトを自動的に再配置し、手動で置いた位置を置き換えるツールバーのトグルです（既定はOFFなので、有効化しない限り手動配置は変更されません）。<code>↺</code> ボタンは Auto-tidy の設定に関わらず、その場で即座に再配置し、必ずビューポートを再フィットします。</li>
 <li><strong>Undo/redo</strong> — ツールバーの <code>↶</code>/<code>↷</code> ボタン、または <kbd>Ctrl/Cmd+Z</kbd> / <kbd>Ctrl/Cmd+Shift+Z</kbd>（もしくは <kbd>Ctrl/Cmd+Y</kbd>）。対象はテーブルの位置変更のみです。フォーカスの開始/終了や保存済みビューの読み込みはレイアウト全体を置き換えるため、その際に履歴はクリアされます。</li>
 </ul>
 <img class="shot" loading="lazy" src="img/multiselect.png" alt="payments・shipments・order_coupons の3テーブルが青くハイライトされて複数選択され、右ペインの Align と Distribute のボタングループが両方とも有効になっている">

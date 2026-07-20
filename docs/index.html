@@ -623,7 +623,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <button class="diag-btn" id="btn-undo" title="Undo layout change (Ctrl/Cmd+Z)" disabled>↶</button>
         <button class="diag-btn" id="btn-redo" title="Redo layout change (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
         <button class="diag-btn" id="btn-reset" title="Re-layout now (repack to fill the screen)">↺</button>
-        <button class="diag-btn" id="btn-autolayout" title="Auto-tidy mode: re-layout and fit whenever the displayed tables change">Auto-tidy</button>
+        <button class="diag-btn" id="btn-autolayout" title="Auto-tidy mode: rearranges the overview and replaces manual positions whenever the displayed tables or their sizes change">Auto-tidy</button>
       </div>
       <div class="tb-sep"></div>
       <div class="tb-group">
@@ -1224,6 +1224,87 @@ function calcSize(name) {
 // incremental group placement break rows up at this width.
 const MAX_ROW_W=1700;
 
+// ── Layout candidate scoring (pure helpers) ──────────────────────────────────
+// gridLayout evaluates a small bounded set of row-width policies (see below)
+// and picks whichever fills the current viewport best, instead of committing
+// to one width heuristic up front. These helpers compute that score without
+// touching global state so a candidate can be measured, compared, and thrown
+// away without side effects.
+
+// tight bounding box of `tables` under a given position map (defaults to the
+// live nodePos), using each table's real nodeSize — no padding included here,
+// callers that need fitView()'s viewport padding add it via fitScaleFor.
+function layoutBBoxOf(tables, posMap){
+  posMap = posMap || nodePos;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  tables.forEach(t=>{
+    const p=posMap[t]; if(!p) return;
+    const s=nodeSize[t]||calcSize(t);
+    x0=Math.min(x0,p.x-s.w/2); y0=Math.min(y0,p.y-s.h/2);
+    x1=Math.max(x1,p.x+s.w/2); y1=Math.max(y1,p.y+s.h/2);
+  });
+  if(!isFinite(x0)) return null;
+  return {x0,y0,x1,y1,w:x1-x0,h:y1-y0};
+}
+
+// scale at which `bbox` would fit the given viewport rect, using the exact
+// same effective padding (30px per side, folded into fitView()'s per-node
+// min/max) and maxZoom tiers as fitView() itself — a candidate that scores
+// well here is a candidate fitView() will actually display well.
+function fitScaleFor(bbox, R, tableCount){
+  if(!bbox || !R || !R.width || !R.height) return 0;
+  const gW=bbox.w+60, gH=bbox.h+60;
+  const maxZoom = tableCount<=3 ? 4.0 : tableCount<=8 ? 2.5 : tableCount<=20 ? 1.8 : 1.4;
+  return Math.min(maxZoom, Math.min(R.width/gW, R.height/gH)) * 0.92;
+}
+
+// deterministic tie-breaker: sum of straight-line lengths of edges implied
+// by `adj` (an adjacency Map as built at the top of gridLayout), each edge
+// counted once. Shorter total length reads as fewer/shorter detour arcs.
+function totalAdjEdgeLength(adj, posMap){
+  posMap = posMap || nodePos;
+  let sum=0;
+  adj.forEach((neighbors,t)=>{
+    const p=posMap[t]; if(!p) return;
+    neighbors.forEach(n=>{
+      if(t>=n) return; // undirected adjacency: count each pair once
+      const q=posMap[n]; if(!q) return;
+      sum+=Math.hypot(p.x-q.x, p.y-q.y);
+    });
+  });
+  return sum;
+}
+
+// true if any two of `tables` overlap under the live nodePos/nodeSize —
+// used to catch a node that group-obstacle resolution pushed into another
+// table (see resolveGroupObstacles). O(n^2) but only run a bounded number
+// of times (once per layout candidate, only when groups are visible).
+function anyNodeOverlap(tables){
+  for(let i=0;i<tables.length;i++){
+    const a=tables[i], pa=nodePos[a]; if(!pa) continue;
+    const sa=nodeSize[a]||calcSize(a);
+    for(let j=i+1;j<tables.length;j++){
+      const b=tables[j], pb=nodePos[b]; if(!pb) continue;
+      const sb=nodeSize[b]||calcSize(b);
+      if(Math.abs(pa.x-pb.x)<(sa.w+sb.w)/2 && Math.abs(pa.y-pb.y)<(sa.h+sb.h)/2) return true;
+    }
+  }
+  return false;
+}
+
+// rank layout candidates {fitScale, overlap, edgeLen}: no-overlap always
+// beats any-overlap, then larger fitScale wins, then shorter edgeLen, then a
+// stable sort keeps declaration order as the final deterministic tie-break
+// (so repeated layouts of the same schema never move tables arbitrarily).
+function pickBestLayoutCandidate(results){
+  return results.slice().sort((a,b)=>{
+    if(a.overlap!==b.overlap) return a.overlap ? 1 : -1;
+    if(Math.abs(a.fitScale-b.fitScale)>1e-9) return b.fitScale-a.fitScale;
+    if(Math.abs(a.edgeLen-b.edgeLen)>1e-9) return a.edgeLen-b.edgeLen;
+    return 0;
+  })[0];
+}
+
 function gridLayout(tables, preferredHub) {
   const gapX=40, gapY=60, gap=90;
   const tset=new Set(tables);
@@ -1254,6 +1335,11 @@ function gridLayout(tables, preferredHub) {
     }
     if(comp.length>1) comps.push(comp); else singles.push(comp[0]);
   }
+
+  // row-width policy for the current candidate pass (see runPass below):
+  // 1 = today's adaptive target, a wider multiplier, or 'max' to force the
+  // MAX_ROW_W ceiling — a bounded set of candidates, not an open-ended search.
+  let widthPolicy=1;
 
   function layoutComponent(comp){
     // focus mode wants the focused table itself at the center, not
@@ -1289,7 +1375,8 @@ function gridLayout(tables, preferredHub) {
     const depths=Object.keys(byDepth).length;
     const avgRowH=comp.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).h,0)/comp.length;
     const estHeight=depths*(avgRowH+gapY);
-    const rowTargetW=Math.max(700, estHeight*viewAspect()*1.15);
+    const baseTargetW=Math.max(700, estHeight*viewAspect()*1.15);
+    const rowTargetW=widthPolicy==='max' ? MAX_ROW_W : Math.min(MAX_ROW_W, baseTargetW*widthPolicy);
 
     const xc=new Map(); // placed x-centers, feeds the next row's ordering
     const placeRow=(sr, rowY)=>{
@@ -1456,33 +1543,19 @@ function gridLayout(tables, preferredHub) {
     return {comp, x0, y0, w:x1-x0, h:y1-y0};
   }
 
-  // shelf-pack component boxes (largest first) toward the viewport shape
-  const boxes=comps.map(layoutComponent);
-  const area=boxes.reduce((s,b)=>s+(b.w+gap)*(b.h+gap),0);
-  const targetW=Math.max(900, Math.sqrt(area*viewAspect()));
-  boxes.sort((a,b)=>b.w*b.h-a.w*a.h);
-  let cx=0, cy=0, rowH=0;
-  boxes.forEach(b=>{
-    if(cx>0 && cx+b.w>targetW){ cx=0; cy+=rowH+gap; rowH=0; }
-    b.comp.forEach(t=>{
-      const p=nodePos[t];
-      nodePos[t]={x:cx+(p.x-b.x0), y:cy+(p.y-b.y0)};
-    });
-    cx+=b.w+gap; rowH=Math.max(rowH,b.h);
-  });
-
-  // isolated tables (no relation to anything, or to each other): stacked
-  // in a column beside the connected components, top to bottom, rather
-  // than appended as more rows underneath everything else — the connected
-  // components above already grow tallest via BFS-depth rows, so piling
-  // isolated tables on as further rows compounded that same vertical
-  // growth. Vertically centered on the components' bounding box, not
-  // top-aligned to it: the hub of a component isn't necessarily near its
-  // own top edge (e.g. a hub with children below it but none above), so
-  // anchoring at the raw top edge could park the column beside whichever
-  // child happened to end up topmost, reading as "floating near a random
-  // table" instead of "beside the group."
-  if(singles.length){
+  // isolated tables (no relation to anything, or to each other): shelf-
+  // packed into columns beside the connected components rather than one
+  // unbounded vertical stack — a handful stay in a single column exactly
+  // like before, but once that column would grow noticeably taller than
+  // the connected components beside it, wrap into another column instead.
+  // Vertically centered on the components' bounding box, not top-aligned to
+  // it: the hub of a component isn't necessarily near its own top edge
+  // (e.g. a hub with children below it but none above), so anchoring at the
+  // raw top edge could park the column beside whichever child happened to
+  // end up topmost, reading as "floating near a random table" instead of
+  // "beside the group."
+  function placeSingles(){
+    if(!singles.length) return;
     let ix0=Infinity, iy0=Infinity, ix1=-Infinity, iy1=-Infinity;
     comps.forEach(comp=>comp.forEach(t=>{
       const p=nodePos[t], s=nodeSize[t]||calcSize(t);
@@ -1490,17 +1563,79 @@ function gridLayout(tables, preferredHub) {
       ix1=Math.max(ix1,p.x+s.w/2); iy1=Math.max(iy1,p.y+s.h/2);
     }));
     if(!isFinite(ix1)){ ix1=0; iy0=0; iy1=0; } // every table is isolated
-    singles.sort();
-    const totalH=singles.reduce((s,t)=>s+(nodeSize[t]||calcSize(t)).h+gapY,0)-gapY;
-    const sx=ix1+gap;
-    let sy=(iy0+iy1)/2-totalH/2;
-    singles.forEach(t=>{
-      const s=nodeSize[t]||calcSize(t);
-      nodePos[t]={x:sx+s.w/2, y:sy+s.h/2};
-      sy+=s.h+gapY;
+    const ordered=singles.slice().sort();
+    const sizes=ordered.map(t=>nodeSize[t]||calcSize(t));
+    const compH=comps.length ? (iy1-iy0) : 0;
+    // no connected components at all: derive a column-height target from
+    // total isolated area and the viewport aspect (the same area->width
+    // idea the component shelf-pack above uses), instead of the components'
+    // (nonexistent) height
+    const singleArea=sizes.reduce((s,z)=>s+(z.w+gapX)*(z.h+gapY),0);
+    const targetColH=compH>240 ? compH : Math.max(240, Math.sqrt(singleArea/viewAspect()));
+    const cols=[];
+    { let cur=[], h=0;
+      ordered.forEach((t,i)=>{
+        const z=sizes[i];
+        if(cur.length && h+z.h>targetColH){ cols.push(cur); cur=[]; h=0; }
+        cur.push(t); h+=z.h+gapY;
+      });
+      if(cur.length) cols.push(cur);
+    }
+    let sx=ix1+gap;
+    cols.forEach(col=>{
+      const colSizes=col.map(t=>nodeSize[t]||calcSize(t));
+      const colW=Math.max(...colSizes.map(z=>z.w));
+      const colH=colSizes.reduce((s,z)=>s+z.h+gapY,0)-gapY;
+      let sy=comps.length ? (iy0+iy1)/2-colH/2 : -colH/2;
+      col.forEach((t,i)=>{
+        const z=colSizes[i];
+        nodePos[t]={x:sx+z.w/2, y:sy+z.h/2};
+        sy+=z.h+gapY;
+      });
+      sx+=colW+gapX;
     });
   }
-  resolveGroupObstacles(tables); // V3: keep group frames clear of other tables
+
+  // Lay the whole diagram out once under a given row-width policy and score
+  // the result — mutates the live nodePos/nodeSize as it goes (layoutComponent
+  // always writes fresh positions for every table in `tables`, never reads
+  // stale ones, so passes don't contaminate each other) but returns a
+  // snapshot rather than leaving its result committed; only the winning
+  // candidate's snapshot is written back by the caller below.
+  function runPass(policy){
+    widthPolicy=policy;
+    // shelf-pack component boxes (largest first) toward the viewport shape
+    const boxes=comps.map(layoutComponent);
+    const area=boxes.reduce((s,b)=>s+(b.w+gap)*(b.h+gap),0);
+    const targetW=Math.max(900, Math.sqrt(area*viewAspect()));
+    boxes.sort((a,b)=>b.w*b.h-a.w*a.h);
+    let cx=0, cy=0, rowH=0;
+    boxes.forEach(b=>{
+      if(cx>0 && cx+b.w>targetW){ cx=0; cy+=rowH+gap; rowH=0; }
+      b.comp.forEach(t=>{
+        const p=nodePos[t];
+        nodePos[t]={x:cx+(p.x-b.x0), y:cy+(p.y-b.y0)};
+      });
+      cx+=b.w+gap; rowH=Math.max(rowH,b.h);
+    });
+    placeSingles();
+    resolveGroupObstacles(tables); // V3: keep group frames clear of other tables; no-op when groups are hidden
+    // score AFTER obstacle resolution — scoring the pre-obstacle layout would
+    // let obstacle-pushed nodes silently make the "winning" candidate worse
+    const overlap = (GROUPS.length && showGroups) ? anyNodeOverlap(tables) : false;
+    const bbox = layoutBBoxOf(tables);
+    const fitScale = fitScaleFor(bbox, svg.getBoundingClientRect(), tables.length);
+    const edgeLen = totalAdjEdgeLength(adj);
+    const snap={}; tables.forEach(t=>{ snap[t]={...nodePos[t]}; });
+    return {snap, fitScale, overlap, edgeLen};
+  }
+
+  // bounded candidate set (not an open-ended optimizer): today's adaptive
+  // target, a wider target that removes wrapping when the viewport allows
+  // it, and the MAX_ROW_W ceiling for wide/shallow fan-outs.
+  const candidates=[1, 1.6, 'max'].map(runPass);
+  const best=pickBestLayoutCandidate(candidates);
+  tables.forEach(t=>{ nodePos[t]=best.snap[t]; });
 }
 
 // viewport aspect ratio (w/h), clamped — wide screens spread layouts sideways
@@ -1590,12 +1725,30 @@ function layoutAll(tables, edges) {
   const placedIsolated=tables.filter(t=>nodePos[t]&&!newTables.includes(t)&&!edgedTables.has(t));
   let ix, iy;
   if(placedIsolated.length){
-    let cix0=Infinity, ciy1=-Infinity;
+    let cix0=Infinity, ciy0=Infinity, cix1=-Infinity, ciy1=-Infinity;
     placedIsolated.forEach(t=>{
       const p=nodePos[t], s=nodeSize[t]||calcSize(t);
-      cix0=Math.min(cix0, p.x-s.w/2); ciy1=Math.max(ciy1, p.y+s.h/2);
+      cix0=Math.min(cix0, p.x-s.w/2); ciy0=Math.min(ciy0, p.y-s.h/2);
+      cix1=Math.max(cix1, p.x+s.w/2); ciy1=Math.max(ciy1, p.y+s.h/2);
     });
-    ix=cix0; iy=ciy1+40;
+    // bounded wrap: once this isolated column has grown well past the rest
+    // of the diagram's height, start a fresh column to its right instead of
+    // continuing to stack straight down — existing nodes are never moved
+    // (Auto-tidy OFF's incremental path must leave prior placements alone),
+    // this only changes where the *next* addition lands. Measured against
+    // the CONNECTED (edged) tables' own bbox, not the whole display set's —
+    // the whole set always includes this very column, which would make it
+    // impossible for the column to ever out-grow "the rest of the diagram".
+    let ecy0=Infinity, ecy1=-Infinity;
+    tables.forEach(t=>{
+      if(!edgedTables.has(t)) return;
+      const p=nodePos[t]; if(!p) return;
+      const s=nodeSize[t]||calcSize(t);
+      ecy0=Math.min(ecy0, p.y-s.h/2); ecy1=Math.max(ecy1, p.y+s.h/2);
+    });
+    const diagramH=isFinite(ecy0) ? Math.max(ecy1-ecy0, 240) : 240;
+    if(ciy1-ciy0 > diagramH*1.5){ ix=cix1+40; iy=ciy0; }
+    else { ix=cix0; iy=ciy1+40; }
   } else {
     // starting a fresh column: center this pass's isolated additions on
     // the rest of the diagram's vertical midpoint (not its top edge) —
@@ -1722,15 +1875,26 @@ function exitFocusMode() {
 let lastDisplayedTables = new Set();
 
 // re-render; with auto-tidy on, the overview is re-packed first so the
-// layout always tracks the current display set
-function refreshView(forceFit){
+// layout always tracks the current display set. `forceRelayout` is for
+// callers that need a global re-layout even though the display set itself
+// isn't changing (currently only turning Auto-tidy ON, which is documented
+// to apply immediately) — every other caller relies on the setChanged/
+// dimsInvalidated check below so a refreshView() that fires without the
+// display set or any node's size actually changing (e.g. clicking "All"
+// when everything is already shown) doesn't re-pack the whole overview for
+// nothing.
+function refreshView(forceFit, forceRelayout){
   const previouslyDisplayed = lastDisplayedTables;
   let relayoutedAll = false;
   if(!focusedTable && autoLayout){
     const ts=getDisplayTables();
-    ts.forEach(t=>delete nodePos[t]);
-    ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
-    if(ts.length){ gridLayout(ts); relayoutedAll=true; }
+    const setChanged = ts.length!==previouslyDisplayed.size || ts.some(t=>!previouslyDisplayed.has(t));
+    const dimsInvalidated = ts.some(t=>!nodePos[t]); // e.g. colMode/nameMode/max-rows already cleared it
+    if(forceRelayout || setChanged || dimsInvalidated){
+      ts.forEach(t=>delete nodePos[t]);
+      ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
+      if(ts.length){ gridLayout(ts); relayoutedAll=true; }
+    }
   }
   renderDiagram(); // also refreshes lastDisplayedTables to the new current set
   // don't yank the viewport back to fit-all for a change that didn't
@@ -1896,7 +2060,9 @@ const GROUP_DEFAULT_COLOR = '#64748b'; // slate — used when a group has no con
 // perfect collision-free packing is not this pass's job, only keeping
 // tables out of OTHER tables' group frames.
 function resolveGroupObstacles(placedTables){
-  if(!GROUPS.length || !placedTables.length) return;
+  // hidden group frames must never move a node: they're not drawn, so
+  // pushing a table clear of one would be avoiding an obstacle nobody can see
+  if(!showGroups || !GROUPS.length || !placedTables.length) return;
   // must match drawGroups/updateGroupFrames' own displayTables set exactly
   // (getDisplayTables(), NOT Object.keys(nodePos)) — nodePos is a superset
   // that can still hold a stale entry for a table that just left the
@@ -3758,13 +3924,14 @@ document.getElementById('btn-reset')   .addEventListener('click',()=>{
   const ts=getDisplayTables();
   ts.forEach(t=>delete nodePos[t]);
   Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
-  // overview: shelf-packed rows via gridLayout;
-  // focus view: layoutAll re-runs the (elliptical) hub-spoke
-  if(!focusedTable){
-    ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
-    gridLayout(ts);
-  }
-  refreshView();
+  // Every displayed table just lost its nodePos entry above, so
+  // renderDiagram()'s layoutAll() sees the whole display set as "new" and
+  // performs exactly one full gridLayout pass on its own (overview branch
+  // when unfocused, hub-spoke branch with focusedTable as the preferred hub
+  // otherwise) — calling gridLayout() here too, then going through
+  // refreshView()'s Auto-tidy branch, used to lay the same tables out twice.
+  renderDiagram();
+  requestAnimationFrame(fitView); // always fit, regardless of Auto-tidy state
 });
 // PNG/SVG/Mermaid used to be three separate always-visible buttons; now
 // tucked behind one "Export" toggle since they're each used ~once per
@@ -3820,8 +3987,8 @@ document.getElementById('btn-autolayout').addEventListener('click',()=>{
   document.getElementById('btn-autolayout').classList.toggle('active',autoLayout);
 document.body.classList.toggle('dark', localStorage.getItem(LS('dk'))==='true');
   saveState();
-  if(autoLayout) refreshView(); // apply immediately
-  showToast(autoLayout?'Auto-tidy ON — the layout follows display changes':'Auto-tidy OFF');
+  if(autoLayout) refreshView(false, true); // apply immediately, even though the display set itself hasn't changed
+  showToast(autoLayout?'Auto-tidy ON — rearranges the overview and replaces manual positions when displayed tables or sizes change':'Auto-tidy OFF');
 });
 document.getElementById('btn-all').addEventListener('click',()=>{
   excludedTables.clear(); retainedExpandedTables.clear(); noAutoExpandRoot.clear(); saveState();
