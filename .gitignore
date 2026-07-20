@@ -31,3 +31,4 @@ build/
 # after itself, but --keep/--work-dir can point it at benchmarks/ directly)
 benchmarks/*.db
 benchmarks/bench_*.json
+.DS_Store
