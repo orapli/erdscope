@@ -17,7 +17,7 @@ Intermediate representation (IR) — everything downstream (HTML/JS, exports)
 consumes this shape:
     tables = {
       "table_name": {
-        "primary_key": "id" | None,
+        "primary_key": "id" | ["order_id","item_id"] | None,   # list = composite PK
         "comment"?: str,
         "schema_missing"?: bool,        # model exists but no DB table
         "columns": [{"name","type","nullable","primary",
