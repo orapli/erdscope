@@ -121,13 +121,13 @@ header.hero h1 span{color:var(--accent)}
 .hero-action.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .hero-action.primary:hover{background:var(--accent-dark);border-color:var(--accent-dark)}
 :root[data-theme="dark"] .hero-action.primary{color:#0e1520}
-.hero-command{display:inline-flex;align-items:center;gap:10px;margin-top:26px;padding:10px 18px;border:1px solid var(--line);border-radius:8px;background:var(--wash);font-family:var(--mono);font-size:13.5px;color:var(--code-fg)}
+.hero-command{display:inline-flex;flex-wrap:wrap;max-width:100%;overflow-wrap:anywhere;align-items:center;gap:10px;margin-top:26px;padding:10px 18px;border:1px solid var(--line);border-radius:8px;background:var(--wash);font-family:var(--mono);font-size:13.5px;color:var(--code-fg)}
 .hero-command strong{color:var(--accent)}
 
 /* ---------- sections ---------- */
 section{padding-top:72px}
-h2{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:14px;margin:0 0 14px;padding-bottom:14px;border-bottom:1px solid var(--line);font-size:clamp(23px,2.6vw,30px);line-height:1.35;font-weight:800;letter-spacing:-.02em;text-wrap:balance}
-h2:before{content:"";width:8px;height:28px;border-radius:2px;background:linear-gradient(180deg,var(--accent) 0 70%,var(--teal) 70%)}
+h2{display:flex;align-items:center;gap:14px;margin:0 0 14px;padding-bottom:14px;border-bottom:1px solid var(--line);font-size:clamp(23px,2.6vw,30px);line-height:1.35;font-weight:800;letter-spacing:-.02em;text-wrap:balance}
+h2:before{content:"";flex-shrink:0;width:8px;height:28px;border-radius:2px;background:linear-gradient(180deg,var(--accent) 0 70%,var(--teal) 70%)}
 h2 .anchor-link{font-size:.65em;font-weight:400;color:var(--faint);opacity:0;margin-left:.2em}
 h2:hover .anchor-link{opacity:1}
 h2.overview-title{margin-top:56px}
@@ -274,9 +274,9 @@ footer{margin-top:88px;padding-top:22px;border-top:1px solid var(--line);color:v
   <button id="theme-toggle" aria-label="テーマ切り替え"><span id="theme-icon">◐</span><span id="theme-label">Auto</span></button>
 </div></nav>
 
-<div class="shell">
+<main class="shell" id="main-content" tabindex="-1">
 
-<header class="hero" id="main-content" tabindex="-1">
+<header class="hero">
 <svg class="hero-art" viewBox="0 0 400 230" aria-hidden="true">
     <g class="dot">
       <circle cx="14" cy="14" r="1.4"/><circle cx="66" cy="14" r="1.4"/><circle cx="118" cy="14" r="1.4"/><circle cx="170" cy="14" r="1.4"/><circle cx="222" cy="14" r="1.4"/><circle cx="274" cy="14" r="1.4"/><circle cx="326" cy="14" r="1.4"/><circle cx="378" cy="14" r="1.4"/>
@@ -1564,7 +1564,7 @@ erdscope は MIT ライセンスです。ソースコード、Issue、ライブ�
 <a href="https://github.com/orapli/erdscope">github.com/orapli/erdscope</a> にあります。
 </footer>
 
-</div><!-- /shell -->
+</main><!-- /shell -->
 
 <script>
 (function(){
