@@ -2,7 +2,7 @@
 
 erdscope is a Python 3.9+ CLI that produces a self-contained interactive ER-diagram HTML file and optional Excel, JSON/config/digest/DBML/Mermaid/PlantUML schema exports. A schema can come from any combination of a live MySQL/PostgreSQL/SQLite database, Rails/Prisma/Django/SQLAlchemy/Laravel model code, typed DBML or Mermaid `erDiagram` input, and declarative JSON/YAML config. The repository’s defining constraint is that development is split into readable source fragments, while distribution remains one zero-required-dependency `erd.py` file.
 
-This wiki documents local HEAD `01b638d` / stabilization line `0.9.x` (2026-07-19). The package version is exposed by `erdscope --version` / `-V` and kept aligned with `pyproject.toml` by `tests/test_version.py`.
+This wiki documents local HEAD `d028df2` / release `0.9.1` (2026-07-21). The package version is exposed by `erdscope --version` / `-V` and kept aligned with `pyproject.toml` by `tests/test_version.py`.
 
 ## Start here
 
@@ -57,7 +57,7 @@ At least one database, model path, or non-empty config `tables:` map is required
 - [Engineering workflows](workflows/engineering.md) — changing engines, overlays, viewer, Excel, demos/docs, and releases.
 - [Operations and testing](operations-and-testing.md) — setup, test matrix, CI, integration variables, benchmark guidance, security, failure triage, and release checks.
 
-Recent capabilities covered by the engineering pages include typed `dbml` and `mermaid.er` inputs, scriptable `--emit-*` schema formats, Excel notes/groups sheets, and viewer controls for alignment, auto-expanded-table promotion, and group-aware auto-layout. For exhaustive end-user CLI/viewer behavior, use `README.md`, `docs/manual.html`, and `docs/manual.ja.html`; this wiki is the engineering synthesis layer rather than a duplicate manual.
+Recent capabilities covered by the engineering pages include typed `dbml` and `mermaid.er` inputs, scriptable `--emit-*` schema formats, Excel notes/groups sheets, and viewer controls for alignment, retained `KEPT` tables when Auto-expand is turned off, ROOT/AUTO/KEPT list tags, auto-expanded-table promotion, and group-aware auto-layout. For exhaustive end-user CLI/viewer behavior, use `README.md`, `docs/manual.html`, and `docs/manual.ja.html`; this wiki is the engineering synthesis layer rather than a duplicate manual.
 
 ## Change routing
 
