@@ -3539,9 +3539,18 @@ class TestIncrementalIsolatedColumnWraps(unittest.TestCase):
                 page.wait_for_timeout(20)
             names_js = '[' + ','.join(f'"{n}"' for n in names) + ']'
             xs = page.evaluate(f'''() => {names_js}.map(t => nodePos[t].x)''')
-            self.assertGreater(len(set(xs)), 1,
+            distinct_cols = len(set(xs))
+            self.assertGreater(distinct_cols, 1,
                 f'20 one-at-a-time isolated additions should eventually wrap into a new '
                 f'column instead of stacking into one unbounded column, got x values {set(xs)}')
+            # each column should hold SEVERAL tables, not just one — a fix
+            # that only stops the FIRST column's growth without ever
+            # continuing to fill a later one would degenerate into "one
+            # column per table" (still >1 distinct x, but for the wrong
+            # reason), so also assert a bounded column count.
+            self.assertLess(distinct_cols, len(names) / 2,
+                f'columns should hold multiple tables each, not one table per column, '
+                f'got {distinct_cols} distinct columns for {len(names)} tables')
         finally:
             page.close()
 
@@ -3600,8 +3609,16 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
         # into MORE than that, and that the winning candidate's fit scale
         # (the actual selection metric, exposed via the pure helpers added
         # alongside gridLayout) is reasonably high, not "compact but tiny".
+        #
+        # The row-width candidate search only runs for an explicit ↺ or an
+        # Auto-tidy-driven relayout (Sol review: gridLayout's initial-load
+        # path stays on the cheap single-pass policy, matching the work
+        # order's own scope of "Auto-tidy and the ↺ re-layout action") — so
+        # this must click ↺ rather than just reading the as-loaded positions.
         page = self._open(_build_html_wide_fanout())
         try:
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
             boxes = self._boxes(page)
             self._assert_no_overlap(boxes)
             children_y = {round(boxes[t]['y0']) for t in boxes if t.startswith('c_')}
@@ -3676,13 +3693,21 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
             page.close()
 
     def test_layout_is_deterministic_across_reloads(self):
+        # exercises the adaptive candidate search specifically (via ↺) on
+        # both sides of the reload, since that's the new code whose
+        # determinism actually needs proving — the non-adaptive single-pass
+        # path was already trivially deterministic before this feature.
         page = self._open(_build_html_wide_fanout())
         try:
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
             before = page.evaluate('({...nodePos})')
             page.evaluate('localStorage.clear()')
             page.reload()
             page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
             page.wait_for_timeout(50)
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
             after = page.evaluate('({...nodePos})')
             self.assertEqual(set(before), set(after))
             for t in before:
@@ -3727,6 +3752,71 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
                 });
             }''')
             self.assertFalse(hits, 'no non-member table should intersect the visible group frame')
+        finally:
+            page.close()
+
+    def test_pick_best_candidate_prefers_overlap_free_over_better_fit(self):
+        # pickBestLayoutCandidate is a pure function over plain data, so this
+        # exercises it directly with hand-crafted candidates rather than
+        # trying to construct a real schema that reproduces a specific
+        # ranking outcome.
+        page = self._open(_build_html())
+        try:
+            result = page.evaluate('''() => {
+                const candidates = [
+                    {snap: {}, fitScale: 0.9, overlap: true,  edgeLen: 50},
+                    {snap: {}, fitScale: 0.3, overlap: false, edgeLen: 200},
+                ];
+                return pickBestLayoutCandidate(candidates) === candidates[1];
+            }''')
+            self.assertTrue(result,
+                'an overlap-free candidate should always beat one with better fit/edge but overlap')
+        finally:
+            page.close()
+
+    def test_pick_best_candidate_falls_back_to_first_when_all_overlap(self):
+        # Sol review: when every candidate still has a residual overlap
+        # after obstacle resolution (resolveGroupObstacles' own docs already
+        # accept this as a possible, rare outcome), the picker must not just
+        # return whichever scored best fit/edge among several imperfect
+        # ones — it should fall back to the first/traditional candidate.
+        page = self._open(_build_html())
+        try:
+            result = page.evaluate('''() => {
+                const candidates = [
+                    {snap: {}, fitScale: 0.5, overlap: true, edgeLen: 100},
+                    {snap: {}, fitScale: 0.9, overlap: true, edgeLen: 50},
+                    {snap: {}, fitScale: 0.3, overlap: true, edgeLen: 200},
+                ];
+                return pickBestLayoutCandidate(candidates) === candidates[0];
+            }''')
+            self.assertTrue(result,
+                'with every candidate overlapping, the picker should fall back to the first '
+                '(traditional) candidate rather than whichever merely scored best among bad ones')
+        finally:
+            page.close()
+
+    def test_initial_load_and_focus_entry_skip_the_adaptive_candidate_search(self):
+        # Sol review: the row-width candidate search (item 2) is scoped to
+        # explicit Auto-tidy relayouts and ↺ only, per the work order's own
+        # objective statement ("Auto-tidy and the ↺ re-layout action") — NOT
+        # gridLayout's every caller. Verify gridLayout is actually invoked
+        # with adaptive=false (3rd arg falsy) for initial load and for
+        # entering focus mode, and with adaptive=true only via ↺/Auto-tidy.
+        page = self._open(_build_html())
+        try:
+            page.evaluate('''() => {
+                window.__calls = [];
+                window.__orig = gridLayout;
+                gridLayout = function(...args) { window.__calls.push(!!args[2]); return window.__orig(...args); };
+            }''')
+            page.dblclick('[data-name="users"]')  # enter focus mode
+            page.wait_for_timeout(100)
+            page.click('#btn-reset')  # ↺ while focused
+            page.wait_for_timeout(100)
+            calls = page.evaluate('window.__calls')
+            self.assertEqual(calls, [False, True],
+                f'expected [focus-entry(non-adaptive), reset(adaptive)], got {calls}')
         finally:
             page.close()
 
@@ -3816,6 +3906,32 @@ class TestAutoTidyBoundedBehavior(unittest.TestCase):
         self.page.wait_for_timeout(50)
         self.assertGreaterEqual(self.page.evaluate('window.__gridLayoutCalls'), 1,
             'Auto-tidy should still re-layout for a genuine display-set change')
+
+    def test_autotidy_on_reacts_to_a_per_node_column_toggle(self):
+        # Sol review: the per-node ▤ column-mode cycle used to call
+        # renderDiagram() directly, bypassing refreshView() entirely, so
+        # Auto-tidy never noticed that one table's size had changed.
+        self.page.click('#btn-autolayout')
+        self.assertTrue(self.page.evaluate('autoLayout'))
+        self.page.wait_for_timeout(50)
+        self._wrap_gridlayout_counter()
+        self.page.click('[data-name="posts"] .n-mode')
+        self.page.wait_for_timeout(50)
+        self.assertGreaterEqual(self.page.evaluate('window.__gridLayoutCalls'), 1,
+            'Auto-tidy should re-layout when a per-table column-mode toggle changes that '
+            "table's size, matching the toolbar's own colMode/nameMode/max-rows behavior")
+
+    def test_autotidy_off_keeps_positions_on_a_per_node_column_toggle(self):
+        # the flip side of the above: with Auto-tidy off (the default), the
+        # ▤ toggle must still behave exactly as before — resize in place,
+        # keep every other position untouched.
+        self.assertFalse(self.page.evaluate('autoLayout'))
+        before = self.page.evaluate('({...nodePos})')
+        self.page.click('[data-name="posts"] .n-mode')
+        self.page.wait_for_timeout(50)
+        after = self.page.evaluate('({...nodePos})')
+        self.assertEqual(before, after,
+            'Auto-tidy OFF: a per-table column-mode toggle must not move any node')
 
 
 if __name__ == '__main__':

@@ -1296,16 +1296,33 @@ function anyNodeOverlap(tables){
 // beats any-overlap, then larger fitScale wins, then shorter edgeLen, then a
 // stable sort keeps declaration order as the final deterministic tie-break
 // (so repeated layouts of the same schema never move tables arbitrarily).
+// If EVERY candidate still has a residual overlap after obstacle resolution
+// (rare — resolveGroupObstacles' own docs already accept some residual
+// overlap risk as a possibility, this isn't a new failure mode), fall back
+// to the first/traditional candidate rather than whichever merely scored
+// best fit/edge among several imperfect ones — a safe, bounded fallback,
+// not another collision-solving pass.
 function pickBestLayoutCandidate(results){
-  return results.slice().sort((a,b)=>{
+  const ranked=results.slice().sort((a,b)=>{
     if(a.overlap!==b.overlap) return a.overlap ? 1 : -1;
     if(Math.abs(a.fitScale-b.fitScale)>1e-9) return b.fitScale-a.fitScale;
     if(Math.abs(a.edgeLen-b.edgeLen)>1e-9) return a.edgeLen-b.edgeLen;
     return 0;
-  })[0];
+  });
+  if(ranked[0].overlap) return results[0];
+  return ranked[0];
 }
 
-function gridLayout(tables, preferredHub) {
+// `adaptive`: evaluate the bounded row-width candidate set (see runPass
+// below). Scoped in review (Sol) to explicit Auto-tidy relayouts and the ↺
+// button only — the work order's own objective statement scopes this task
+// to "Auto-tidy and the ↺ re-layout action", not gridLayout's every caller.
+// Left false (single policy=1 pass, byte-identical to the pre-candidate
+// behavior) for initial page load, focus mode entry/switch, and any other
+// path that reaches gridLayout only incidentally (e.g. "All" from an empty
+// display with Auto-tidy off) — those keep the layout the user already saw
+// and don't pay the ~3x evaluation cost on every render.
+function gridLayout(tables, preferredHub, adaptive) {
   const gapX=40, gapY=60, gap=90;
   const tset=new Set(tables);
   // small views: order rows by neighbor position for short, near-vertical
@@ -1632,8 +1649,9 @@ function gridLayout(tables, preferredHub) {
 
   // bounded candidate set (not an open-ended optimizer): today's adaptive
   // target, a wider target that removes wrapping when the viewport allows
-  // it, and the MAX_ROW_W ceiling for wide/shallow fan-outs.
-  const candidates=[1, 1.6, 'max'].map(runPass);
+  // it, and the MAX_ROW_W ceiling for wide/shallow fan-outs. Non-adaptive
+  // callers just run the current policy once (see the `adaptive` param doc).
+  const candidates=(adaptive ? [1, 1.6, 'max'] : [1]).map(runPass);
   const best=pickBestLayoutCandidate(candidates);
   tables.forEach(t=>{ nodePos[t]=best.snap[t]; });
 }
@@ -1725,20 +1743,43 @@ function layoutAll(tables, edges) {
   const placedIsolated=tables.filter(t=>nodePos[t]&&!newTables.includes(t)&&!edgedTables.has(t));
   let ix, iy;
   if(placedIsolated.length){
-    let cix0=Infinity, ciy0=Infinity, cix1=-Infinity, ciy1=-Infinity;
+    // group into columns by shared left edge (rounded) — every member of a
+    // column was placed at that column's own `ix` (its left edge, reused
+    // verbatim for each addition below), so items sharing a column always
+    // share it exactly; a wrap (below) always starts its column at a NEW
+    // left edge, so left-edge equality reliably identifies "same column."
+    const cols=new Map();
     placedIsolated.forEach(t=>{
       const p=nodePos[t], s=nodeSize[t]||calcSize(t);
-      cix0=Math.min(cix0, p.x-s.w/2); ciy0=Math.min(ciy0, p.y-s.h/2);
-      cix1=Math.max(cix1, p.x+s.w/2); ciy1=Math.max(ciy1, p.y+s.h/2);
+      const left=Math.round(p.x-s.w/2);
+      if(!cols.has(left)) cols.set(left, []);
+      cols.get(left).push(t);
     });
-    // bounded wrap: once this isolated column has grown well past the rest
-    // of the diagram's height, start a fresh column to its right instead of
-    // continuing to stack straight down — existing nodes are never moved
-    // (Auto-tidy OFF's incremental path must leave prior placements alone),
-    // this only changes where the *next* addition lands. Measured against
-    // the CONNECTED (edged) tables' own bbox, not the whole display set's —
-    // the whole set always includes this very column, which would make it
-    // impossible for the column to ever out-grow "the rest of the diagram".
+    const lastLeft=Math.max(...cols.keys());
+    const lastCol=cols.get(lastLeft);
+    let allx1=-Infinity, ally0=Infinity, lcy0=Infinity, lcy1=-Infinity;
+    placedIsolated.forEach(t=>{
+      const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+      allx1=Math.max(allx1, p.x+s.w/2); ally0=Math.min(ally0, p.y-s.h/2);
+    });
+    lastCol.forEach(t=>{
+      const p=nodePos[t], s=nodeSize[t]||calcSize(t);
+      lcy0=Math.min(lcy0, p.y-s.h/2); lcy1=Math.max(lcy1, p.y+s.h/2);
+    });
+    // bounded wrap: once the CURRENT (rightmost) column has grown well past
+    // the rest of the diagram's height, start a fresh column to its right
+    // instead of continuing to stack straight down — existing nodes are
+    // never moved (Auto-tidy OFF's incremental path must leave prior
+    // placements alone), this only changes where the *next* addition lands.
+    // Measured against just the last column's own height, not the combined
+    // bbox of every column ever created — once any one column crosses the
+    // threshold that combined bbox never shrinks back down, which would
+    // make every subsequent single addition start yet another new column
+    // instead of continuing to fill whichever column is current. Measured
+    // against the CONNECTED (edged) tables' own bbox for the threshold
+    // itself, not the whole display set's — the whole set always includes
+    // the isolated columns, which would make it impossible for a column to
+    // ever out-grow "the rest of the diagram".
     let ecy0=Infinity, ecy1=-Infinity;
     tables.forEach(t=>{
       if(!edgedTables.has(t)) return;
@@ -1747,8 +1788,8 @@ function layoutAll(tables, edges) {
       ecy0=Math.min(ecy0, p.y-s.h/2); ecy1=Math.max(ecy1, p.y+s.h/2);
     });
     const diagramH=isFinite(ecy0) ? Math.max(ecy1-ecy0, 240) : 240;
-    if(ciy1-ciy0 > diagramH*1.5){ ix=cix1+40; iy=ciy0; }
-    else { ix=cix0; iy=ciy1+40; }
+    if(lcy1-lcy0 > diagramH*1.5){ ix=allx1+40; iy=ally0; }
+    else { ix=lastLeft; iy=lcy1+40; }
   } else {
     // starting a fresh column: center this pass's isolated additions on
     // the rest of the diagram's vertical midpoint (not its top edge) —
@@ -1889,11 +1930,22 @@ function refreshView(forceFit, forceRelayout){
   if(!focusedTable && autoLayout){
     const ts=getDisplayTables();
     const setChanged = ts.length!==previouslyDisplayed.size || ts.some(t=>!previouslyDisplayed.has(t));
-    const dimsInvalidated = ts.some(t=>!nodePos[t]); // e.g. colMode/nameMode/max-rows already cleared it
+    // compares each table's CURRENT size (calcSize(t), reflecting whatever
+    // colMode/nameMode/maxRows/per-table override is live right now)
+    // against nodeSize[t] — still holding whatever was cached at the last
+    // render, since layoutAll() only refreshes it for tables it actually
+    // lays out. Checking nodePos-absence alone (as a proxy for "some caller
+    // must have invalidated something") missed callers that only clear
+    // nodeSize, e.g. a table's own per-table column-mode toggle.
+    const dimsInvalidated = ts.some(t=>{
+      if(!nodePos[t]) return true;
+      const cur=calcSize(t), prev=nodeSize[t];
+      return !prev || prev.w!==cur.w || prev.h!==cur.h;
+    });
     if(forceRelayout || setChanged || dimsInvalidated){
       ts.forEach(t=>delete nodePos[t]);
       ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
-      if(ts.length){ gridLayout(ts); relayoutedAll=true; }
+      if(ts.length){ gridLayout(ts, undefined, true); relayoutedAll=true; }
     }
   }
   renderDiagram(); // also refreshes lastDisplayedTables to the new current set
@@ -2366,7 +2418,11 @@ function drawNode(parent, name, displaySet) {
     if(next===colMode) delete colOverride[name]; else colOverride[name]=next;
     delete nodeSize[name];
     saveState();
-    renderDiagram(); // keep positions: node resizes in place
+    // Auto-tidy OFF (refreshView()'s default): identical to the old direct
+    // renderDiagram() call — keeps positions, this node just resizes in
+    // place. Auto-tidy ON: this table's size did change, so it now
+    // correctly re-lays-out instead of silently not noticing (Sol review).
+    refreshView();
     showToast(`${name}: ${COL_LABELS[next]}`);
   });
   g.appendChild(mb);
@@ -3924,12 +3980,15 @@ document.getElementById('btn-reset')   .addEventListener('click',()=>{
   const ts=getDisplayTables();
   ts.forEach(t=>delete nodePos[t]);
   Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
-  // Every displayed table just lost its nodePos entry above, so
-  // renderDiagram()'s layoutAll() sees the whole display set as "new" and
-  // performs exactly one full gridLayout pass on its own (overview branch
+  ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
+  // ↺ explicitly asks for the adaptive candidate search (overview branch
   // when unfocused, hub-spoke branch with focusedTable as the preferred hub
-  // otherwise) — calling gridLayout() here too, then going through
-  // refreshView()'s Auto-tidy branch, used to lay the same tables out twice.
+  // otherwise) — unlike a plain display-set change, which stays on the
+  // cheap single-pass policy (see gridLayout's `adaptive` param doc).
+  if(ts.length) gridLayout(ts, focusedTable, true);
+  // Every displayed table already has a fresh nodePos entry from the call
+  // above, so renderDiagram()'s own layoutAll() sees nothing "new" and
+  // doesn't lay out again — exactly one full layout, not two.
   renderDiagram();
   requestAnimationFrame(fitView); // always fit, regardless of Auto-tidy state
 });
