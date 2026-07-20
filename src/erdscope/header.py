@@ -82,7 +82,7 @@ from urllib.parse import urlparse
 # dynamically, into pyproject.toml's `version` — kept in sync by
 # tests/test_version.py). erd.py must stay importable/runnable standalone,
 # so this can't be sourced from pyproject.toml at runtime.
-__version__ = '0.9.0'
+__version__ = '0.9.1'
 
 # ---------------------------------------------------------------------------
 # Provider / provenance contracts
