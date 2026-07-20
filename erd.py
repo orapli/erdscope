@@ -4285,12 +4285,13 @@ body.dark .srch-tgl.active{color:#93c5fd;background:#1e3a5f;border-color:#3b82f6
 body.dark .table-item.word-hit label{box-shadow:inset 3px 0 0 #fbbf24}
 /* auto-expanded (in current focus view) indicator */
 .table-item.inview .tname::after{content:'●';color:#3b82f6;font-size:7px;margin-left:5px;vertical-align:middle}
-/* AUTO/KEPT text tag — the sole blue dot above reads the same for both, so
-   this is the actual (non-color-only) way to tell "shown live by auto-expand"
-   apart from "kept after auto-expand was turned off" in the list */
+/* ROOT/AUTO/KEPT text tag (non-default states only — see renderTableList),
+   spelling out status in words rather than relying on color (or, for AUTO
+   vs KEPT, on the sole blue dot above, which reads the same for both) */
 .kind-tag{font-size:9px;font-weight:700;letter-spacing:.03em;color:#64748b;
   background:#f1f5f9;padding:1px 4px;border-radius:3px;flex-shrink:0}
-.table-item.kept .kind-tag{color:#0f766e;background:#ccfbf1}
+.kind-tag-root{color:#15803d;background:#dcfce7}
+.kind-tag-retained{color:#0f766e;background:#ccfbf1}
 /* fully-hidden (banned) tables */
 .hide-btn{visibility:hidden;border:none;background:none;cursor:pointer;font-size:10px;
   padding:0 2px;opacity:.45;flex-shrink:0;line-height:1;filter:grayscale(1)}
@@ -4612,7 +4613,8 @@ body.dark .table-item.focused label{background:#1e3a8a;color:#bfdbfe}
 body.dark .rel-badge{background:#1e293b;color:#94a3b8}
 body.dark .col-hit{background:#164e63;color:#a5f3fc}
 body.dark .kind-tag{background:#1e293b;color:#94a3b8}
-body.dark .table-item.kept .kind-tag{background:#134e4a;color:#5eead4}
+body.dark .kind-tag-root{background:#14532d;color:#86efac}
+body.dark .kind-tag-retained{background:#134e4a;color:#5eead4}
 body.dark #center-pane{background:#0b1220;
   background-image:linear-gradient(rgba(148,163,184,.07) 1px,transparent 1px),
     linear-gradient(90deg,rgba(148,163,184,.07) 1px,transparent 1px)}
@@ -6315,8 +6317,8 @@ function drawNode(parent, name, displaySet) {
     rb.textContent='＋';
     const rbTitle=svgEl('title',{});
     rbTitle.textContent = isKept
-      ? 'Kept after Auto-expand was turned off — click to promote to an explicit selection'
-      : 'Promote to an explicit selection (keep this table even if auto-expand changes)';
+      ? 'Kept after Auto-expand was turned off — click to check it (stays shown even if Auto-expand changes again)'
+      : 'Click to check this table (stays shown even if Auto-expand changes)';
     rb.appendChild(rbTitle);
     rb.addEventListener('mousedown', e=>e.stopPropagation());
     rb.addEventListener('dblclick', e=>e.stopPropagation());
@@ -6775,11 +6777,17 @@ function excludeTable(name){
 // Shared by the list checkbox and the node's own ＋ button (drawNode) so
 // the two never disagree about what "promote" does.
 function promoteAuto(name){
-  // whether there was actually something to promote (vs. a plain checkbox
-  // check on a table with no auto/retained history) — gates the flash/toast
-  // below so routing every ordinary checkbox-check through this function
-  // doesn't spam a "promoted!" toast for the common case
-  const wasImplicit = excludedTables.has(name) || retainedExpandedTables.has(name);
+  // whether this table was actually being shown as 'auto' or 'retained'
+  // right before this call — gates the flash/toast below so routing every
+  // ordinary checkbox-check through this function doesn't spam a
+  // "promoted!" toast for the common case of just checking some plain
+  // table that happens to currently be excluded (e.g. right after "None").
+  // excludedTables.has(name) alone is NOT enough for this check (Sol
+  // review: it's true for every unchecked table, not just auto/retained
+  // ones) — must classify against the display set from BEFORE any of the
+  // mutations below run.
+  const priorKind = focusedTable ? null : overviewDisplayKind(name, new Set(getDisplayTables()));
+  const wasImplicit = priorKind==='auto' || priorKind==='retained';
   excludedTables.delete(name);
   retainedExpandedTables.delete(name);
   noAutoExpandRoot.delete(name); // a direct promotion is explicit intent — full root, not a stale auto-expand root
@@ -6788,7 +6796,7 @@ function promoteAuto(name){
   refreshView(); renderTableList(); showDetails();
   if(wasImplicit){
     flashNode(name);
-    showToast(`${name}: promoted to an explicit selection — stays shown even if Auto-expand is turned off`);
+    showToast(`${name}: checked — stays shown even if Auto-expand is turned off`);
   }
 }
 
@@ -6895,8 +6903,8 @@ function renderTableList(){
       const cb=document.createElement('input');
       cb.type='checkbox'; cb.checked=!excludedTables.has(name);
       cb.disabled=isHidden||(autoShown && !isOverviewAutoShown);
-      if(kind==='retained') cb.title='Kept after Auto-expand was turned off — check to promote it to an explicit selection';
-      else if(isOverviewAutoShown) cb.title='Shown by auto-expansion — check to promote it to an explicit selection';
+      if(kind==='retained') cb.title='Kept after Auto-expand was turned off — check it to keep it shown even if Auto-expand changes again';
+      else if(isOverviewAutoShown) cb.title='Shown by auto-expansion — check it to keep it shown even if Auto-expand changes';
       else if(autoShown) cb.title='Shown by auto-expansion (checkbox locked while focused)';
       cb.addEventListener('change', e => {
         e.stopPropagation();
@@ -6914,12 +6922,30 @@ function renderTableList(){
       });
       const nm=document.createElement('span'); nm.className='tname'; nm.textContent=name;
       lbl.appendChild(cb); lbl.appendChild(nm);
-      if(kind==='auto'||kind==='retained'){
-        const kt=document.createElement('span'); kt.className='kind-tag';
-        kt.textContent = kind==='auto' ? 'AUTO' : 'KEPT';
-        kt.title = kind==='auto'
-          ? 'Shown live by auto-expansion'
-          : 'Kept on screen after auto-expand was turned off';
+      // A visible state tag for the non-default kinds only: 'root' (a
+      // checked/root distinction otherwise invisible in the list while
+      // Auto-expand is on — a ticked checkbox looks the same either way),
+      // 'auto' and 'retained' (both render as an unticked checkbox, so
+      // "live" vs "kept" needs a word, not just the sole blue dot). A plain
+      // 'checked' row deliberately gets none: unlike the other three, a
+      // ticked checkbox by itself is already unambiguous, and tagging every
+      // ordinary row (Sol review's original ask, tried and reverted —
+      // see below) squeezed real schemas' table-name/logical-name columns
+      // enough to wrap names onto a second line even for ordinary-length
+      // names, which is worse than the problem it solved. Checking a KEPT
+      // table still gets an explicit confirmation — the toast + node flash
+      // in promoteAuto() below — even though its tag just disappears here.
+      // "checked table" / "expansion root" wording throughout deliberately
+      // avoids "selection", which already means something else in this UI
+      // (selectedTables' blue header highlight).
+      if(kind==='root'||kind==='auto'||kind==='retained'){
+        const kt=document.createElement('span'); kt.className='kind-tag kind-tag-'+kind;
+        kt.textContent = {root:'ROOT', auto:'AUTO', retained:'KEPT'}[kind];
+        kt.title = {
+          root: 'Checked — expansion root while Auto-expand is on',
+          auto: 'Shown live by auto-expansion',
+          retained: 'Kept on screen after Auto-expand was turned off',
+        }[kind];
         lbl.appendChild(kt);
       }
       const lg=logicalName(name);

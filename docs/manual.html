@@ -1013,8 +1013,11 @@ showing into the overview, then exits focus.</p>
 <p>Turning Auto-expand <strong>off</strong> stops it from expanding any further — it does not
 retract what it had already pulled in. Those tables stay on screen with a finer dashed
 <code>KEPT</code> border (distinct from the regular dashed <code>AUTO</code> border a live
-auto-expanded table gets) until you promote one to an explicit selection (its <code>＋</code>
-button, or checking its now-unlocked list checkbox) or remove it (the node's <code>⊖</code> button).
+auto-expanded table gets) until you check one (its <code>＋</code>
+button, or its now-unlocked list checkbox) or remove it (the node's <code>⊖</code> button). The
+table list also tags every displayed row's status in words — <code>ROOT</code> / <code>CHECKED</code>
+/ <code>AUTO</code> / <code>KEPT</code> — so it's never down to color alone, and checking a
+<code>KEPT</code> table visibly becomes <code>CHECKED</code> rather than just losing its tag.
 Turning Auto-expand back on clears any kept tables and recomputes the expansion from scratch, so
 repeatedly toggling it on and off can't gradually creep the display outward.</p>
 <p>Each node also has a <code>⊕</code> button that pulls in just that table's direct neighbors
@@ -1031,9 +1034,10 @@ one click can't cascade the whole schema in.</p>
 <tr><td>Strength</td><td>Light — can come back via Auto-expand as someone else's neighbor, or by re-checking the box / another table's <code>⊕</code></td><td>Hard — never shown again, even by Auto-expand, until unbanned</td></tr>
 <tr><td>Undo</td><td>Re-check the box</td><td><code>🚫</code> again on that row, or <span class="btn-example">Unban all</span> in the red banner that appears while anything is banned</td></tr>
 </table>
-<p>A <code>KEPT</code> table's checkbox is already unchecked (it was never an explicit selection to
-begin with), so re-checking it <em>promotes</em> it rather than excluding it — use the node's
-<code>⊖</code> button to actually remove a kept table from view.</p>
+<p>A <code>KEPT</code> table's checkbox is already unchecked (it was never a checked table to begin
+with), so checking it <em>checks</em> it (the list tag changes <code>KEPT</code> → <code>CHECKED</code>)
+rather than excluding it — use the node's <code>⊖</code> button to actually remove a kept table
+from view.</p>
 <p>Banning the currently-focused table exits focus. Both excluded and banned sets are remembered by
 your browser and are captured in named views and share links.</p>
 <img class="shot" loading="lazy" src="img/hiding.png" alt="Left pane showing a red 'banned: 1 table(s)' banner with an Unban all link, and the products row struck through and greyed out below it">

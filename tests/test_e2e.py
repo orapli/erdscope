@@ -1827,7 +1827,10 @@ class TestAutoExpandRetention(unittest.TestCase):
 
     def test_checkbox_promotes_a_retained_table(self):
         self._make_posts_retained()
-        cb = self.page.locator('.table-item:has(.tname:text-is("posts")) input[type=checkbox]')
+        row = '.table-item:has(.tname:text-is("posts"))'
+        self.assertEqual(self.page.inner_text(f'{row} .kind-tag'), 'KEPT',
+                          'test setup: the list should tag posts as KEPT before promotion')
+        cb = self.page.locator(f'{row} input[type=checkbox]')
         self.assertTrue(cb.is_enabled(),
                          "a retained table's checkbox must be checkable, not locked")
         self.assertIn('Kept', cb.get_attribute('title') or '')
@@ -1838,6 +1841,49 @@ class TestAutoExpandRetention(unittest.TestCase):
         cls = self.page.evaluate(
             'document.querySelector(\'[data-name="posts"]\').className.baseVal')
         self.assertNotIn('kept', cls)
+        # A plain checked row deliberately has no kind-tag at all (a ticked
+        # checkbox is already unambiguous) — tagging every ordinary row was
+        # tried per an earlier review pass and reverted, since it squeezed
+        # real schemas' name/logical-name columns enough to wrap table
+        # names onto a second line. The toast + node flash already fired
+        # above are the "something changed" confirmation instead.
+        self.assertEqual(self.page.locator(f'{row} .kind-tag').count(), 0,
+            'a plain checked row should have no kind-tag')
+
+    def test_root_tag_shown_only_for_a_live_bfs_root(self):
+        self._check('users')
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(50)
+        self.assertEqual(
+            self.page.inner_text('.table-item:has(.tname:text-is("users")) .kind-tag'), 'ROOT',
+            'a checked table that is actually a live BFS root should be tagged ROOT')
+        self.page.locator('#auto-expand').uncheck()
+        self.page.wait_for_timeout(50)
+        self.assertEqual(
+            self.page.locator('.table-item:has(.tname:text-is("users")) .kind-tag').count(), 0,
+            'once Auto-expand is off, a checked table is no longer a BFS root, so it '
+            'should have no kind-tag (not a stale ROOT)')
+
+    def test_promote_toast_and_flash_only_fire_for_auto_or_retained(self):
+        # regression (Sol review): promoteAuto()'s old wasImplicit check was
+        # `excludedTables.has(name)`, true for ANY unchecked table — not
+        # just ones actually being shown live via auto-expand or kept. So
+        # simply checking a plain, previously-excluded table (e.g. right
+        # after "None") wrongly fired the "promoted!" toast and node flash.
+        toast_shown = lambda: self.page.evaluate("document.getElementById('toast').classList.contains('show')")
+        self.page.evaluate("document.getElementById('toast').classList.remove('show')")
+        self._check('comments')  # plain table, never auto/retained/checked before
+        self.page.wait_for_timeout(100)
+        self.assertFalse(toast_shown(),
+                          'checking a plain previously-excluded table must not show a "checked" toast')
+
+        self._make_posts_retained()
+        self.page.evaluate("document.getElementById('toast').classList.remove('show')")
+        cb = self.page.locator('.table-item:has(.tname:text-is("posts")) input[type=checkbox]')
+        cb.check()
+        self.page.wait_for_timeout(100)
+        self.assertTrue(toast_shown(),
+                         'promoting an actually-retained table should show a confirmation toast')
 
     def test_node_plus_button_promotes_a_retained_table(self):
         self._make_posts_retained()
