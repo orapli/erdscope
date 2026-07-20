@@ -854,6 +854,8 @@ them) alongside table/column names and comments, but not <code>global</code> not
 the left-pane filter instead. Either way, a matching row is marked distinctly from a plain
 table/column hit so you can tell a note match from a schema match at a glance.
 </p>
+<img class="shot" src="img/notes.png" alt="The orders detail panel in the right pane, with a Customer retention relation note directly under the belongs_to :user association and an Order state machine table note in the NOTES section below">
+<p class="cap">The <code>orders</code> detail panel from the live demo — a relation note (<em>Customer retention</em>) sits directly under its association, and a table note (<em>Order state machine</em>) gets its own Notes section.</p>
 <p>
 A table or relation note only ever shows up where its target is actually visible: if a table is
 unchecked or banned (🚫) from the current view, its detail panel simply isn't open, so its notes
@@ -883,6 +885,8 @@ member tables already ended up.
 
   - id: catalog
     tables: [products, categories, product_categories]</code></pre>
+<img class="shot" src="img/groups.png" alt="Three tables — products, product_categories, and categories — enclosed in a rounded frame with a Catalog title chip">
+<p class="cap">The <code>catalog</code> group above, as rendered in the live demo — a rounded frame and title chip drawn around the members. Drag the chip and the whole group moves together.</p>
 <p>
 Every group needs a config-unique <code>id</code> and a non-empty <code>tables</code> list;
 <code>title</code> (defaults to <code>id</code> when omitted) and <code>color</code> are optional.
@@ -1054,6 +1058,8 @@ expression) toggle — turning on regex mode in the filter box doesn't affect th
 and <code>Name</code> only (table names, no columns). Each node also has its own <code>▤</code>
 button that cycles <em>that one table's</em> mode independently — handy for zooming in on one big
 table while keeping the rest compact. A global mode change resets any per-table overrides.</p>
+<img class="shot" src="img/colmodes.png" alt="Diagram with every table in PK/FK mode showing only key columns, except categories which has been individually switched to Name mode; the PK/FK button is active in the toolbar below">
+<p class="cap">Everything in <code>PK/FK</code> mode (selected in the toolbar), with <code>categories</code> individually overridden to <code>Name</code> via its <code>▤</code> button. Each node&#39;s “+N cols” counts its collapsed columns.</p>
 
 <h3 id="viewer-names">Logical names <a class="anchor-link" href="#viewer-names">#</a></h3>
 <p>A table's DB comment doubles as a searchable "logical name" — e.g. <code>users（Customer accounts）</code>.
@@ -1061,6 +1067,8 @@ A toolbar toggle picks <code>Both</code> / <code>Physical</code> / <code>Logical
 view. Exports have their <em>own</em>, independent Both/Phys./Log. choice inside the export panel
 (see <a href="#exports">Exports</a>) — changing what you're looking at doesn't change what gets
 exported, and vice versa.</p>
+<img class="shot" src="img/logical-names.png" alt="Diagram in Logical name mode: tables display logical names such as Customer orders and Sellable products, while shipments — which has no comment — keeps its physical name">
+<p class="cap"><code>Logical</code> mode — every table shows its logical name (DB comment). <code>shipments</code> has no comment, so it naturally falls back to its physical name.</p>
 
 <h3 id="viewer-views">Named views &amp; share links <a class="anchor-link" href="#viewer-views">#</a></h3>
 <p><span class="btn-example">💾 Save</span> prompts for a name and stores the current view under it
@@ -1073,6 +1081,8 @@ saved view or share link — they're separate, page-wide preferences.</div>
 <code>🗑</code>. <span class="btn-example">🔗</span> copies a <strong>share link</strong> — the current
 view, JSON-encoded, appended to the page's own URL. Opening that link reproduces the view
 automatically, so you can paste it straight into a PR description or chat.</p>
+<img class="shot" src="img/views.png" alt="The top bar right after saving a view named Order fulfillment: the Views selector shows the applied view, next to the Save, delete, and share-link buttons">
+<p class="cap">The top bar right after saving “Order fulfillment” — the selector shows the applied view, next to <span class="btn-example">💾 Save</span>, <code>🗑</code> (delete), and <code>🔗</code> (share link).</p>
 
 <h3 id="viewer-edges">Edge types <a class="anchor-link" href="#viewer-edges">#</a></h3>
 <p>Three kinds of relation feed the diagram, but they render as <strong>two</strong> distinct line
@@ -1085,6 +1095,8 @@ styles on the canvas, plus badges in the Details pane:</p>
 <p>A <span class="badge badge-manual">manual</span> badge marks an association that came from the
 config file's <code>relations</code> list. A dashed <em>node border</em> (as opposed to a dashed
 edge) means that table was pulled in by Auto-expand rather than checked directly.</p>
+<img class="shot" src="img/edges.png" alt="The payments Associations list with all three badges at once: DB FK on belongs_to :order, manual on belongs_to :shipment, and inferred on belongs_to :coupon">
+<p class="cap"><code>payments</code>&#39; Associations — a real FK constraint (<span class="badge badge-dbfk">DB FK</span>), a config-file relation (<span class="badge badge-manual">manual</span>), and a name-based guess (<span class="badge badge-inf">inferred</span>) side by side in one list.</p>
 
 <h3 id="viewer-shortcuts">Keyboard shortcuts <a class="anchor-link" href="#viewer-shortcuts">#</a></h3>
 <p>This is the complete list — there's no shortcut for zoom, save, or export. The toolbar's
@@ -1104,6 +1116,8 @@ viewer, along with the mouse gestures and a link back to this manual.</p>
 the viewer does not follow your OS/browser color scheme automatically — and your choice is
 remembered by your browser for next time. Exports (PNG/SVG) always render with the light palette,
 regardless of which mode you're currently viewing in.</p>
+<img class="shot" src="img/darkmode.png" alt="The viewer in dark mode: all three panes turn dark, including badges and design notes in the orders detail panel on the right">
+<p class="cap">Dark mode via the <code>🌙</code> toggle — the diagram, both panes, badges, and notes all switch palette (independent of this manual&#39;s own theme).</p>
 
 <h3 id="viewer-print">Print <a class="anchor-link" href="#viewer-print">#</a></h3>
 <p>There's no dedicated print button — use your browser's own print command

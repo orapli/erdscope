@@ -289,7 +289,10 @@ def shot_views(browser):
     page.on('dialog', lambda d: d.accept('Order fulfillment'))
     page.locator('#view-save').click()
     page.wait_for_timeout(200)
-    clip = clip_of(page, ['#view-sel', '#view-save', '#view-del', '#view-share'], pad=14)
+    # Whole topbar strip, not just the four buttons: the saved view's name in
+    # the selector reads better next to the diagram title and table count.
+    clip = clip_of(page, ['#topbar'], pad=0)
+    clip['x'], clip['width'] = 0, VIEWPORT['width']
     page.screenshot(path=str(IMG_DIR / 'views.png'), clip=clip)
     ctx.close()
 
