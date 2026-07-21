@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-07-21
 
 ### Changed
 
@@ -14,11 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row-width candidates instead of one fixed heuristic, and isolated
   (unrelated) tables now shelf-pack into multiple columns instead of one
   ever-growing column — both aimed at the diagram spreading too far
-  vertically. Group frames no longer act as layout obstacles while hidden.
+  vertically. Group frames no longer act as layout obstacles while hidden,
+  and node-node overlaps left behind by group-frame obstacle avoidance are
+  now corrected (including when two different groups' members conflict).
   `↺` now always performs exactly one layout pass and always re-fits the
   viewport, regardless of the Auto-tidy setting. Auto-tidy itself no longer
   re-packs the overview when neither the displayed tables nor their sizes
   actually changed.
+- **Viewer: compact ROOT indicator.** The table list's "ROOT" text tag
+  (a checked table that's currently a live Auto-expand traversal root) is
+  now a small green `◎` symbol instead of a word, freeing up horizontal
+  space next to the table name/logical-name columns. `AUTO`/`KEPT` tags and
+  the diagram node's own `✓` badge are unchanged.
 
 ## [0.9.1] - 2026-07-21
 
