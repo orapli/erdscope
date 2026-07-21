@@ -5481,6 +5481,47 @@ function anyNodeOverlap(tables){
   return false;
 }
 
+// Bounded, deterministic last-resort correction (item 4 review escalation):
+// resolveGroupObstacles' group-frame-avoiding push can, rarely, land a
+// pushed table on top of some other ordinary table. Rather than let that
+// residual overlap silently ride into the final scoring (a "safe" fallback
+// to the first candidate is not actually safe if that candidate ALSO
+// overlaps), nudge just the offending table clear using the exact same
+// down/right/left least-travel rule resolveGroupObstacles itself already
+// uses — bounded to a few passes, not an open-ended collision solver. Runs
+// over the whole candidate's table set, not a caller-restricted subset,
+// because every table in a gridLayout pass is this pass's own tentative
+// output (unlike layoutAll's incremental path, nothing here is an
+// already-placed position some other caller needs left alone).
+function resolveResidualOverlaps(tables){
+  for(let pass=0; pass<3; pass++){
+    let moved=false;
+    for(let i=0;i<tables.length;i++){
+      const t=tables[i], p=nodePos[t]; if(!p) continue;
+      const s=nodeSize[t]||calcSize(t);
+      for(let j=0;j<tables.length;j++){
+        if(i===j) continue;
+        const o=tables[j], q=nodePos[o]; if(!q) continue;
+        const os=nodeSize[o]||calcSize(o);
+        const x0=p.x-s.w/2, y0=p.y-s.h/2, x1=p.x+s.w/2, y1=p.y+s.h/2;
+        const ox0=q.x-os.w/2, oy0=q.y-os.h/2, ox1=q.x+os.w/2, oy1=q.y+os.h/2;
+        if(!(x0<ox1 && x1>ox0 && y0<oy1 && y1>oy0)) continue;
+        const downCost=oy1-y0, rightCost=ox1-x0, leftCost=x1-ox0;
+        if(downCost<=rightCost && downCost<=leftCost){
+          nodePos[t]={x:p.x, y:oy1+20+s.h/2};
+        } else if(rightCost<=leftCost){
+          nodePos[t]={x:ox1+20+s.w/2, y:p.y};
+        } else {
+          nodePos[t]={x:ox0-20-s.w/2, y:p.y};
+        }
+        moved=true;
+        break; // re-check t against everything again on the next pass
+      }
+    }
+    if(!moved) break;
+  }
+}
+
 // rank layout candidates {fitScale, overlap, edgeLen}: no-overlap always
 // beats any-overlap, then larger fitScale wins, then shorter edgeLen, then a
 // stable sort keeps declaration order as the final deterministic tie-break
@@ -5826,8 +5867,12 @@ function gridLayout(tables, preferredHub, adaptive) {
     });
     placeSingles();
     resolveGroupObstacles(tables); // V3: keep group frames clear of other tables; no-op when groups are hidden
-    // score AFTER obstacle resolution — scoring the pre-obstacle layout would
-    // let obstacle-pushed nodes silently make the "winning" candidate worse
+    // if that push left a table overlapping another one, try a bounded
+    // deterministic correction before scoring — see resolveResidualOverlaps
+    if(GROUPS.length && showGroups && anyNodeOverlap(tables)) resolveResidualOverlaps(tables);
+    // score AFTER obstacle resolution (and any residual correction) —
+    // scoring the pre-obstacle layout would let obstacle-pushed nodes
+    // silently make the "winning" candidate worse
     const overlap = (GROUPS.length && showGroups) ? anyNodeOverlap(tables) : false;
     const bbox = layoutBBoxOf(tables);
     const fitScale = fitScaleFor(bbox, svg.getBoundingClientRect(), tables.length);

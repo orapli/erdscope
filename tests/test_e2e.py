@@ -3520,6 +3520,42 @@ def _build_html_wide_fanout():
     return out
 
 
+def _build_html_moderate_fanout():
+    # Sol review: the 10-child _build_html_wide_fanout() above always needs
+    # ~1960px for one row — wider than even the MAX_ROW_W(1700) ceiling —
+    # so EVERY row-width policy (1/1.6/'max') is capped to the same 2
+    # sub-rows regardless of which one wins; the candidate search can't
+    # actually change the outcome for that fixture, so it never proves the
+    # search is doing anything. This fixture is deliberately smaller: one
+    # hub, 4 children each ~354px wide (a moderately-long extra varchar
+    # column keeps them well above the MIN_W floor without any exotic
+    # tuning) — natural row width ~1538px, comfortably UNDER MAX_ROW_W, so
+    # a wide-enough candidate CAN fit them in one row while the narrow
+    # (policy=1) target still wraps them into 2. See the paired test below,
+    # which picks a viewport where the 1-row candidate also scores BETTER
+    # (not just different) — a short, wide viewport, where the 2-row
+    # layout's extra height is the binding constraint rather than either
+    # layout's width.
+    children = ['c_alpha', 'c_bravo', 'c_charlie', 'c_delta']
+    table_rows = [('hub', '')] + [(c, '') for c in children]
+    col_rows = [_col('hub', 'id', key='PRI')]
+    fk_rows = []
+    for c in children:
+        col_rows.append(_col(c, 'id', key='PRI'))
+        col_rows.append(_col(c, 'hub_id', key='MUL'))
+        col_rows.append(_col(c, 'a_moderately_long_descriptive_name', dtype='varchar', ctype='varchar(255)'))
+        fk_rows.append((c, 'hub_id', 'hub'))
+    index_rows = [('hub', 'PRIMARY', 0, 1, 'id')]
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, index_rows)
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'moderate_fanout.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture')
+    return out
+
+
 def _build_html_many_isolated():
     # the star schema (TABLE_ROWS) plus 20 isolated tables — enough to
     # expose the old single-unbounded-column behavior in gridLayout's
@@ -3681,6 +3717,48 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
         finally:
             page.close()
 
+    def test_adaptive_search_picks_a_wider_better_fitting_candidate(self):
+        # Sol review: directly proves the candidate search changes the
+        # outcome and improves it, using _build_html_moderate_fanout() (see
+        # its docstring for why the 10-child fixture above can't show this)
+        # and a short, wide viewport where a 2-row layout's extra height —
+        # not either layout's width — is the binding constraint.
+        page = self.browser.new_page(viewport={'width': 2200, 'height': 450})
+        try:
+            page.goto(_build_html_moderate_fanout().as_uri())
+            page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+            page.wait_for_timeout(50)
+
+            def fit_scale_and_rows():
+                info = page.evaluate('''() => {
+                    const tables = getDisplayTables();
+                    const bbox = layoutBBoxOf(tables);
+                    const r = document.querySelector('svg').getBoundingClientRect();
+                    return {fitScale: fitScaleFor(bbox, r, tables.length)};
+                }''')
+                pos = page.evaluate('({...nodePos})')
+                ys = {round(pos[t]['y']) for t in ('c_alpha', 'c_bravo', 'c_charlie', 'c_delta')}
+                return info['fitScale'], len(ys)
+
+            # as-loaded = the non-adaptive single-pass policy (initial load
+            # doesn't use the candidate search — see the scoping test above)
+            non_adaptive_fit, non_adaptive_rows = fit_scale_and_rows()
+            self.assertEqual(non_adaptive_rows, 2,
+                'test setup: the narrow non-adaptive policy should wrap these 4 wide '
+                f'children into 2 sub-rows, got {non_adaptive_rows}')
+
+            page.click('#btn-reset')  # ↺: explicitly requests the adaptive candidate search
+            page.wait_for_timeout(100)
+            adaptive_fit, adaptive_rows = fit_scale_and_rows()
+            self.assertEqual(adaptive_rows, 1,
+                'the adaptive search should find the single-row candidate that fits this '
+                f'wide-but-short viewport, got {adaptive_rows} rows')
+            self.assertGreater(adaptive_fit, non_adaptive_fit,
+                f'the adaptive candidate (fit={adaptive_fit}) should score strictly better '
+                f'than the non-adaptive one (fit={non_adaptive_fit}) it was chosen over')
+        finally:
+            page.close()
+
     def test_many_isolated_tables_wrap_into_multiple_columns(self):
         page = self._open(_build_html_many_isolated())
         try:
@@ -3820,11 +3898,14 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
             page.close()
 
     def test_pick_best_candidate_falls_back_to_first_when_all_overlap(self):
-        # Sol review: when every candidate still has a residual overlap
-        # after obstacle resolution (resolveGroupObstacles' own docs already
-        # accept this as a possible, rare outcome), the picker must not just
-        # return whichever scored best fit/edge among several imperfect
-        # ones — it should fall back to the first/traditional candidate.
+        # Pure-function fallback test: if pickBestLayoutCandidate is ever
+        # handed candidates that ALL still overlap (in practice this should
+        # be rare-to-never now that runPass tries resolveResidualOverlaps
+        # first — see the next test — but the picker itself must still
+        # degrade sanely if that correction couldn't fully clear things),
+        # it must not just return whichever scored best fit/edge among
+        # several bad options — it should fall back to the first/
+        # traditional candidate.
         page = self._open(_build_html())
         try:
             result = page.evaluate('''() => {
@@ -3838,6 +3919,28 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
             self.assertTrue(result,
                 'with every candidate overlapping, the picker should fall back to the first '
                 '(traditional) candidate rather than whichever merely scored best among bad ones')
+        finally:
+            page.close()
+
+    def test_resolve_residual_overlaps_clears_a_node_node_conflict(self):
+        # Sol review: falling back to the first candidate when every
+        # candidate overlaps isn't actually "safe" if that first candidate
+        # ALSO overlaps — runPass now tries a bounded, deterministic
+        # correction (mirroring resolveGroupObstacles' own down/right/left
+        # least-travel push, but for node-node conflicts) before scoring.
+        # This exercises that correction directly against a manufactured
+        # conflict, the same way the existing resolveGroupObstacles tests do.
+        page = self._open(_build_html())
+        try:
+            result = page.evaluate('''() => {
+                const [a, b] = getDisplayTables();
+                const sa = nodeSize[a], sb = nodeSize[b];
+                nodePos[b] = {x: nodePos[a].x, y: nodePos[a].y}; // force a direct overlap
+                resolveResidualOverlaps([a, b]);
+                const pa = nodePos[a], pb = nodePos[b];
+                return Math.abs(pa.x-pb.x) < (sa.w+sb.w)/2 && Math.abs(pa.y-pb.y) < (sa.h+sb.h)/2;
+            }''')
+            self.assertFalse(result, 'resolveResidualOverlaps should clear a direct node-node conflict')
         finally:
             page.close()
 
