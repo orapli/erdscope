@@ -1016,11 +1016,13 @@ retract what it had already pulled in. Those tables stay on screen with a finer 
 auto-expanded table gets) until you check one (its <code>＋</code>
 button, or its now-unlocked list checkbox) or remove it (the node's <code>⊖</code> button). The
 table list also tags a live <code>AUTO</code> or kept <code>KEPT</code> row in words (not just the
-sole blue dot every auto-shown row gets), and a checked table that's currently a live traversal
-root gets a <code>ROOT</code> tag too — an ordinary checked table gets no tag at all, since a ticked
-checkbox is unambiguous on its own. Checking a <code>KEPT</code> table simply loses its tag rather
-than gaining a new one; the checkbox itself, a confirmation toast, and a brief flash on the node
-are what confirm it went through.
+sole blue dot every auto-shown row gets). While Auto-expand is on, a checked table that's
+currently a live traversal root shows a small green <code>◎</code> symbol in the list instead of a
+word — an ordinary checked table gets no marker at all, since a ticked checkbox is unambiguous on
+its own. The diagram itself still marks the same tables with a <code>✓</code> badge on the node.
+Checking a <code>KEPT</code> table simply loses its tag rather than gaining a new one; the
+checkbox itself, a confirmation toast, and a brief flash on the node are what confirm it went
+through.
 Turning Auto-expand back on clears any kept tables and recomputes the expansion from scratch, so
 repeatedly toggling it on and off can't gradually creep the display outward.</p>
 <p>Each node also has a <code>⊕</code> button that pulls in just that table's direct neighbors
@@ -1065,7 +1067,7 @@ expression) toggle — turning on regex mode in the filter box doesn't affect th
 <li><strong>Drag to move</strong> — dragging a selected table moves the whole selection together. Dragged edges snap to nearby tables' edges/centers within a few pixels, drawn as red guide lines (Figma-style) — hold <kbd>Alt</kbd> to disable snapping for a drag.</li>
 <li><strong><a href="#groups">Group</a> drag</strong> — dragging a group's title chip moves every member of that group together (no snapping); the group's frame tracks along, live.</li>
 <li><strong>Align / distribute</strong> — with 2+ tables selected, the right pane offers <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span>; with 3+ selected, <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> distribute becomes available too (it keeps the two outermost tables fixed and equalizes the gaps between the rest).</li>
-<li><strong>Auto-tidy</strong> — a toolbar toggle that re-packs and re-fits the layout automatically whenever the set of displayed tables changes. The <code>↺</code> button re-lays-out immediately on demand, regardless of Auto-tidy.</li>
+<li><strong>Auto-tidy</strong> — a toolbar toggle that rearranges the overview and replaces manual positions automatically whenever the displayed tables or their sizes change (default off, so manual placement is never touched unless you turn it on). The <code>↺</code> button re-lays-out immediately on demand and always re-fits the viewport, regardless of Auto-tidy.</li>
 <li><strong>Undo/redo</strong> — toolbar <code>↶</code>/<code>↷</code> buttons or <kbd>Ctrl/Cmd+Z</kbd> / <kbd>Ctrl/Cmd+Shift+Z</kbd> (or <kbd>Ctrl/Cmd+Y</kbd>). Covers table position changes only; the history clears whenever you enter/exit focus or load a saved view, since those replace the whole layout.</li>
 </ul>
 <img class="shot" loading="lazy" src="img/multiselect.png" alt="Three tables (payments, shipments, order_coupons) multi-selected and highlighted blue, with the right pane's Align and Distribute button groups both enabled">
