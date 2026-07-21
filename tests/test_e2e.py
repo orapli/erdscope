@@ -1850,19 +1850,64 @@ class TestAutoExpandRetention(unittest.TestCase):
         self.assertEqual(self.page.locator(f'{row} .kind-tag').count(), 0,
             'a plain checked row should have no kind-tag')
 
-    def test_root_tag_shown_only_for_a_live_bfs_root(self):
+    def test_root_icon_shown_only_for_a_live_bfs_root(self):
+        # ROOT used to render as a '.kind-tag' text pill ('ROOT'); it's now a
+        # compact '◎' symbol in its own '.root-icon' class so AUTO/KEPT's
+        # kind-tag styling is untouched (Sol-driven UI request).
+        row = '.table-item:has(.tname:text-is("users"))'
         self._check('users')
         self.page.locator('#auto-expand').check()
         self.page.wait_for_timeout(50)
-        self.assertEqual(
-            self.page.inner_text('.table-item:has(.tname:text-is("users")) .kind-tag'), 'ROOT',
-            'a checked table that is actually a live BFS root should be tagged ROOT')
+        icon = self.page.locator(f'{row} .root-icon')
+        self.assertEqual(icon.count(), 1,
+            'a checked table that is actually a live BFS root should show the ◎ icon')
+        self.assertEqual(icon.inner_text(), '◎')
+        self.assertEqual(self.page.locator(f'{row} .kind-tag').count(), 0,
+            'ROOT must no longer render as a "ROOT" text tag')
+        self.assertEqual(icon.get_attribute('title'), 'ROOT — checked expansion root')
+        self.assertEqual(icon.get_attribute('aria-label'), 'ROOT — checked expansion root')
+        self.assertEqual(icon.get_attribute('role'), 'img')
         self.page.locator('#auto-expand').uncheck()
         self.page.wait_for_timeout(50)
-        self.assertEqual(
-            self.page.locator('.table-item:has(.tname:text-is("users")) .kind-tag').count(), 0,
-            'once Auto-expand is off, a checked table is no longer a BFS root, so it '
-            'should have no kind-tag (not a stale ROOT)')
+        self.assertEqual(self.page.locator(f'{row} .root-icon').count(), 0,
+            'once Auto-expand is off, a checked table is no longer a BFS root, so the '
+            '◎ icon should disappear (not a stale ROOT indicator)')
+
+    def test_root_icon_not_shown_for_auto_or_retained(self):
+        # AUTO and KEPT keep their existing text kind-tag and must never
+        # also show the ROOT ◎ icon — 'root' and 'auto'/'retained' are
+        # mutually exclusive per overviewDisplayKind(), but assert it
+        # explicitly since these are the two states most easily confused
+        # with ROOT (all three are "not a plain unadorned checked row").
+        self._check('users')
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(50)
+        posts_row = '.table-item:has(.tname:text-is("posts"))'
+        self.assertEqual(self.page.inner_text(f'{posts_row} .kind-tag'), 'AUTO',
+            'test setup: posts should be live-auto-expanded via users')
+        self.assertEqual(self.page.locator(f'{posts_row} .root-icon').count(), 0,
+            'an AUTO table must not show the ROOT ◎ icon')
+        self.page.locator('#auto-expand').uncheck()
+        self.page.wait_for_timeout(50)
+        self.assertEqual(self.page.inner_text(f'{posts_row} .kind-tag'), 'KEPT',
+            'test setup: posts should now be retained (KEPT)')
+        self.assertEqual(self.page.locator(f'{posts_row} .root-icon').count(), 0,
+            'a KEPT table must not show the ROOT ◎ icon')
+
+    def test_root_icon_visible_in_dark_mode(self):
+        self._check('users')
+        self.page.locator('#auto-expand').check()
+        self.page.wait_for_timeout(50)
+        self.page.click('#btn-dark')
+        self.page.wait_for_timeout(50)
+        icon = self.page.locator('.table-item:has(.tname:text-is("users")) .root-icon')
+        self.assertEqual(icon.count(), 1, 'the ROOT icon must still render in dark mode')
+        color = self.page.evaluate(
+            "getComputedStyle(document.querySelector('.root-icon')).color")
+        # dark-mode override (#4ade80) must actually be applied, not just
+        # inherit the light-mode green (#15803d) — a real contrast check
+        self.assertNotEqual(color, 'rgb(21, 128, 61)',
+            'dark mode should use the lighter dark-mode green, not the light-mode color')
 
     def test_promote_toast_and_flash_only_fire_for_auto_or_retained(self):
         # regression (Sol review): promoteAuto()'s old wasImplicit check was

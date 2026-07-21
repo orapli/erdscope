@@ -4285,13 +4285,21 @@ body.dark .srch-tgl.active{color:#93c5fd;background:#1e3a5f;border-color:#3b82f6
 body.dark .table-item.word-hit label{box-shadow:inset 3px 0 0 #fbbf24}
 /* auto-expanded (in current focus view) indicator */
 .table-item.inview .tname::after{content:'●';color:#3b82f6;font-size:7px;margin-left:5px;vertical-align:middle}
-/* ROOT/AUTO/KEPT text tag (non-default states only — see renderTableList),
-   spelling out status in words rather than relying on color (or, for AUTO
-   vs KEPT, on the sole blue dot above, which reads the same for both) */
+/* AUTO/KEPT text tag (non-default states only — see renderTableList),
+   spelling out status in words rather than relying on color (or on the
+   sole blue dot above, which reads the same for both AUTO and KEPT) */
 .kind-tag{font-size:9px;font-weight:700;letter-spacing:.03em;color:#64748b;
   background:#f1f5f9;padding:1px 4px;border-radius:3px;flex-shrink:0}
-.kind-tag-root{color:#15803d;background:#dcfce7}
 .kind-tag-retained{color:#0f766e;background:#ccfbf1}
+/* ROOT — a compact symbol instead of a text pill (unlike AUTO/KEPT, a
+   checked/root row's checkbox is already ticked, so this only needs to
+   add "and it's the expansion root", not carry the whole status alone) —
+   keeps the list column narrow even on schemas with many auto-expand
+   roots. Shape (◎), not just color, so it can't be confused with the
+   blue ● "shown via auto-expansion" dot above (different glyph, and the
+   two never appear on the same row regardless — see overviewDisplayKind). */
+.root-icon{font-size:11px;line-height:1;width:11px;text-align:center;
+  flex-shrink:0;color:#15803d}
 /* fully-hidden (banned) tables */
 .hide-btn{visibility:hidden;border:none;background:none;cursor:pointer;font-size:10px;
   padding:0 2px;opacity:.45;flex-shrink:0;line-height:1;filter:grayscale(1)}
@@ -4613,8 +4621,8 @@ body.dark .table-item.focused label{background:#1e3a8a;color:#bfdbfe}
 body.dark .rel-badge{background:#1e293b;color:#94a3b8}
 body.dark .col-hit{background:#164e63;color:#a5f3fc}
 body.dark .kind-tag{background:#1e293b;color:#94a3b8}
-body.dark .kind-tag-root{background:#14532d;color:#86efac}
 body.dark .kind-tag-retained{background:#134e4a;color:#5eead4}
+body.dark .root-icon{color:#4ade80}
 body.dark #center-pane{background:#0b1220;
   background-image:linear-gradient(rgba(148,163,184,.07) 1px,transparent 1px),
     linear-gradient(90deg,rgba(148,163,184,.07) 1px,transparent 1px)}
@@ -4752,7 +4760,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <div class="lr"><svg class="lsvg" width="30" height="12" viewBox="0 0 30 12"><path d="M2 6 H28 M7 2 V10 M23 2 V10" stroke="#64748b" stroke-width="1.2" fill="none"/></svg>one to one</div>
         <div class="lr"><svg class="lsvg" width="30" height="12" viewBox="0 0 30 12"><path d="M10 6 H20" stroke="#64748b" stroke-width="1.2" stroke-dasharray="3 2" fill="none"/><path d="M2 6 L10 2 M2 6 L10 10 M2 6 L10 6 M28 6 L20 2 M28 6 L20 10 M28 6 L20 6" stroke="#64748b" stroke-width="1.2" fill="none"/></svg>many to many (via join table)</div>
         <div class="lr" style="color:#94a3b8">⇢name … join-table label (toggle with Labels)</div>
-        <div class="lr" style="color:#94a3b8">✓ = expansion root (checked)　dashed AUTO = shown live by auto-expand　finer-dashed KEPT = left on screen after auto-expand was turned off</div>
+        <div class="lr" style="color:#94a3b8">◎ in list / ✓ on node = expansion root (checked)　dashed AUTO = shown live by auto-expand　finer-dashed KEPT = left on screen after auto-expand was turned off</div>
         <div class="lr" style="color:#94a3b8">faint dotted = relation inferred from FK column name</div>
         <div class="lhint">Framework association names (has_many etc.) appear in the right pane<br>
           Diagram: click = select, shift/ctrl-click = multi-select, double-click = focus, drag = move (whole selection if multi-selected)<br>
@@ -7144,15 +7152,19 @@ function renderTableList(){
       });
       const nm=document.createElement('span'); nm.className='tname'; nm.textContent=name;
       lbl.appendChild(cb); lbl.appendChild(nm);
-      // A visible state tag for the non-default kinds only: 'root' (a
+      // A visible state indicator for the non-default kinds only: 'root' (a
       // checked/root distinction otherwise invisible in the list while
-      // Auto-expand is on — a ticked checkbox looks the same either way),
-      // 'auto' and 'retained' (both render as an unticked checkbox, so
-      // "live" vs "kept" needs a word, not just the sole blue dot). A plain
-      // 'checked' row deliberately gets none: unlike the other three, a
-      // ticked checkbox by itself is already unambiguous, and tagging every
-      // ordinary row (Sol review's original ask, tried and reverted —
-      // see below) squeezed real schemas' table-name/logical-name columns
+      // Auto-expand is on — a ticked checkbox looks the same either way)
+      // gets a compact ◎ symbol rather than a text pill, since unlike
+      // AUTO/KEPT its checkbox is already ticked — the symbol only needs to
+      // add "and it's the expansion root", not carry the whole status alone
+      // the way AUTO/KEPT's word does. 'auto' and 'retained' (both render as
+      // an unticked checkbox, so "live" vs "kept" needs a word, not just the
+      // sole blue dot) keep their text tag. A plain 'checked' row
+      // deliberately gets neither: unlike the other three, a ticked
+      // checkbox by itself is already unambiguous, and tagging every
+      // ordinary row (Sol review's original ask, tried and reverted — see
+      // below) squeezed real schemas' table-name/logical-name columns
       // enough to wrap names onto a second line even for ordinary-length
       // names, which is worse than the problem it solved. Checking a KEPT
       // table still gets an explicit confirmation — the toast + node flash
@@ -7160,11 +7172,16 @@ function renderTableList(){
       // "checked table" / "expansion root" wording throughout deliberately
       // avoids "selection", which already means something else in this UI
       // (selectedTables' blue header highlight).
-      if(kind==='root'||kind==='auto'||kind==='retained'){
+      if(kind==='root'){
+        const ri=document.createElement('span'); ri.className='root-icon'; ri.textContent='◎';
+        ri.title='ROOT — checked expansion root';
+        ri.setAttribute('role','img');
+        ri.setAttribute('aria-label','ROOT — checked expansion root');
+        lbl.appendChild(ri);
+      } else if(kind==='auto'||kind==='retained'){
         const kt=document.createElement('span'); kt.className='kind-tag kind-tag-'+kind;
-        kt.textContent = {root:'ROOT', auto:'AUTO', retained:'KEPT'}[kind];
+        kt.textContent = {auto:'AUTO', retained:'KEPT'}[kind];
         kt.title = {
-          root: 'Checked — expansion root while Auto-expand is on',
           auto: 'Shown live by auto-expansion',
           retained: 'Kept on screen after Auto-expand was turned off',
         }[kind];

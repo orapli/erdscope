@@ -1016,11 +1016,13 @@ retract what it had already pulled in. Those tables stay on screen with a finer 
 auto-expanded table gets) until you check one (its <code>＋</code>
 button, or its now-unlocked list checkbox) or remove it (the node's <code>⊖</code> button). The
 table list also tags a live <code>AUTO</code> or kept <code>KEPT</code> row in words (not just the
-sole blue dot every auto-shown row gets), and a checked table that's currently a live traversal
-root gets a <code>ROOT</code> tag too — an ordinary checked table gets no tag at all, since a ticked
-checkbox is unambiguous on its own. Checking a <code>KEPT</code> table simply loses its tag rather
-than gaining a new one; the checkbox itself, a confirmation toast, and a brief flash on the node
-are what confirm it went through.
+sole blue dot every auto-shown row gets). While Auto-expand is on, a checked table that's
+currently a live traversal root shows a small green <code>◎</code> symbol in the list instead of a
+word — an ordinary checked table gets no marker at all, since a ticked checkbox is unambiguous on
+its own. The diagram itself still marks the same tables with a <code>✓</code> badge on the node.
+Checking a <code>KEPT</code> table simply loses its tag rather than gaining a new one; the
+checkbox itself, a confirmation toast, and a brief flash on the node are what confirm it went
+through.
 Turning Auto-expand back on clears any kept tables and recomputes the expansion from scratch, so
 repeatedly toggling it on and off can't gradually creep the display outward.</p>
 <p>Each node also has a <code>⊕</code> button that pulls in just that table's direct neighbors
