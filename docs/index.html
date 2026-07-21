@@ -1304,9 +1304,12 @@ function anyNodeOverlap(tables){
 // checked AFTER resolveResidualOverlaps below, since that pass (like
 // resolveGroupObstacles itself) can push a non-member table around and
 // land it back inside a frame resolveGroupObstacles had already cleared
-// it from (Sol review). Members are never moved by either pass (see the
-// memberSet skip below), so every frame's own bbox stays fixed while this
-// is checked — only non-member positions need re-verifying.
+// it from (Sol review). resolveResidualOverlaps only moves a member when
+// its conflict has no non-member alternative (two different groups'
+// members overlapping — see its own doc comment), which is rare enough
+// that this check still only needs to re-verify non-member positions in
+// the overwhelmingly common case; the pathological member-moved case is
+// covered by anyNodeOverlap()'s own re-check in runPass, not here.
 function anyNonMemberInGroupFrame(tables){
   if(!GROUPS.length) return false;
   const displayed=new Set(getDisplayTables());
@@ -1337,23 +1340,31 @@ function anyNonMemberInGroupFrame(tables){
 // output (unlike layoutAll's incremental path, nothing here is an
 // already-placed position some other caller needs left alone).
 //
-// Never moves a group MEMBER (mirrors resolveGroupObstacles' own
-// guarantee — see its "never moves a member" test): moving a member would
-// shift that group's own frame bbox, which could newly enclose some other,
-// previously-fine non-member table — a problem this pass has no way to
-// even notice, let alone fix (Sol review). A member overlapping something
-// is left for whichever OTHER table in the pair is not a member to move
-// out of the way instead; the base gridLayout algorithm already guarantees
-// members don't overlap each other from placement alone, so this never
-// leaves a member-vs-member conflict unresolved.
+// Prefers moving a NON-member over a group member (mirrors
+// resolveGroupObstacles' own guarantee — see its "never moves a member"
+// test): moving a member would shift that group's own frame bbox, which
+// could newly enclose some other, previously-fine non-member table — a
+// problem this pass has no way to even notice, let alone fix (Sol review).
+//
+// This is a PREFERENCE, not an absolute rule, and deliberately per-PAIR
+// rather than "any table in any group is globally frozen": resolveGroupObstacles
+// itself only protects the ONE group whose frame it's currently resolving
+// obstacles for — a member of group B is fair game while clearing group
+// A's frame, so two DIFFERENT groups' members can end up overlapping each
+// other with no non-member available to move instead (Sol review, 5th
+// pass — every groups fixture before this only had one group, so nothing
+// exercised it). A blanket "never move any member of any group" left that
+// case permanently unresolved: neither table in the pair was ever allowed
+// to move. So: skip moving t away from o only when o is NOT a member
+// (o will get its own turn and move instead) — when BOTH t and o are
+// members (whether of the same or different groups), moving is allowed,
+// since there is no non-member alternative for that specific conflict.
 function resolveResidualOverlaps(tables){
   const memberSet=new Set(GROUPS.flatMap(g=>g.tables));
   for(let pass=0; pass<3; pass++){
     let moved=false;
     for(let i=0;i<tables.length;i++){
-      const t=tables[i];
-      if(memberSet.has(t)) continue;
-      const p=nodePos[t]; if(!p) continue;
+      const t=tables[i], p=nodePos[t]; if(!p) continue;
       const s=nodeSize[t]||calcSize(t);
       for(let j=0;j<tables.length;j++){
         if(i===j) continue;
@@ -1362,6 +1373,7 @@ function resolveResidualOverlaps(tables){
         const x0=p.x-s.w/2, y0=p.y-s.h/2, x1=p.x+s.w/2, y1=p.y+s.h/2;
         const ox0=q.x-os.w/2, oy0=q.y-os.h/2, ox1=q.x+os.w/2, oy1=q.y+os.h/2;
         if(!(x0<ox1 && x1>ox0 && y0<oy1 && y1>oy0)) continue;
+        if(memberSet.has(t) && !memberSet.has(o)) continue; // defer to o's own turn instead
         const downCost=oy1-y0, rightCost=ox1-x0, leftCost=x1-ox0;
         if(downCost<=rightCost && downCost<=leftCost){
           nodePos[t]={x:p.x, y:oy1+20+s.h/2};
@@ -1381,13 +1393,19 @@ function resolveResidualOverlaps(tables){
 // Unconditional guarantee, only ever reached if the bounded correction
 // above still leaves a node-node overlap (a multi-way conflict 3 passes
 // couldn't fully untangle — pathological, not expected in practice): move
-// just the still-overlapping non-member tables to a deterministic column
-// beyond the whole layout's bbox. Guaranteed overlap-free by construction
-// (strictly beyond every other table's right edge, stacked with normal
-// gaps), even though it may look visually odd — "no node-on-node overlap"
-// is a harder requirement than "ideally placed", matching the review's ask
-// for a safe fallback that prioritizes overlap-freedom. Never moves a
-// group member, for the same reason resolveResidualOverlaps doesn't.
+// just the still-overlapping tables to a deterministic column beyond the
+// whole layout's bbox. Guaranteed overlap-free by construction (strictly
+// beyond every other table's right edge, stacked with normal gaps), even
+// though it may look visually odd — "no node-on-node overlap" is a harder
+// requirement than "ideally placed", matching the review's ask for a safe
+// fallback that prioritizes overlap-freedom.
+//
+// Prefers evacuating only non-members, same as resolveResidualOverlaps —
+// but if EVERY offender is a group member (Sol review, 5th pass: two
+// DIFFERENT groups' members conflicting, with no non-member anywhere in
+// the tangle), evacuating nothing would leave the overlap unresolved
+// forever. At that point some member has to move regardless of whose
+// frame it shifts — still strictly better than a permanent visible overlap.
 function evacuateOverlappingTables(tables){
   const offenders=new Set();
   for(let i=0;i<tables.length;i++){
@@ -1403,8 +1421,8 @@ function evacuateOverlappingTables(tables){
   }
   if(!offenders.size) return;
   const memberSet=new Set(GROUPS.flatMap(g=>g.tables));
-  const movable=[...offenders].filter(t=>!memberSet.has(t)).sort();
-  if(!movable.length) return;
+  let movable=[...offenders].filter(t=>!memberSet.has(t)).sort();
+  if(!movable.length) movable=[...offenders].sort(); // no non-member alternative anywhere in the tangle
   let x1=-Infinity, y0=Infinity;
   tables.forEach(t=>{
     const p=nodePos[t]; if(!p) return;

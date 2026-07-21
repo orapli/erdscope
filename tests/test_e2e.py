@@ -515,6 +515,29 @@ def _build_html_with_groups():
     return out
 
 
+def _build_html_with_two_groups():
+    # Sol review (5th pass): resolveGroupObstacles() only excludes the group
+    # it's CURRENTLY resolving obstacles for — a member of some OTHER group
+    # is fair game to be pushed while clearing group A's frame, and that
+    # push is computed with no awareness of group B's own frame or members.
+    # Every other groups fixture in this file has exactly one group, so
+    # nothing here exercises a member-of-one-group vs member-of-another-
+    # group conflict. 'posts'+'likes' = group "alpha", 'comments'+
+    # 'audit_logs' = group "beta"; 'users' stays ungrouped.
+    tables = erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
+    groups_cfg = [
+        {'id': 'alpha', 'title': 'Alpha', 'tables': ['posts', 'likes'], 'color': '#0d9488'},
+        {'id': 'beta', 'title': 'Beta', 'tables': ['comments', 'audit_logs'], 'color': '#7c3aed'},
+    ]
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'two_groups.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_fixture', groups=groups_cfg, groups_label='test')
+    return out
+
+
 def _build_html_demo_grouped():
     # L (BACKLOG): the same e-commerce schema + column comments +
     # `Catalog` group docs/gen_demo.py uses for the live demo (docs/index.html)
@@ -4035,6 +4058,70 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
                 return before.x===after.x && before.y===after.y;
             }''')
             self.assertTrue(result, 'evacuateOverlappingTables must never move a group member')
+        finally:
+            page.close()
+
+    def test_resolve_residual_overlaps_resolves_members_of_two_different_groups(self):
+        # Sol review (5th pass): resolveGroupObstacles() only protects the
+        # ONE group it's currently resolving obstacles for — a member of a
+        # DIFFERENT group can legitimately be pushed while clearing some
+        # other group's frame, and that push has no awareness of the other
+        # group's own frame/members. Every groups fixture before this one
+        # had exactly one group, so a member-of-A vs member-of-B conflict
+        # was never exercised — and the earlier "never move any member"
+        # blanket rule would have left BOTH tables permanently stuck.
+        page = self._open(_build_html_with_two_groups())
+        try:
+            result = page.evaluate('''() => {
+                // 'posts' is a member of group "alpha", 'comments' of group "beta"
+                const sa = nodeSize.posts, sb = nodeSize.comments;
+                nodePos.comments = {x: nodePos.posts.x, y: nodePos.posts.y};
+                resolveResidualOverlaps(['posts', 'comments']);
+                const pa = nodePos.posts, pb = nodePos.comments;
+                return Math.abs(pa.x-pb.x) < (sa.w+sb.w)/2 && Math.abs(pa.y-pb.y) < (sa.h+sb.h)/2;
+            }''')
+            self.assertFalse(result,
+                'two members of DIFFERENT groups overlapping must still be resolved — '
+                'there is no non-member alternative for this conflict, so one of them has to move')
+        finally:
+            page.close()
+
+    def test_evacuate_overlapping_tables_resolves_members_of_two_different_groups(self):
+        # same gap as above, for the last-resort evacuation fallback: if
+        # EVERY offender is a group member (no non-member anywhere in the
+        # tangle), evacuating nothing would leave the overlap unresolved.
+        page = self._open(_build_html_with_two_groups())
+        try:
+            result = page.evaluate('''() => {
+                const sa = nodeSize.posts, sb = nodeSize.comments;
+                nodePos.comments = {x: nodePos.posts.x, y: nodePos.posts.y};
+                evacuateOverlappingTables(['posts', 'comments']);
+                const pa = nodePos.posts, pb = nodePos.comments;
+                return Math.abs(pa.x-pb.x) < (sa.w+sb.w)/2 && Math.abs(pa.y-pb.y) < (sa.h+sb.h)/2;
+            }''')
+            self.assertFalse(result,
+                'with no non-member offender available at all, evacuateOverlappingTables '
+                'must still resolve the conflict by evacuating a member rather than giving up')
+        finally:
+            page.close()
+
+    def test_resolve_residual_overlaps_still_prefers_a_non_member_when_available(self):
+        # regression guard alongside the fix above: in a MIXED conflict
+        # (one member, one non-member), the non-member must still be the
+        # one that moves — this is _build_html_with_groups' existing
+        # single-group behavior and must not regress now that member-vs-
+        # member conflicts are also resolvable.
+        page = self._open(_build_html_with_two_groups())
+        try:
+            result = page.evaluate('''() => {
+                const before = {...nodePos.posts};  // group member
+                nodePos.users = {x: nodePos.posts.x, y: nodePos.posts.y};  // ungrouped
+                resolveResidualOverlaps(['posts', 'users']);
+                const after = {...nodePos.posts};
+                return before.x===after.x && before.y===after.y;
+            }''')
+            self.assertTrue(result,
+                'a member vs. a non-member conflict should still move the non-member, not the member')
         finally:
             page.close()
 
