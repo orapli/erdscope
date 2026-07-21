@@ -3944,6 +3944,100 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
         finally:
             page.close()
 
+    def test_resolve_residual_overlaps_never_moves_a_group_member(self):
+        # Sol review (3rd pass): the correction must never move a group
+        # member — moving one would shift that group's own frame bbox,
+        # which could newly enclose some OTHER, previously-fine non-member,
+        # a problem this pass has no way to notice or fix. When a member
+        # overlaps a non-member, only the non-member should move.
+        page = self._open(_build_html_with_groups())
+        try:
+            result = page.evaluate('''() => {
+                const before = {...nodePos.posts};  // posts is a "content" group member
+                const sa = nodeSize.posts, sb = nodeSize.audit_logs;
+                nodePos.audit_logs = {x: nodePos.posts.x, y: nodePos.posts.y};
+                resolveResidualOverlaps(['posts', 'audit_logs']);
+                const after = {...nodePos.posts};
+                const pa = nodePos.posts, pb = nodePos.audit_logs;
+                const stillOverlap = Math.abs(pa.x-pb.x) < (sa.w+sb.w)/2 && Math.abs(pa.y-pb.y) < (sa.h+sb.h)/2;
+                return {memberUnmoved: before.x===after.x && before.y===after.y, stillOverlap};
+            }''')
+            self.assertTrue(result['memberUnmoved'], 'a group member must never be moved by resolveResidualOverlaps')
+            self.assertFalse(result['stillOverlap'], 'the non-member should be pushed clear of the member instead')
+        finally:
+            page.close()
+
+    def test_resolve_residual_overlaps_separates_three_nodes_at_the_same_point(self):
+        # Sol review: explicitly requested a multi-node-at-one-point case,
+        # not just a single overlapping pair.
+        page = self._open(_build_html_with_multiple_isolated_tables())
+        try:
+            result = page.evaluate('''() => {
+                const names = ['settings_a', 'settings_b', 'settings_c'];
+                const p0 = {...nodePos[names[0]]};
+                names.forEach(n => { nodePos[n] = {x: p0.x, y: p0.y}; });
+                resolveResidualOverlaps(names);
+                const overlaps = [];
+                for (let i = 0; i < names.length; i++) {
+                    for (let j = i+1; j < names.length; j++) {
+                        const a = names[i], b = names[j];
+                        const pa = nodePos[a], pb = nodePos[b], sa = nodeSize[a], sb = nodeSize[b];
+                        if (Math.abs(pa.x-pb.x) < (sa.w+sb.w)/2 && Math.abs(pa.y-pb.y) < (sa.h+sb.h)/2)
+                            overlaps.push([a, b]);
+                    }
+                }
+                return overlaps;
+            }''')
+            self.assertEqual(result, [], f'three nodes stacked at the same point should all separate, still overlapping: {result}')
+        finally:
+            page.close()
+
+    def test_any_non_member_in_group_frame_detects_intrusion(self):
+        page = self._open(_build_html_with_groups())
+        try:
+            result = page.evaluate('''() => {
+                const bbox = groupFrameBBox(GROUPS[0].tables, new Set(getDisplayTables()));
+                nodePos.audit_logs = {x: (bbox.x0+bbox.x1)/2, y: (bbox.y0+bbox.y1)/2};
+                const inside = anyNonMemberInGroupFrame(['audit_logs']);
+                nodePos.audit_logs = {x: bbox.x1 + 500, y: bbox.y0};
+                const outside = anyNonMemberInGroupFrame(['audit_logs']);
+                return {inside, outside};
+            }''')
+            self.assertTrue(result['inside'], 'a non-member sitting inside the frame bbox should be detected')
+            self.assertFalse(result['outside'], 'a non-member well clear of the frame should not be flagged')
+        finally:
+            page.close()
+
+    def test_evacuate_overlapping_tables_guarantees_no_overlap(self):
+        # last-resort fallback: if the bounded correction still leaves an
+        # overlap, evacuation must unconditionally clear it.
+        page = self._open(_build_html_with_multiple_isolated_tables())
+        try:
+            result = page.evaluate('''() => {
+                const a = 'settings_a', b = 'settings_b';
+                nodePos[b] = {x: nodePos[a].x, y: nodePos[a].y};
+                evacuateOverlappingTables([a, b]);
+                const pa = nodePos[a], pb = nodePos[b], sa = nodeSize[a], sb = nodeSize[b];
+                return Math.abs(pa.x-pb.x) < (sa.w+sb.w)/2 && Math.abs(pa.y-pb.y) < (sa.h+sb.h)/2;
+            }''')
+            self.assertFalse(result, 'evacuateOverlappingTables must guarantee the pair no longer overlaps')
+        finally:
+            page.close()
+
+    def test_evacuate_overlapping_tables_never_moves_a_group_member(self):
+        page = self._open(_build_html_with_groups())
+        try:
+            result = page.evaluate('''() => {
+                const before = {...nodePos.posts};
+                nodePos.audit_logs = {x: nodePos.posts.x, y: nodePos.posts.y};
+                evacuateOverlappingTables(['posts', 'audit_logs']);
+                const after = {...nodePos.posts};
+                return before.x===after.x && before.y===after.y;
+            }''')
+            self.assertTrue(result, 'evacuateOverlappingTables must never move a group member')
+        finally:
+            page.close()
+
     def test_initial_load_and_focus_entry_skip_the_adaptive_candidate_search(self):
         # Sol review: the row-width candidate search (item 2) is scoped to
         # explicit Auto-tidy relayouts and ↺ only, per the work order's own

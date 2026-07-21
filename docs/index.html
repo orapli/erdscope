@@ -1300,6 +1300,30 @@ function anyNodeOverlap(tables){
   return false;
 }
 
+// true if any non-member table currently intersects some group's frame —
+// checked AFTER resolveResidualOverlaps below, since that pass (like
+// resolveGroupObstacles itself) can push a non-member table around and
+// land it back inside a frame resolveGroupObstacles had already cleared
+// it from (Sol review). Members are never moved by either pass (see the
+// memberSet skip below), so every frame's own bbox stays fixed while this
+// is checked — only non-member positions need re-verifying.
+function anyNonMemberInGroupFrame(tables){
+  if(!GROUPS.length) return false;
+  const displayed=new Set(getDisplayTables());
+  return GROUPS.some(g=>{
+    const bbox=groupFrameBBox(g.tables, displayed);
+    if(!bbox) return false;
+    const memberSet=new Set(g.tables);
+    return tables.some(t=>{
+      if(memberSet.has(t)) return false;
+      const p=nodePos[t]; if(!p) return false;
+      const s=nodeSize[t]||calcSize(t);
+      const x0=p.x-s.w/2, y0=p.y-s.h/2, x1=p.x+s.w/2, y1=p.y+s.h/2;
+      return x0<bbox.x1 && x1>bbox.x0 && y0<bbox.y1 && y1>bbox.y0;
+    });
+  });
+}
+
 // Bounded, deterministic last-resort correction (item 4 review escalation):
 // resolveGroupObstacles' group-frame-avoiding push can, rarely, land a
 // pushed table on top of some other ordinary table. Rather than let that
@@ -1312,11 +1336,24 @@ function anyNodeOverlap(tables){
 // because every table in a gridLayout pass is this pass's own tentative
 // output (unlike layoutAll's incremental path, nothing here is an
 // already-placed position some other caller needs left alone).
+//
+// Never moves a group MEMBER (mirrors resolveGroupObstacles' own
+// guarantee — see its "never moves a member" test): moving a member would
+// shift that group's own frame bbox, which could newly enclose some other,
+// previously-fine non-member table — a problem this pass has no way to
+// even notice, let alone fix (Sol review). A member overlapping something
+// is left for whichever OTHER table in the pair is not a member to move
+// out of the way instead; the base gridLayout algorithm already guarantees
+// members don't overlap each other from placement alone, so this never
+// leaves a member-vs-member conflict unresolved.
 function resolveResidualOverlaps(tables){
+  const memberSet=new Set(GROUPS.flatMap(g=>g.tables));
   for(let pass=0; pass<3; pass++){
     let moved=false;
     for(let i=0;i<tables.length;i++){
-      const t=tables[i], p=nodePos[t]; if(!p) continue;
+      const t=tables[i];
+      if(memberSet.has(t)) continue;
+      const p=nodePos[t]; if(!p) continue;
       const s=nodeSize[t]||calcSize(t);
       for(let j=0;j<tables.length;j++){
         if(i===j) continue;
@@ -1339,6 +1376,48 @@ function resolveResidualOverlaps(tables){
     }
     if(!moved) break;
   }
+}
+
+// Unconditional guarantee, only ever reached if the bounded correction
+// above still leaves a node-node overlap (a multi-way conflict 3 passes
+// couldn't fully untangle — pathological, not expected in practice): move
+// just the still-overlapping non-member tables to a deterministic column
+// beyond the whole layout's bbox. Guaranteed overlap-free by construction
+// (strictly beyond every other table's right edge, stacked with normal
+// gaps), even though it may look visually odd — "no node-on-node overlap"
+// is a harder requirement than "ideally placed", matching the review's ask
+// for a safe fallback that prioritizes overlap-freedom. Never moves a
+// group member, for the same reason resolveResidualOverlaps doesn't.
+function evacuateOverlappingTables(tables){
+  const offenders=new Set();
+  for(let i=0;i<tables.length;i++){
+    const a=tables[i], pa=nodePos[a]; if(!pa) continue;
+    const sa=nodeSize[a]||calcSize(a);
+    for(let j=i+1;j<tables.length;j++){
+      const b=tables[j], pb=nodePos[b]; if(!pb) continue;
+      const sb=nodeSize[b]||calcSize(b);
+      if(Math.abs(pa.x-pb.x)<(sa.w+sb.w)/2 && Math.abs(pa.y-pb.y)<(sa.h+sb.h)/2){
+        offenders.add(a); offenders.add(b);
+      }
+    }
+  }
+  if(!offenders.size) return;
+  const memberSet=new Set(GROUPS.flatMap(g=>g.tables));
+  const movable=[...offenders].filter(t=>!memberSet.has(t)).sort();
+  if(!movable.length) return;
+  let x1=-Infinity, y0=Infinity;
+  tables.forEach(t=>{
+    const p=nodePos[t]; if(!p) return;
+    const s=nodeSize[t]||calcSize(t);
+    x1=Math.max(x1, p.x+s.w/2); y0=Math.min(y0, p.y-s.h/2);
+  });
+  if(!isFinite(x1)) return;
+  let sy=y0;
+  movable.forEach(t=>{
+    const s=nodeSize[t]||calcSize(t);
+    nodePos[t]={x:x1+60+s.w/2, y:sy+s.h/2};
+    sy+=s.h+40;
+  });
 }
 
 // rank layout candidates {fitScale, overlap, edgeLen}: no-overlap always
@@ -1686,13 +1765,31 @@ function gridLayout(tables, preferredHub, adaptive) {
     });
     placeSingles();
     resolveGroupObstacles(tables); // V3: keep group frames clear of other tables; no-op when groups are hidden
-    // if that push left a table overlapping another one, try a bounded
-    // deterministic correction before scoring — see resolveResidualOverlaps
-    if(GROUPS.length && showGroups && anyNodeOverlap(tables)) resolveResidualOverlaps(tables);
+    if(GROUPS.length && showGroups && anyNodeOverlap(tables)){
+      // if that push left a table overlapping another one, try a bounded
+      // deterministic correction before scoring — see resolveResidualOverlaps.
+      // That correction never moves a group member, so it can (rarely) push
+      // a non-member back into a frame resolveGroupObstacles just cleared it
+      // from — checked below via anyNonMemberInGroupFrame, not re-corrected
+      // here (ping-ponging the two passes against each other is exactly the
+      // unbounded loop this whole design avoids). If node overlap is STILL
+      // present after the bounded correction (a multi-way conflict 3 passes
+      // couldn't untangle), evacuate to guarantee it's gone — node-on-node
+      // overlap is a harder requirement than "not stuck inside a frame".
+      resolveResidualOverlaps(tables);
+      if(anyNodeOverlap(tables)) evacuateOverlappingTables(tables);
+    }
     // score AFTER obstacle resolution (and any residual correction) —
     // scoring the pre-obstacle layout would let obstacle-pushed nodes
-    // silently make the "winning" candidate worse
-    const overlap = (GROUPS.length && showGroups) ? anyNodeOverlap(tables) : false;
+    // silently make the "winning" candidate worse. Folds in BOTH node-node
+    // overlap and non-member-in-frame intrusion (Sol review: the earlier
+    // version only re-checked node overlap post-correction) so a candidate
+    // where the correction pass reintroduced a frame intrusion still ranks
+    // below a fully-clean one, giving the OTHER bounded candidates a chance
+    // to win instead.
+    const overlap = (GROUPS.length && showGroups)
+      ? (anyNodeOverlap(tables) || anyNonMemberInGroupFrame(tables))
+      : false;
     const bbox = layoutBBoxOf(tables);
     const fitScale = fitScaleFor(bbox, svg.getBoundingClientRect(), tables.length);
     const edgeLen = totalAdjEdgeLength(adj);
