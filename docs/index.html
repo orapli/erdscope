@@ -1400,29 +1400,37 @@ function resolveResidualOverlaps(tables){
 // requirement than "ideally placed", matching the review's ask for a safe
 // fallback that prioritizes overlap-freedom.
 //
-// Prefers evacuating only non-members, same as resolveResidualOverlaps —
-// but if EVERY offender is a group member (Sol review, 5th pass: two
-// DIFFERENT groups' members conflicting, with no non-member anywhere in
-// the tangle), evacuating nothing would leave the overlap unresolved
-// forever. At that point some member has to move regardless of whose
-// frame it shifts — still strictly better than a permanent visible overlap.
+// Decides who to evacuate PER OVERLAPPING PAIR, independently of every
+// other conflict in `tables` (Sol review, 6th pass): the previous version
+// only fell back to evacuating members when there was NO non-member
+// anywhere in the WHOLE offender set — so one unrelated member-vs-non-
+// member conflict elsewhere in the same candidate could mask a completely
+// separate member-vs-member conflict, leaving it unresolved (e.g. alpha
+// member ↔ beta member overlapping in one spot, AND some other member ↔
+// some non-member overlapping in a totally unrelated spot — the lone
+// non-member offender made the whole tangle look "has an alternative",
+// even though it does nothing for the first pair). Prefers the non-member
+// side of each pair (same rule as resolveResidualOverlaps); if both sides
+// of a pair are members, evacuates whichever sorts first (deterministic —
+// neither side is inherently "safer" to move once there's truly no
+// non-member alternative FOR THAT PAIR).
 function evacuateOverlappingTables(tables){
-  const offenders=new Set();
+  const memberSet=new Set(GROUPS.flatMap(g=>g.tables));
+  const movable=new Set();
   for(let i=0;i<tables.length;i++){
     const a=tables[i], pa=nodePos[a]; if(!pa) continue;
     const sa=nodeSize[a]||calcSize(a);
     for(let j=i+1;j<tables.length;j++){
       const b=tables[j], pb=nodePos[b]; if(!pb) continue;
       const sb=nodeSize[b]||calcSize(b);
-      if(Math.abs(pa.x-pb.x)<(sa.w+sb.w)/2 && Math.abs(pa.y-pb.y)<(sa.h+sb.h)/2){
-        offenders.add(a); offenders.add(b);
-      }
+      if(!(Math.abs(pa.x-pb.x)<(sa.w+sb.w)/2 && Math.abs(pa.y-pb.y)<(sa.h+sb.h)/2)) continue;
+      const aIsMember=memberSet.has(a), bIsMember=memberSet.has(b);
+      if(!aIsMember) movable.add(a);
+      else if(!bIsMember) movable.add(b);
+      else movable.add(a<b ? a : b);
     }
   }
-  if(!offenders.size) return;
-  const memberSet=new Set(GROUPS.flatMap(g=>g.tables));
-  let movable=[...offenders].filter(t=>!memberSet.has(t)).sort();
-  if(!movable.length) movable=[...offenders].sort(); // no non-member alternative anywhere in the tangle
+  if(!movable.size) return;
   let x1=-Infinity, y0=Infinity;
   tables.forEach(t=>{
     const p=nodePos[t]; if(!p) return;
@@ -1431,7 +1439,7 @@ function evacuateOverlappingTables(tables){
   });
   if(!isFinite(x1)) return;
   let sy=y0;
-  movable.forEach(t=>{
+  [...movable].sort().forEach(t=>{
     const s=nodeSize[t]||calcSize(t);
     nodePos[t]={x:x1+60+s.w/2, y:sy+s.h/2};
     sy+=s.h+40;

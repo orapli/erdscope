@@ -4105,6 +4105,38 @@ class TestAutoTidyLayoutQuality(unittest.TestCase):
         finally:
             page.close()
 
+    def test_evacuate_overlapping_tables_resolves_disjoint_conflicts_independently(self):
+        # Sol review (6th pass): the previous fix only fell back to
+        # evacuating members when there was NO non-member ANYWHERE in the
+        # whole offender set — so one unrelated member-vs-non-member
+        # conflict elsewhere in the same candidate could mask a completely
+        # separate member-vs-member conflict, leaving it unresolved. Forces
+        # both kinds of conflict to coexist (in unrelated spots) and
+        # asserts BOTH get resolved, independently of each other.
+        page = self._open(_build_html_with_two_groups())
+        try:
+            result = page.evaluate('''() => {
+                const overlaps = (a, b) => {
+                    const pa = nodePos[a], pb = nodePos[b], sa = nodeSize[a], sb = nodeSize[b];
+                    return Math.abs(pa.x-pb.x) < (sa.w+sb.w)/2 && Math.abs(pa.y-pb.y) < (sa.h+sb.h)/2;
+                };
+                // pair 1: two members of DIFFERENT groups (alpha vs beta) — no
+                // non-member alternative for this specific pair
+                nodePos.comments = {...nodePos.posts};
+                // pair 2, elsewhere entirely: a member vs. a non-member — DOES
+                // have a non-member alternative, which must not "leak" into
+                // pair 1's resolution
+                nodePos.users = {...nodePos.likes};
+                evacuateOverlappingTables(['posts', 'comments', 'likes', 'users']);
+                return {pair1: overlaps('posts', 'comments'), pair2: overlaps('likes', 'users')};
+            }''')
+            self.assertFalse(result['pair1'],
+                'a member-vs-member conflict must resolve even when an unrelated '
+                'member-vs-non-member conflict exists elsewhere in the same candidate')
+            self.assertFalse(result['pair2'], 'the unrelated member-vs-non-member conflict should also resolve')
+        finally:
+            page.close()
+
     def test_resolve_residual_overlaps_still_prefers_a_non_member_when_available(self):
         # regression guard alongside the fix above: in a MIXED conflict
         # (one member, one non-member), the non-member must still be the
