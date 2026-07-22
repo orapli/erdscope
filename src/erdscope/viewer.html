@@ -637,11 +637,11 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <button class="diag-btn" id="btn-undo" title="Undo layout change (Ctrl/Cmd+Z)" disabled>↶</button>
         <button class="diag-btn" id="btn-redo" title="Redo layout change (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
         <button class="diag-btn" id="btn-reset" title="Re-layout now (repack to fill the screen)">↺</button>
-        <div id="layout-orient-group" title="Layout orientation for the overview (Auto / Vertical / Horizontal). Independent of Direction (Both/Deps/Dependents), which controls relation traversal. Applies to overview Auto-tidy and ↺ only — not Focus mode.">
+        <div id="layout-orient-group" title="Layout orientation for the overview. Only Vertical is active today; Auto and Horizontal are reserved and disabled until their placement engines land. Independent of Direction (Both/Deps/Dependents). Overview Auto-tidy and ↺ only — not Focus mode.">
           <span class="lo-label">Layout</span>
-          <button type="button" class="diag-btn lo-btn" data-lo="auto" title="Auto: pick Vertical or Horizontal for the current viewport (overview full layouts only)">Auto</button>
+          <button type="button" class="diag-btn lo-btn" data-lo="auto" disabled title="Auto: Coming later — will pick Vertical or Horizontal for the viewport">Auto</button>
           <button type="button" class="diag-btn lo-btn active" data-lo="vertical" title="Vertical: top/bottom depth rows (compatibility default)">↕ Vertical</button>
-          <button type="button" class="diag-btn lo-btn" data-lo="horizontal" title="Horizontal: hub-centered left/right branches (overview full layouts only)">↔ Horizontal</button>
+          <button type="button" class="diag-btn lo-btn" data-lo="horizontal" disabled title="Horizontal: Coming later — hub-centered left/right branches">↔ Horizontal</button>
         </div>
         <button class="diag-btn" id="btn-autolayout" title="Auto-tidy mode: rearranges the overview and replaces manual positions whenever the displayed tables or their sizes change">Auto-tidy</button>
       </div>
@@ -793,10 +793,13 @@ let autoLayout     = false; // re-layout automatically whenever the display set 
 // Overview layout orientation. Independent of expandDir (relation traversal
 // Direction: Both/Deps/Dependents). Missing/invalid values fall back to
 // 'vertical' for old localStorage, named views, and share links.
-// Horizontal placement and Auto candidate scoring land in later commits;
-// until then every orientation still runs the Vertical engine so the
-// control's state, relayout, and persistence contracts are already real.
+//
+// Placement engines: only Vertical is implemented today. Auto/Horizontal
+// state still normalizes and round-trips so named views/share stay forward-
+// compatible, but their toolbar buttons stay disabled (Coming later) until
+// the engines land — do not re-enable the UI before then.
 let layoutOrientation = 'vertical'; // 'auto' | 'vertical' | 'horizontal'
+const LAYOUT_ORIENTATION_IMPLEMENTED = { auto: false, vertical: true, horizontal: false };
 let colHighlight   = null;  // {table, match} — column-search hit to highlight in the node
 // left-pane #search's own regex/case toggles — independent of the toolbar
 // Highlight box's wordRegexMode/wordCaseSensitive below (see makeMatcher's
@@ -4206,13 +4209,12 @@ document.getElementById('btn-reset')   .addEventListener('click',()=>{
   requestAnimationFrame(fitView); // always fit, regardless of Auto-tidy state
 });
 // Layout orientation: overview full re-layout on change; no-op while focused
-// (buttons are disabled). Horizontal/Auto placement engines come later —
-// selecting them still runs one Vertical-engine pack so state/UI/relayout
-// contracts are already real and testable.
+// or when the chosen orientation is not implemented yet (disabled buttons).
 document.querySelectorAll('.lo-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
     if(focusedTable) return;
     const next=normalizeLayoutOrientation(btn.dataset.lo);
+    if(!LAYOUT_ORIENTATION_IMPLEMENTED[next]) return;
     if(next===layoutOrientation) return;
     layoutOrientation=next;
     saveState();
@@ -4321,21 +4323,36 @@ function updateFocusUI(){
 }
 
 // Layout orientation toolbar (Auto / Vertical / Horizontal). Overview-only:
-// disabled in focus mode. Changing it pushes one undo of *positions* and
-// runs exactly one full overview layout + one render + one fit (same shape
-// as ↺), even when Auto-tidy is off. The selected policy itself is not part
-// of undo — Undo restores coordinates but keeps layoutOrientation.
+// disabled in focus mode. Unimplemented options (Auto/Horizontal until their
+// engines land) stay disabled with "Coming later" tooltips so the control
+// never looks like a working feature that silently re-packs as Vertical.
+// Changing an *implemented* option pushes one undo of *positions* and runs
+// exactly one full overview layout + one render + one fit (same shape as ↺),
+// even when Auto-tidy is off. The selected policy itself is not part of undo.
 function updateLayoutOrientationUI(){
   const focused=!!focusedTable;
   document.querySelectorAll('.lo-btn').forEach(b=>{
-    b.classList.toggle('active', b.dataset.lo===layoutOrientation);
-    b.disabled=focused;
+    const lo=b.dataset.lo;
+    const impl=!!LAYOUT_ORIENTATION_IMPLEMENTED[lo];
+    b.classList.toggle('active', lo===layoutOrientation);
+    b.disabled=focused || !impl;
+    if(lo==='auto'){
+      b.title=impl
+        ? 'Auto: pick Vertical or Horizontal for the current viewport (overview full layouts only)'
+        : 'Auto: Coming later — will pick Vertical or Horizontal for the viewport';
+    } else if(lo==='horizontal'){
+      b.title=impl
+        ? 'Horizontal: hub-centered left/right branches (overview full layouts only)'
+        : 'Horizontal: Coming later — hub-centered left/right branches';
+    } else {
+      b.title='Vertical: top/bottom depth rows (compatibility default)';
+    }
   });
   const g=document.getElementById('layout-orient-group');
   if(g){
     g.title=focused
       ? 'Layout applies to the overview only (disabled while focused). Use ↺ inside Focus for the hub-spoke layout.'
-      : 'Layout orientation for the overview (Auto / Vertical / Horizontal). Independent of Direction (Both/Deps/Dependents). Applies to overview Auto-tidy and ↺ only.';
+      : 'Layout orientation for the overview. Only Vertical is active today; Auto and Horizontal stay disabled until their placement engines land. Independent of Direction (Both/Deps/Dependents).';
   }
 }
 

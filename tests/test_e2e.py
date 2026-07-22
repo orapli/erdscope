@@ -4297,10 +4297,11 @@ class TestAutoTidyBoundedBehavior(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestLayoutOrientation(unittest.TestCase):
-    """Layout selector foundation (Auto / Vertical / Horizontal): state,
-    UI, persistence, overview-only scope, and independence from relation
-    Direction. Placement engines for Horizontal/Auto land later — every
-    orientation still runs the Vertical packer in this commit."""
+    """Layout selector foundation: state, UI, persistence, overview-only
+    scope, independence from relation Direction. Only Vertical is selectable
+    today; Auto/Horizontal stay disabled (Coming later) until their engines
+    land. State still round-trips all three values for forward compatibility.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -4331,6 +4332,14 @@ class TestLayoutOrientation(unittest.TestCase):
     def tearDown(self):
         self.page.close()
 
+    def _set_orientation_state(self, lo):
+        """Set layoutOrientation without going through the (partially disabled) UI."""
+        self.page.evaluate('''(lo) => {
+            layoutOrientation = normalizeLayoutOrientation(lo);
+            saveState();
+            updateLayoutOrientationUI();
+        }''', lo)
+
     def test_default_is_vertical_and_invalid_falls_back(self):
         self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
         self.assertTrue(self.page.evaluate(
@@ -4353,52 +4362,130 @@ class TestLayoutOrientation(unittest.TestCase):
         }''')
         self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
 
-    def test_round_trip_localstorage_named_view_and_share_payload(self):
-        self.page.click('.lo-btn[data-lo="horizontal"]')
-        self.page.wait_for_timeout(80)
+    def test_auto_and_horizontal_are_disabled_until_implemented(self):
+        # product gate: unimplemented options must not look clickable
+        self.assertFalse(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.auto'))
+        self.assertFalse(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.horizontal'))
+        self.assertTrue(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.vertical'))
+        self.assertTrue(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"auto\"]').disabled"))
+        self.assertTrue(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
+        self.assertFalse(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"vertical\"]').disabled"))
+        auto_title = self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"auto\"]').title")
+        horiz_title = self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').title")
+        self.assertIn('Coming later', auto_title)
+        self.assertIn('Coming later', horiz_title)
+        # click must be a no-op (disabled + handler guard)
+        before = self.page.evaluate('layoutOrientation')
+        self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').click()")
+        self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"auto\"]').click()")
+        self.assertEqual(self.page.evaluate('layoutOrientation'), before)
+
+    def test_localstorage_round_trips_orientation(self):
+        self._set_orientation_state('horizontal')
+        self.assertEqual(self.page.evaluate('localStorage.getItem(LS("lo"))'), 'horizontal')
+        self.page.reload()
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
         self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal')
-        stored = self.page.evaluate('localStorage.getItem(LS("lo"))')
-        self.assertEqual(stored, 'horizontal')
+        # unimplemented option can be active in state while remaining disabled
+        self.assertTrue(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').classList.contains('active')"))
+        self.assertTrue(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
 
-        snap = self.page.evaluate('snapshotView()')
-        self.assertEqual(snap.get('lo'), 'horizontal')
-        self.assertIn('pos', snap)
-        self.assertIn('dir', snap)  # relation Direction still present and separate
-
-        # switch away, then re-apply the snapshot — positions + policy restore
+    def test_named_view_save_ui_and_select_round_trip_lo(self):
+        self._set_orientation_state('auto')
         before_pos = self.page.evaluate('JSON.parse(JSON.stringify(nodePos))')
-        self.page.click('.lo-btn[data-lo="auto"]')
-        self.page.wait_for_timeout(80)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'auto')
-        self.page.evaluate('(v) => applyView(v)', snap)
+        # Save via the real Views UI (prompt → localStorage views map)
+        self.page.once('dialog', lambda d: d.accept('lo-view-a'))
+        self.page.click('#view-save')
+        self.page.wait_for_timeout(50)
+        stored = self.page.evaluate(
+            "JSON.parse(localStorage.getItem(LS('views')) || '{}')['lo-view-a']")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.get('lo'), 'auto')
+        self.assertIn('dir', stored)
+
+        # mutate state, then restore via the select UI
+        self._set_orientation_state('vertical')
+        self.page.evaluate('''() => {
+            nodePos.users = {x: nodePos.users.x + 120, y: nodePos.users.y + 90};
+            renderDiagram();
+        }''')
+        self.page.select_option('#view-sel', label='lo-view-a')
         self.page.wait_for_timeout(100)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal')
+        self.assertEqual(self.page.evaluate('layoutOrientation'), 'auto')
         after_pos = self.page.evaluate('JSON.parse(JSON.stringify(nodePos))')
-        # applyView restores saved pos; policy change alone must not re-pack
         for name, p in before_pos.items():
             if name not in after_pos:
                 continue
             self.assertAlmostEqual(after_pos[name]['x'], p['x'], places=3)
             self.assertAlmostEqual(after_pos[name]['y'], p['y'], places=3)
 
-        # legacy share/view payloads without `lo` still load
-        self.page.evaluate(
-            "applyView({excl:[], hid:[], ae:false, dep:1, dir:'both', cm:0, pos:{}})")
-        self.page.wait_for_timeout(50)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
+    def test_share_hash_init_restores_lo_without_relayout_of_saved_pos(self):
+        # Cold-load a crafted `#v=` share URL on a fresh page so init's hash
+        # branch runs (same-document hash changes do not re-execute script).
+        # Include every fixture table in pos so layoutAll sees no "new" tables
+        # and cannot replace the restored coordinates.
+        import json
+        from urllib.parse import quote
 
-        # share-shaped payload with lo round-trips via the same apply path
-        self.page.evaluate(
-            "applyView({excl:[], hid:[], ae:false, dep:1, dir:'out', lo:'auto', cm:0, pos:{}})")
-        self.page.wait_for_timeout(50)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'auto')
-        self.assertEqual(self.page.evaluate('expandDir'), 'out')
+        def _hash_for(payload):
+            return '#v=' + quote(json.dumps(payload, separators=(',', ':')), safe='')
+
+        pos = {
+            'users': {'x': 1234, 'y': 567},
+            'posts': {'x': 100, 'y': 200},
+            'comments': {'x': 300, 'y': 200},
+            'likes': {'x': 500, 'y': 200},
+            'audit_logs': {'x': 700, 'y': 200},
+        }
+        with_lo = {
+            'excl': [], 'hid': [], 'ae': False, 'dep': 1, 'dir': 'both',
+            'lo': 'horizontal', 'cm': 0, 'pos': pos,
+        }
+        legacy = {
+            'excl': [], 'hid': [], 'ae': False, 'dep': 1, 'dir': 'both',
+            'cm': 0, 'pos': {'users': {'x': 10, 'y': 20},
+                             'posts': {'x': 1, 'y': 2},
+                             'comments': {'x': 3, 'y': 4},
+                             'likes': {'x': 5, 'y': 6},
+                             'audit_logs': {'x': 7, 'y': 8}},
+        }
+
+        cold = self.browser.new_page()
+        try:
+            # about:blank between loads forces a real document reload; going
+            # from file.html to file.html#v=… is often just a hash change.
+            cold.goto('about:blank')
+            cold.goto(self.html_path.as_uri() + _hash_for(with_lo))
+            cold.wait_for_function('typeof nodePos.users !== "undefined"')
+            cold.wait_for_timeout(80)
+            self.assertEqual(cold.evaluate('layoutOrientation'), 'horizontal')
+            restored = cold.evaluate('({...nodePos.users})')
+            self.assertAlmostEqual(restored['x'], 1234, places=3,
+                                   msg='share init must restore saved positions, not re-layout')
+            self.assertAlmostEqual(restored['y'], 567, places=3)
+
+            cold.goto('about:blank')
+            cold.goto(self.html_path.as_uri() + _hash_for(legacy))
+            cold.wait_for_function('typeof nodePos.users !== "undefined"')
+            cold.wait_for_timeout(80)
+            self.assertEqual(cold.evaluate('layoutOrientation'), 'vertical',
+                             'payload without lo must default to vertical')
+            self.assertAlmostEqual(cold.evaluate('nodePos.users.x'), 10, places=3)
+        finally:
+            cold.close()
 
     def test_layout_and_relation_direction_are_independent(self):
         self.assertEqual(self.page.evaluate('expandDir'), 'both')
-        self.page.click('.lo-btn[data-lo="horizontal"]')
-        self.page.wait_for_timeout(50)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal')
+        self._set_orientation_state('horizontal')
         self.assertEqual(self.page.evaluate('expandDir'), 'both',
                          'changing Layout must not mutate relation Direction')
         self.page.click('.dir-btn[data-dir="out"]')
@@ -4413,59 +4500,76 @@ class TestLayoutOrientation(unittest.TestCase):
         self.assertTrue(self.page.evaluate('!!focusedTable'))
         disabled = self.page.evaluate(
             '[...document.querySelectorAll(".lo-btn")].every(b => b.disabled)')
-        self.assertTrue(disabled, 'Layout buttons must be disabled in focus mode')
-        # click should be a no-op while focused
+        self.assertTrue(disabled, 'all Layout buttons must be disabled in focus mode')
         before = self.page.evaluate('layoutOrientation')
         self.page.evaluate(
-            'document.querySelector(\'.lo-btn[data-lo="horizontal"]\').click()')
+            "document.querySelector('.lo-btn[data-lo=\"vertical\"]').click()")
         self.assertEqual(self.page.evaluate('layoutOrientation'), before)
         self.page.click('#btn-unfocus')
         self.page.wait_for_timeout(80)
-        enabled = self.page.evaluate(
-            '[...document.querySelectorAll(".lo-btn")].every(b => !b.disabled)')
-        self.assertTrue(enabled, 'Layout buttons must re-enable on exit focus')
+        # only implemented options re-enable
+        self.assertFalse(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"vertical\"]').disabled"))
+        self.assertTrue(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"auto\"]').disabled"))
+        self.assertTrue(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
 
-    def test_changing_layout_pushes_undo_of_positions_only(self):
-        # manual nudge so a full re-layout is observably different from the
-        # pre-click snapshot that Undo will restore
+    def test_relayout_overview_pushes_undo_of_positions_only(self):
+        # Horizontal is not selectable yet; exercise the relayout contract by
+        # stashing a non-vertical policy, then switching to Vertical via UI
+        # (the only implemented control). That path still undoes positions only.
+        self._set_orientation_state('horizontal')
         self.page.evaluate('''() => {
             nodePos.users = {x: nodePos.users.x + 250, y: nodePos.users.y + 180};
             renderDiagram();
         }''')
         pos_before = self.page.evaluate('({...nodePos.users})')
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
-
-        self.page.click('.lo-btn[data-lo="auto"]')
+        self.page.click('.lo-btn[data-lo="vertical"]')
         self.page.wait_for_timeout(100)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'auto')
+        self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
         pos_after = self.page.evaluate('({...nodePos.users})')
         self.assertTrue(
             abs(pos_after['x'] - pos_before['x']) > 1 or
             abs(pos_after['y'] - pos_before['y']) > 1,
             'Layout change must re-pack nodes (manual nudge should not survive)')
-        # Undo restores positions but never the Layout policy
         self.page.click('#btn-undo')
         self.page.wait_for_timeout(80)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'auto',
+        self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical',
                          'Undo must not change layoutOrientation')
         undone = self.page.evaluate('({...nodePos.users})')
         self.assertAlmostEqual(undone['x'], pos_before['x'], places=3)
         self.assertAlmostEqual(undone['y'], pos_before['y'], places=3)
 
-    def test_overview_layout_change_does_one_gridlayout(self):
+    def test_relayout_overview_runs_one_layout_one_render_one_fit(self):
+        self._set_orientation_state('horizontal')
         self.page.evaluate('''() => {
             window.__glCalls = 0;
-            const orig = gridLayout;
+            window.__rdCalls = 0;
+            window.__fitCalls = 0;
+            const ogl = gridLayout, ord = renderDiagram, ofit = fitView;
             gridLayout = function(...args) {
                 window.__glCalls++;
-                return orig.apply(this, args);
+                return ogl.apply(this, args);
+            };
+            renderDiagram = function(...args) {
+                window.__rdCalls++;
+                return ord.apply(this, args);
+            };
+            fitView = function(...args) {
+                window.__fitCalls++;
+                return ofit.apply(this, args);
             };
         }''')
-        self.page.click('.lo-btn[data-lo="horizontal"]')
+        self.page.click('.lo-btn[data-lo="vertical"]')
         self.page.wait_for_timeout(100)
-        calls = self.page.evaluate('window.__glCalls')
-        self.assertEqual(calls, 1,
-                         'Layout change must run exactly one full gridLayout, not two')
+        # fitView is scheduled via rAF — wait one frame
+        self.page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+        counts = self.page.evaluate(
+            '({gl: window.__glCalls, rd: window.__rdCalls, fit: window.__fitCalls})')
+        self.assertEqual(counts['gl'], 1, 'exactly one gridLayout')
+        self.assertEqual(counts['rd'], 1, 'exactly one renderDiagram')
+        self.assertEqual(counts['fit'], 1, 'exactly one fitView')
 
 
 if __name__ == '__main__':
