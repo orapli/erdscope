@@ -4362,30 +4362,26 @@ class TestLayoutOrientation(unittest.TestCase):
         }''')
         self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
 
-    def test_auto_and_horizontal_are_disabled_until_implemented(self):
-        # product gate: unimplemented options must not look clickable
+    def test_auto_stays_disabled_horizontal_is_enabled(self):
         self.assertFalse(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.auto'))
-        self.assertFalse(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.horizontal'))
+        self.assertTrue(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.horizontal'))
         self.assertTrue(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.vertical'))
         self.assertTrue(self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"auto\"]').disabled"))
-        self.assertTrue(self.page.evaluate(
+        self.assertFalse(self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
         self.assertFalse(self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"vertical\"]').disabled"))
         auto_title = self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"auto\"]').title")
-        horiz_title = self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').title")
         self.assertIn('Coming later', auto_title)
-        self.assertIn('Coming later', horiz_title)
-        # click must be a no-op (disabled + handler guard)
         before = self.page.evaluate('layoutOrientation')
-        self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').click()")
         self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"auto\"]').click()")
         self.assertEqual(self.page.evaluate('layoutOrientation'), before)
+        self.page.click('.lo-btn[data-lo="horizontal"]')
+        self.page.wait_for_timeout(80)
+        self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal')
 
     def test_localstorage_round_trips_orientation(self):
         self._set_orientation_state('horizontal')
@@ -4393,11 +4389,11 @@ class TestLayoutOrientation(unittest.TestCase):
         self.page.reload()
         self.page.wait_for_function('typeof nodePos.users !== "undefined"')
         self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal')
-        # unimplemented option can be active in state while remaining disabled
         self.assertTrue(self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').classList.contains('active')"))
-        self.assertTrue(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
+        self.assertFalse(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"),
+            'implemented Horizontal must be enabled in overview')
 
     def test_named_view_save_ui_and_select_round_trip_lo(self):
         self._set_orientation_state('auto')
@@ -4507,27 +4503,23 @@ class TestLayoutOrientation(unittest.TestCase):
         self.assertEqual(self.page.evaluate('layoutOrientation'), before)
         self.page.click('#btn-unfocus')
         self.page.wait_for_timeout(80)
-        # only implemented options re-enable
+        # implemented options re-enable; Auto stays gated
         self.assertFalse(self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"vertical\"]').disabled"))
+        self.assertFalse(self.page.evaluate(
+            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
         self.assertTrue(self.page.evaluate(
             "document.querySelector('.lo-btn[data-lo=\"auto\"]').disabled"))
-        self.assertTrue(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
 
     def test_relayout_overview_pushes_undo_of_positions_only(self):
-        # Horizontal is not selectable yet; exercise the relayout contract by
-        # stashing a non-vertical policy, then switching to Vertical via UI
-        # (the only implemented control). That path still undoes positions only.
-        self._set_orientation_state('horizontal')
         self.page.evaluate('''() => {
             nodePos.users = {x: nodePos.users.x + 250, y: nodePos.users.y + 180};
             renderDiagram();
         }''')
         pos_before = self.page.evaluate('({...nodePos.users})')
-        self.page.click('.lo-btn[data-lo="vertical"]')
+        self.page.click('.lo-btn[data-lo="horizontal"]')
         self.page.wait_for_timeout(100)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
+        self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal')
         pos_after = self.page.evaluate('({...nodePos.users})')
         self.assertTrue(
             abs(pos_after['x'] - pos_before['x']) > 1 or
@@ -4535,14 +4527,13 @@ class TestLayoutOrientation(unittest.TestCase):
             'Layout change must re-pack nodes (manual nudge should not survive)')
         self.page.click('#btn-undo')
         self.page.wait_for_timeout(80)
-        self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical',
+        self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal',
                          'Undo must not change layoutOrientation')
         undone = self.page.evaluate('({...nodePos.users})')
         self.assertAlmostEqual(undone['x'], pos_before['x'], places=3)
         self.assertAlmostEqual(undone['y'], pos_before['y'], places=3)
 
     def test_relayout_overview_runs_one_layout_one_render_one_fit(self):
-        self._set_orientation_state('horizontal')
         self.page.evaluate('''() => {
             window.__glCalls = 0;
             window.__rdCalls = 0;
@@ -4561,7 +4552,7 @@ class TestLayoutOrientation(unittest.TestCase):
                 return ofit.apply(this, args);
             };
         }''')
-        self.page.click('.lo-btn[data-lo="vertical"]')
+        self.page.click('.lo-btn[data-lo="horizontal"]')
         self.page.wait_for_timeout(100)
         # fitView is scheduled via rAF — wait one frame
         self.page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
@@ -4570,6 +4561,203 @@ class TestLayoutOrientation(unittest.TestCase):
         self.assertEqual(counts['gl'], 1, 'exactly one gridLayout')
         self.assertEqual(counts['rd'], 1, 'exactly one renderDiagram')
         self.assertEqual(counts['fit'], 1, 'exactly one fitView')
+
+
+def _build_html_star_spokes(n_spokes=6, with_depth2=False):
+    """Hub 'hub' with n equal same-role has_many spokes (branch_00..).
+    Optionally each spoke owns a depth-2 child leaf_XX."""
+    table_rows = [('hub', '')]
+    col_rows = [_col('hub', 'id', key='PRI')]
+    fk_rows = []
+    for i in range(n_spokes):
+        sp = f'branch_{i:02d}'
+        table_rows.append((sp, ''))
+        col_rows += [_col(sp, 'id', key='PRI'), _col(sp, 'hub_id', key='MUL')]
+        fk_rows.append((sp, 'hub_id', 'hub'))
+        if with_depth2:
+            leaf = f'leaf_{i:02d}'
+            table_rows.append((leaf, ''))
+            col_rows += [_col(leaf, 'id', key='PRI'), _col(leaf, 'branch_id', key='MUL')]
+            fk_rows.append((leaf, 'branch_id', sp))
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [('hub', 'PRIMARY', 0, 1, 'id')])
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_horiz_star')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestHorizontalLayout(unittest.TestCase):
+    """Geometric invariants for the Horizontal overview placement engine."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.star_path = _build_html_star_spokes(6, with_depth2=False)
+        cls.depth_path = _build_html_star_spokes(4, with_depth2=True)
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def _open_horizontal(self, path):
+        page = self.browser.new_page()
+        page.goto(path.as_uri())
+        page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+        page.evaluate('localStorage.clear()')
+        page.reload()
+        page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+        page.click('.lo-btn[data-lo="horizontal"]')
+        page.wait_for_timeout(120)
+        page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+        return page
+
+    def _assert_no_overlap(self, page):
+        boxes = page.evaluate('''() => {
+            const out = {};
+            for (const t of getDisplayTables()) {
+                const p = nodePos[t], s = nodeSize[t];
+                out[t] = {x0:p.x-s.w/2, y0:p.y-s.h/2, x1:p.x+s.w/2, y1:p.y+s.h/2};
+            }
+            return out;
+        }''')
+        names = list(boxes)
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                a, b = boxes[names[i]], boxes[names[j]]
+                separated = (a['x1'] <= b['x0'] or b['x1'] <= a['x0'] or
+                             a['y1'] <= b['y0'] or b['y1'] <= a['y0'])
+                self.assertTrue(separated, f'{names[i]} overlaps {names[j]}: {a} vs {b}')
+
+    def test_six_same_role_branches_split_approximately_half(self):
+        page = self._open_horizontal(self.star_path)
+        try:
+            sides = page.evaluate('''() => {
+                const hub = nodePos.hub;
+                const left = [], right = [];
+                for (const t of getDisplayTables()) {
+                    if (t === 'hub') continue;
+                    if (nodePos[t].x < hub.x) left.push(t);
+                    else right.push(t);
+                }
+                return {left: left.sort(), right: right.sort(),
+                        hubX: hub.x, nL: left.length, nR: right.length};
+            }''')
+            self.assertEqual(sides['nL'] + sides['nR'], 6)
+            # comparable six-branch fan ≈ 3/3 (allow 2/4 only if something
+            # pathological; target is within one of half)
+            self.assertLessEqual(abs(sides['nL'] - sides['nR']), 2,
+                                 f'six same-role branches should split ~half: {sides}')
+            self.assertGreaterEqual(sides['nL'], 2)
+            self.assertGreaterEqual(sides['nR'], 2)
+            self._assert_no_overlap(page)
+        finally:
+            page.close()
+
+    def test_depth2_stays_on_branch_side_and_progresses_outward(self):
+        page = self._open_horizontal(self.depth_path)
+        try:
+            info = page.evaluate('''() => {
+                const hub = nodePos.hub;
+                const out = [];
+                for (let i = 0; i < 4; i++) {
+                    const b = `branch_${String(i).padStart(2,'0')}`;
+                    const leaf = `leaf_${String(i).padStart(2,'0')}`;
+                    const bp = nodePos[b], lp = nodePos[leaf];
+                    const side = bp.x < hub.x ? 'L' : 'R';
+                    const leafSide = lp.x < hub.x ? 'L' : 'R';
+                    const outward = side === 'L'
+                        ? (lp.x <= bp.x + 1)   // further left (or same column stack)
+                        : (lp.x >= bp.x - 1);
+                    // stronger: leaf further from hub than branch
+                    const hubDistB = Math.abs(bp.x - hub.x);
+                    const hubDistL = Math.abs(lp.x - hub.x);
+                    out.push({b, leaf, side, leafSide, outward,
+                              further: hubDistL + 1 >= hubDistB});
+                }
+                return out;
+            }''')
+            for row in info:
+                self.assertEqual(row['side'], row['leafSide'],
+                                 f"{row['leaf']} must stay on {row['b']}'s side of hub")
+                self.assertTrue(row['further'] or row['outward'],
+                                f"{row['leaf']} should progress outward from hub "
+                                f"relative to {row['b']}: {row}")
+            self._assert_no_overlap(page)
+        finally:
+            page.close()
+
+    def test_horizontal_layout_is_deterministic(self):
+        page = self._open_horizontal(self.star_path)
+        try:
+            a = page.evaluate('JSON.parse(JSON.stringify(nodePos))')
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
+            b = page.evaluate('JSON.parse(JSON.stringify(nodePos))')
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
+            c = page.evaluate('JSON.parse(JSON.stringify(nodePos))')
+            for name in a:
+                self.assertAlmostEqual(b[name]['x'], c[name]['x'], places=3, msg=name)
+                self.assertAlmostEqual(b[name]['y'], c[name]['y'], places=3, msg=name)
+        finally:
+            page.close()
+
+    def test_focus_ignores_horizontal_policy(self):
+        page = self._open_horizontal(self.star_path)
+        try:
+            self.assertEqual(page.evaluate('layoutOrientation'), 'horizontal')
+            overview = page.evaluate('({...nodePos.hub})')
+            page.dblclick('.er-node[data-name="hub"]')
+            page.wait_for_timeout(100)
+            # focus still lays out (Vertical engine); hub remains present
+            self.assertTrue(page.evaluate('!!focusedTable'))
+            self.assertIn('hub', page.evaluate('Object.keys(nodePos)'))
+            # Layout control disabled in focus
+            self.assertTrue(page.evaluate(
+                "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
+            page.click('#btn-unfocus')
+            page.wait_for_timeout(80)
+            # policy preserved
+            self.assertEqual(page.evaluate('layoutOrientation'), 'horizontal')
+            self.assertAlmostEqual(
+                page.evaluate('nodePos.hub.x'), overview['x'], delta=1.0)
+        finally:
+            page.close()
+
+    def test_vertical_explicit_still_stacks_by_depth_rows(self):
+        # regression: Vertical compatibility mode unchanged for a star
+        page = self.browser.new_page()
+        try:
+            page.goto(self.star_path.as_uri())
+            page.wait_for_function('typeof nodePos.hub !== "undefined"')
+            page.evaluate('localStorage.clear()')
+            page.reload()
+            page.wait_for_function('typeof nodePos.hub !== "undefined"')
+            self.assertEqual(page.evaluate('layoutOrientation'), 'vertical')
+            page.click('#btn-reset')
+            page.wait_for_timeout(80)
+            ys = page.evaluate('''() => {
+                const hubY = nodePos.hub.y;
+                return getDisplayTables().filter(t => t !== 'hub')
+                    .map(t => nodePos[t].y - hubY);
+            }''')
+            # spokes sit primarily below (or alternating above) the hub — not
+            # a pure left/right fan with |dx| >> |dy| for every spoke
+            max_abs_dy = max(abs(y) for y in ys)
+            self.assertGreater(max_abs_dy, 20,
+                               'Vertical layout should separate spokes on Y from hub')
+        finally:
+            page.close()
 
 
 if __name__ == '__main__':
