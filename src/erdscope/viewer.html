@@ -156,10 +156,16 @@ body.dark .snap-guide{stroke:#f87171}
 .diag-btn.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
 .diag-btn:disabled{opacity:.4;cursor:not-allowed}
 .diag-btn:disabled:hover{background:white}
-#colmode-group,#namemode-group,.seg-group{display:flex;box-shadow:0 1px 3px rgba(0,0,0,.08);border-radius:6px}
-#colmode-group .diag-btn,#namemode-group .diag-btn,.seg-group .diag-btn{box-shadow:none;border-radius:0;font-size:11px;margin-left:-1px}
-#colmode-group .diag-btn:first-child,#namemode-group .diag-btn:first-child,.seg-group .diag-btn:first-child{border-radius:6px 0 0 6px;margin-left:0}
-#colmode-group .diag-btn:last-child,#namemode-group .diag-btn:last-child,.seg-group .diag-btn:last-child{border-radius:0 6px 6px 0}
+#colmode-group,#namemode-group,#layout-orient-group,.seg-group{display:flex;box-shadow:0 1px 3px rgba(0,0,0,.08);border-radius:6px}
+#colmode-group .diag-btn,#namemode-group .diag-btn,#layout-orient-group .diag-btn,.seg-group .diag-btn{box-shadow:none;border-radius:0;font-size:11px;margin-left:-1px}
+#colmode-group .diag-btn:first-child,#namemode-group .diag-btn:first-child,#layout-orient-group .diag-btn:first-child,.seg-group .diag-btn:first-child{border-radius:6px 0 0 6px;margin-left:0}
+#colmode-group .diag-btn:last-child,#namemode-group .diag-btn:last-child,#layout-orient-group .diag-btn:last-child,.seg-group .diag-btn:last-child{border-radius:0 6px 6px 0}
+#layout-orient-group .lo-label{display:flex;align-items:center;padding:0 6px;font-size:10px;font-weight:600;
+  color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-right:0;border-radius:6px 0 0 6px;height:30px}
+body.dark #layout-orient-group .lo-label{color:#94a3b8;background:#1e293b;border-color:#334155}
+/* label is the visual first cell; first real button loses the left-radius from the rule above */
+#layout-orient-group .lo-btn:first-of-type{border-radius:0;margin-left:0}
+#layout-orient-group .lo-btn:last-child{border-radius:0 6px 6px 0}
 .tb-popup .seg-group{box-shadow:none;border:1px solid #e2e8f0}
 body.dark .tb-popup .seg-group{border-color:#334155}
 .tb-popup .seg-group .diag-btn{width:auto;flex:1;font-size:10px;padding:0 6px}
@@ -631,6 +637,12 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <button class="diag-btn" id="btn-undo" title="Undo layout change (Ctrl/Cmd+Z)" disabled>↶</button>
         <button class="diag-btn" id="btn-redo" title="Redo layout change (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
         <button class="diag-btn" id="btn-reset" title="Re-layout now (repack to fill the screen)">↺</button>
+        <div id="layout-orient-group" title="Layout orientation for the overview (Auto / Vertical / Horizontal). Independent of Direction (Both/Deps/Dependents), which controls relation traversal. Applies to overview Auto-tidy and ↺ only — not Focus mode.">
+          <span class="lo-label">Layout</span>
+          <button type="button" class="diag-btn lo-btn" data-lo="auto" title="Auto: pick Vertical or Horizontal for the current viewport (overview full layouts only)">Auto</button>
+          <button type="button" class="diag-btn lo-btn active" data-lo="vertical" title="Vertical: top/bottom depth rows (compatibility default)">↕ Vertical</button>
+          <button type="button" class="diag-btn lo-btn" data-lo="horizontal" title="Horizontal: hub-centered left/right branches (overview full layouts only)">↔ Horizontal</button>
+        </div>
         <button class="diag-btn" id="btn-autolayout" title="Auto-tidy mode: rearranges the overview and replaces manual positions whenever the displayed tables or their sizes change">Auto-tidy</button>
       </div>
       <div class="tb-sep"></div>
@@ -778,6 +790,13 @@ let noAutoExpandRoot = new Set();
 // removed, or the overview is reset via All/None/a saved view.
 let retainedExpandedTables = new Set();
 let autoLayout     = false; // re-layout automatically whenever the display set changes
+// Overview layout orientation. Independent of expandDir (relation traversal
+// Direction: Both/Deps/Dependents). Missing/invalid values fall back to
+// 'vertical' for old localStorage, named views, and share links.
+// Horizontal placement and Auto candidate scoring land in later commits;
+// until then every orientation still runs the Vertical engine so the
+// control's state, relayout, and persistence contracts are already real.
+let layoutOrientation = 'vertical'; // 'auto' | 'vertical' | 'horizontal'
 let colHighlight   = null;  // {table, match} — column-search hit to highlight in the node
 // left-pane #search's own regex/case toggles — independent of the toolbar
 // Highlight box's wordRegexMode/wordCaseSensitive below (see makeMatcher's
@@ -916,6 +935,10 @@ const svg    = document.getElementById('er-svg');
 const erMain = document.getElementById('er-main');
 
 // ── LocalStorage ──────────────────────────────────────────────────────────
+// Valid layout orientations; anything else (including null/undefined) → vertical.
+function normalizeLayoutOrientation(v){
+  return (v==='auto'||v==='horizontal'||v==='vertical') ? v : 'vertical';
+}
 function saveState() {
   setLS(LS('excl'), JSON.stringify([...excludedTables]));
   setLS(LS('hid'),  JSON.stringify([...hiddenTables]));
@@ -928,6 +951,7 @@ function saveState() {
   setLS(LS('grp'),  String(showGroups));
   setLS(LS('dir'),  expandDir);
   setLS(LS('al'),   String(autoLayout));
+  setLS(LS('lo'),   layoutOrientation);
   setLS(LS('xlbl'),  String(exportOptLabels));
   setLS(LS('xroot'), String(exportOptRoots));
   setLS(LS('wre'),  String(wordRegexMode));
@@ -957,6 +981,8 @@ function loadState() {
   if (mr > 0) maxRows = mr; // user's choice overrides the CLI default
   expandDir = localStorage.getItem(LS('dir')) || 'both';
   autoLayout = localStorage.getItem(LS('al')) === 'true';
+  // absent / null / unknown → vertical (compatibility default for pre-Layout saves)
+  layoutOrientation = normalizeLayoutOrientation(localStorage.getItem(LS('lo')));
   exportOptLabels = localStorage.getItem(LS('xlbl'))  !== 'false';
   exportOptRoots  = localStorage.getItem(LS('xroot')) === 'true';
   wordRegexMode      = localStorage.getItem(LS('wre')) === 'true';
@@ -4170,12 +4196,30 @@ document.getElementById('btn-reset')   .addEventListener('click',()=>{
   // when unfocused, hub-spoke branch with focusedTable as the preferred hub
   // otherwise) — unlike a plain display-set change, which stays on the
   // cheap single-pass policy (see gridLayout's `adaptive` param doc).
+  // Overview ↺ honors layoutOrientation once Horizontal/Auto engines land;
+  // focus ↺ always keeps the hub-spoke Vertical path via preferredHub.
   if(ts.length) gridLayout(ts, focusedTable, true);
   // Every displayed table already has a fresh nodePos entry from the call
   // above, so renderDiagram()'s own layoutAll() sees nothing "new" and
   // doesn't lay out again — exactly one full layout, not two.
   renderDiagram();
   requestAnimationFrame(fitView); // always fit, regardless of Auto-tidy state
+});
+// Layout orientation: overview full re-layout on change; no-op while focused
+// (buttons are disabled). Horizontal/Auto placement engines come later —
+// selecting them still runs one Vertical-engine pack so state/UI/relayout
+// contracts are already real and testable.
+document.querySelectorAll('.lo-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    if(focusedTable) return;
+    const next=normalizeLayoutOrientation(btn.dataset.lo);
+    if(next===layoutOrientation) return;
+    layoutOrientation=next;
+    saveState();
+    updateLayoutOrientationUI();
+    pushUndoSnapshot(); // positions only — layoutOrientation is not undone
+    relayoutOverviewForOrientation();
+  });
 });
 // PNG/SVG/Mermaid used to be three separate always-visible buttons; now
 // tucked behind one "Export" toggle since they're each used ~once per
@@ -4271,6 +4315,42 @@ function updateFocusUI(){
     const dir=expandDir==='both'?'both':expandDir==='out'?'deps':'dependents';
     document.getElementById('focus-bar-label').textContent=`🔍 Focused: ${focusedTable} (depth ${d}, ${dir})`;
   }
+  // Layout is overview-only — disable the control while focused so a click
+  // cannot run an overview full-layout against the focus node set
+  updateLayoutOrientationUI();
+}
+
+// Layout orientation toolbar (Auto / Vertical / Horizontal). Overview-only:
+// disabled in focus mode. Changing it pushes one undo of *positions* and
+// runs exactly one full overview layout + one render + one fit (same shape
+// as ↺), even when Auto-tidy is off. The selected policy itself is not part
+// of undo — Undo restores coordinates but keeps layoutOrientation.
+function updateLayoutOrientationUI(){
+  const focused=!!focusedTable;
+  document.querySelectorAll('.lo-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.lo===layoutOrientation);
+    b.disabled=focused;
+  });
+  const g=document.getElementById('layout-orient-group');
+  if(g){
+    g.title=focused
+      ? 'Layout applies to the overview only (disabled while focused). Use ↺ inside Focus for the hub-spoke layout.'
+      : 'Layout orientation for the overview (Auto / Vertical / Horizontal). Independent of Direction (Both/Deps/Dependents). Applies to overview Auto-tidy and ↺ only.';
+  }
+}
+
+// One overview full re-layout driven by the current layoutOrientation.
+// Mirrors #btn-reset's single-layout contract (clear pos → gridLayout once →
+// render once → fit once). Caller is responsible for pushUndoSnapshot().
+function relayoutOverviewForOrientation(){
+  const ts=getDisplayTables();
+  ts.forEach(t=>delete nodePos[t]);
+  Object.keys(ringDepth).forEach(k=>delete ringDepth[k]);
+  ts.forEach(n=>{ nodeSize[n]=calcSize(n); });
+  // preferredHub stays undefined in overview; focus never reaches here
+  if(ts.length) gridLayout(ts, undefined, true);
+  renderDiagram();
+  requestAnimationFrame(fitView);
 }
 
 // Auto-expand toggle — expands the overview from all checked tables
@@ -4475,7 +4555,7 @@ function snapshotView(){
   const pos={};
   getDisplayTables().forEach(t=>{ const p=nodePos[t]; if(p) pos[t]={x:Math.round(p.x),y:Math.round(p.y)}; });
   return {excl:[...excludedTables], hid:[...hiddenTables], ret:[...retainedExpandedTables],
-          ae:autoExpand, dep:expandDepth, dir:expandDir, cm:colMode, pos};
+          ae:autoExpand, dep:expandDepth, dir:expandDir, lo:layoutOrientation, cm:colMode, pos};
 }
 
 function applyView(v){
@@ -4487,6 +4567,9 @@ function applyView(v){
   const retRaw = Array.isArray(v.ret) ? v.ret : [];
   retainedExpandedTables = new Set(retRaw.filter(t => DATA.tables[t]));
   autoExpand=!!v.ae; expandDepth=v.dep??1; expandDir=v.dir||'both';
+  // restore Layout policy only — do not re-layout; saved `pos` wins until
+  // the next explicit overview ↺ / Layout change / Auto-tidy full pack
+  layoutOrientation=normalizeLayoutOrientation(v.lo);
   if(autoExpand) retainedExpandedTables.clear(); // meaningless (and never produced) while auto-expand is on
   for (const t of retainedExpandedTables) if (!excludedTables.has(t)) retainedExpandedTables.delete(t);
   colMode=v.cm??0; colOverride={}; manualExpanded.clear(); noAutoExpandRoot.clear();
@@ -4508,6 +4591,7 @@ function syncControlsUI(){
   document.getElementById('ae-label').className=autoExpand?'ae-on':'';
   document.querySelectorAll('.dep-btn:not(.dir-btn)').forEach(b=>b.classList.toggle('active',parseInt(b.dataset.d,10)===expandDepth));
   document.querySelectorAll('.dir-btn').forEach(b=>b.classList.toggle('active',b.dataset.dir===expandDir));
+  updateLayoutOrientationUI();
   updateColModeUI(); updateDepthCtrl();
 }
 
@@ -4657,6 +4741,7 @@ document.getElementById('auto-expand').checked=autoExpand;
 document.getElementById('ae-label').className=autoExpand?'ae-on':'';
 updateDepthCtrl();
 updateFocusUI();
+updateLayoutOrientationUI();
 updateColModeUI();
 updateNameModeUI();
 updateLabelUI();
