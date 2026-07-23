@@ -3185,8 +3185,8 @@ function throughLabelPos(seed, lw, lh){
 // Build a fixed small candidate set for a non-self edge, then pick the best.
 function routeEdge(edge){
   const sp=nodePos[edge.source], tp=nodePos[edge.target];
-  const ss=nodeSize[edge.source]||{w:160,h:100};
-  const ts=nodeSize[edge.target]||{w:160,h:100};
+  const ss=nodeSize[edge.source]||calcSize(edge.source);
+  const ts=nodeSize[edge.target]||calcSize(edge.target);
   const cands=[];
   function add(pts, kind, ord){
     const cleaned=cleanWaypoints(pts);
@@ -3371,7 +3371,7 @@ function drawEdge(parent, edge) {
 
   // self-referential association: compact loop (curve is appropriate here)
   if(edge.source===edge.target){
-    const s=nodeSize[edge.source]||{w:160,h:100};
+    const s=nodeSize[edge.source]||calcSize(edge.source);
     const rx=sp.x+s.w/2, ty=sp.y-s.h/2;
     g.appendChild(svgEl('path',{
       d:`M ${rx} ${ty+34} C ${rx+58} ${ty+34}, ${rx+58} ${ty-20}, ${rx} ${ty+6}`,
