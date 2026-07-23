@@ -36,4 +36,6 @@ python3 examples/showcase/generate.py --check
 ```
 
 The unittest suite and CI run `--check`; stale or missing outputs fail the
-build. XLSX files are byte-deterministic, including ZIP metadata.
+build. Generated outputs are compared byte-for-byte, including deterministic
+XLSX ZIP metadata. The SQLite input is compared by its schema signature because
+SQLite file-container bytes vary across SQLite versions and operating systems.

@@ -6,6 +6,7 @@ Usage:
     python3 examples/showcase/generate.py --check
 """
 import filecmp
+import json
 import shutil
 import sqlite3
 import subprocess
@@ -67,6 +68,30 @@ def build_db(path):
         conn.executescript(SCHEMA_SQL)
 
 
+def db_signature(path):
+    """Cross-version semantic signature; SQLite file bytes are not portable."""
+    with sqlite3.connect(path) as conn:
+        tables = [row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        signature = {}
+        for table in tables:
+            quoted = table.replace('"', '""')
+            columns = list(conn.execute(f'PRAGMA table_info("{quoted}")'))
+            foreign_keys = list(conn.execute(f'PRAGMA foreign_key_list("{quoted}")'))
+            indexes = []
+            for index in conn.execute(f'PRAGMA index_list("{quoted}")'):
+                index_name = index[1].replace('"', '""')
+                index_columns = list(conn.execute(f'PRAGMA index_info("{index_name}")'))
+                indexes.append((index[1], index[2], index[3], index_columns))
+            signature[table] = {
+                'columns': columns,
+                'foreign_keys': foreign_keys,
+                'indexes': sorted(indexes),
+            }
+    return json.dumps(signature, sort_keys=True, separators=(',', ':'))
+
+
 def run_variant(name, source_args, destination):
     out = destination / name
     out.mkdir(parents=True, exist_ok=True)
@@ -114,8 +139,8 @@ def main():
             expected_output = tmp / 'output'
             build_db(expected_db)
             generate(expected_output, expected_db)
-            if not filecmp.cmp(expected_db, INPUT / 'showcase.db', shallow=False):
-                raise SystemExit('showcase.db drift: regenerate with '
+            if db_signature(expected_db) != db_signature(INPUT / 'showcase.db'):
+                raise SystemExit('showcase.db schema drift: regenerate with '
                                  '`python3 examples/showcase/generate.py`')
             check_tree(expected_output, OUTPUT)
         print('showcase inputs and outputs are up to date')
