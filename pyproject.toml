@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "erdscope"
-version = "0.10.0"
+version = "0.11.0"
 description = "Interactive, self-contained ER-diagram HTML and Excel table definitions from a MySQL, PostgreSQL, or SQLite database and/or application code (Rails / Prisma / Django / SQLAlchemy / Laravel) — single file, zero required dependencies"
 readme = "README.md"
 license = "MIT"

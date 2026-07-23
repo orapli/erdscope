@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-07-23
+
+### Added
+
+- **Viewer: selectable layout orientation.** The overview can now be laid
+  out vertically, horizontally, or automatically. Horizontal layout keeps
+  each depth-1 branch together on one side of the hub, balances branches
+  deterministically by subtree load, and handles mixed node sizes, cycles,
+  multiple components, and isolates. Auto evaluates bounded Vertical and
+  Horizontal candidates against the viewport, preferring clear layouts,
+  then fit scale and edge length, with a stable Vertical preference for
+  near ties. Focus mode remains Vertical. The policy is preserved in local
+  state, named views, and shared snapshots without disturbing saved
+  positions when a view is restored.
+
+### Changed
+
+- **Viewer: straight-first relation routing.** Clear relations use direct
+  straight segments, with orthogonal one-bend and bounded two-bend routes
+  used around table obstacles. Bézier curves are now the bounded fallback
+  rather than the default (self-relations retain their loop). Parallel
+  associations no longer bend solely because they share endpoints, and
+  through-table labels are placed on the longest segment and moved away
+  from table rectangles when necessary. Routing remains deterministic and
+  incident edges alone are recalculated while dragging.
+- **Viewer documentation and browser coverage.** The English and Japanese
+  manuals now describe layout orientation, Auto scoring, Focus behavior,
+  undo semantics, and edge-routing priorities. Browser acceptance tests
+  cover the new layouts, obstacle avoidance, labels, drag updates, and SVG
+  export.
+
 ## [0.10.0] - 2026-07-21
 
 ### Changed
