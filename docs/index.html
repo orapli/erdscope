@@ -798,8 +798,12 @@ let autoLayout     = false; // re-layout automatically whenever the display set 
 // implemented for overview full layouts. Focus always uses Vertical.
 let layoutOrientation = 'vertical'; // 'auto' | 'vertical' | 'horizontal'
 const LAYOUT_ORIENTATION_IMPLEMENTED = { auto: true, vertical: true, horizontal: true };
-// Which engine last committed positions during gridLayout (policy may still
-// be 'auto'). Useful for tests and tooltips; not persisted.
+// Which placement engine gridLayout last *chose* when it committed a snap
+// (the Layout policy may still be 'auto'). Not a live description of the
+// current coordinates: focus exit restores basePos, Undo restores a prior
+// position snapshot, and incremental Auto-tidy-off placement never runs
+// gridLayout — so after those paths lastLayoutEngine can disagree with
+// the geometry on screen. Diagnostics and e2e only; not persisted.
 let lastLayoutEngine = 'vertical'; // 'vertical' | 'horizontal'
 let colHighlight   = null;  // {table, match} — column-search hit to highlight in the node
 // left-pane #search's own regex/case toggles — independent of the toolbar
@@ -2953,56 +2957,328 @@ function edgeCard(edge){
 
 let edgeObstacles=[]; // display tables, set right before edges are drawn
 
-// control points sit at this fraction along the baseline (both ends), offset
-// by the full bend amount. Pulling them in toward the endpoints (vs. e.g.
-// .35) flattens the curve's mid-section — for a wide obstacle sitting between
-// two nodes, the curve needs to hold most of its bend across that whole
-// width, not just peak briefly at the very center — so a wide obstacle
-// clears at a noticeably smaller (less sweeping) bend.
-const CURVE_T=0.2;
+// ── Straight-first orthogonal edge routing ─────────────────────────────────
+// Preferred order for non-self edges:
+//   1. direct straight segment (even when multi-assoc or diagonal)
+//   2. one-bend orthogonal L
+//   3. two-bend orthogonal dogleg (H-first and V-first, small lane set)
+//   4. bounded Bézier fallback only when nothing orthogonal clears
+// Association count never forces a bend. Group frames are not obstacles.
+const EDGE_CLEAR=8;     // expanded-table clearance margin (px)
+const EDGE_MIN_LEG=10;  // minimum first/last orth leg to avoid marker zigzags
+const EDGE_LANE=20;     // dogleg lane offset past expanded bounds
+const CURVE_T=0.2;      // Bézier control fraction (fallback only)
 
-// count how many non-endpoint nodes the sampled curve passes through
-function bendBlocked(edge, src, tgt, nx, ny, bend){
-  const c1={x:src.x+(tgt.x-src.x)*CURVE_T+nx*bend, y:src.y+(tgt.y-src.y)*CURVE_T+ny*bend};
-  const c2={x:tgt.x-(tgt.x-src.x)*CURVE_T+nx*bend, y:tgt.y-(tgt.y-src.y)*CURVE_T+ny*bend};
-  // a cubic Bezier always lies within the bounding box of its 4 control
-  // points (convex hull property) — an obstacle whose box doesn't overlap
-  // this one *cannot* be crossed by the curve, so it's safe to skip the
-  // expensive 13-point sampling below for it. Cheap early-out that matters
-  // most on large diagrams, where pickBend calls this ~25x per edge.
-  const cbx0=Math.min(src.x,c1.x,c2.x,tgt.x), cbx1=Math.max(src.x,c1.x,c2.x,tgt.x);
-  const cby0=Math.min(src.y,c1.y,c2.y,tgt.y), cby1=Math.max(src.y,c1.y,c2.y,tgt.y);
-  let blocked=0;
-  for(const t of edgeObstacles){
-    if(t===edge.source||t===edge.target) continue;
-    const p=nodePos[t], s=nodeSize[t];
-    if(!p||!s) continue;
-    const x0=p.x-s.w/2-8, x1=p.x+s.w/2+8, y0=p.y-s.h/2-8, y1=p.y+s.h/2+8;
-    if(x1<cbx0||x0>cbx1||y1<cby0||y0>cby1) continue;
-    for(let i=1;i<14;i++){
-      const q=i/14, u=1-q;
-      const px=u*u*u*src.x+3*u*u*q*c1.x+3*u*q*q*c2.x+q*q*q*tgt.x;
-      const py=u*u*u*src.y+3*u*u*q*c1.y+3*u*q*q*c2.y+q*q*q*tgt.y;
-      if(px>x0&&px<x1&&py>y0&&py<y1){ blocked++; break; }
+function edgeExpandedBox(name){
+  const p=nodePos[name], s=nodeSize[name];
+  if(!p||!s) return null;
+  return {x0:p.x-s.w/2-EDGE_CLEAR, x1:p.x+s.w/2+EDGE_CLEAR,
+          y0:p.y-s.h/2-EDGE_CLEAR, y1:p.y+s.h/2+EDGE_CLEAR};
+}
+function sidePt(cx,cy,w,h,side){
+  const hw=w/2+2, hh=h/2+2;
+  if(side==='L') return {x:cx-hw, y:cy};
+  if(side==='R') return {x:cx+hw, y:cy};
+  if(side==='T') return {x:cx, y:cy-hh};
+  return {x:cx, y:cy+hh}; // B
+}
+function borderPt(cx,cy,w,h,tx,ty){
+  const dx=tx-cx, dy=ty-cy;
+  if(Math.abs(dx)<.001&&Math.abs(dy)<.001) return {x:cx,y:cy};
+  const hw=w/2+2, hh=h/2+2;
+  const s=Math.min(dx?hw/Math.abs(dx):Infinity, dy?hh/Math.abs(dy):Infinity);
+  return {x:cx+dx*s, y:cy+dy*s};
+}
+function pointInBox(x,y,b){
+  return x>=b.x0 && x<=b.x1 && y>=b.y0 && y<=b.y1;
+}
+// Closed segment–segment intersection (including touching endpoints).
+function segSeg(ax,ay,bx,by, cx,cy,dx,dy){
+  const den=(bx-ax)*(dy-cy)-(by-ay)*(dx-cx);
+  if(Math.abs(den)<1e-9){
+    // collinear/parallel: treat as non-crossing for routing (boxes still catch)
+    return false;
+  }
+  const t=((cx-ax)*(dy-cy)-(cy-ay)*(dx-cx))/den;
+  const u=((cx-ax)*(by-ay)-(cy-ay)*(bx-ax))/den;
+  return t>=-1e-9 && t<=1+1e-9 && u>=-1e-9 && u<=1+1e-9;
+}
+// True if the open-interior of the expanded box is crossed by the segment,
+// or either endpoint lies inside the closed expanded box.
+function segmentHitsBox(ax,ay,bx,by, b){
+  if(Math.max(ax,bx)<b.x0-1e-6||Math.min(ax,bx)>b.x1+1e-6||
+     Math.max(ay,by)<b.y0-1e-6||Math.min(ay,by)>b.y1+1e-6) return false;
+  if(pointInBox(ax,ay,b)||pointInBox(bx,by,b)) return true;
+  return segSeg(ax,ay,bx,by, b.x0,b.y0,b.x1,b.y0)
+      || segSeg(ax,ay,bx,by, b.x1,b.y0,b.x1,b.y1)
+      || segSeg(ax,ay,bx,by, b.x1,b.y1,b.x0,b.y1)
+      || segSeg(ax,ay,bx,by, b.x0,b.y1,b.x0,b.y0);
+}
+function polylineHitsObstacles(pts, edge){
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i], b=pts[i+1];
+    for(const t of edgeObstacles){
+      if(t===edge.source||t===edge.target) continue;
+      const box=edgeExpandedBox(t);
+      if(!box) continue;
+      if(segmentHitsBox(a.x,a.y,b.x,b.y, box)) return true;
     }
   }
-  return blocked;
+  return false;
+}
+// Min distance from polyline AABB-per-segment to any non-endpoint expanded
+// box (0 if hits). Cheap and deterministic — only used for tie-breaking.
+function polylineMinClearance(pts, edge){
+  let min=Infinity;
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i], b=pts[i+1];
+    for(const t of edgeObstacles){
+      if(t===edge.source||t===edge.target) continue;
+      const box=edgeExpandedBox(t);
+      if(!box) continue;
+      if(segmentHitsBox(a.x,a.y,b.x,b.y, box)) return 0;
+      const sx0=Math.min(a.x,b.x), sx1=Math.max(a.x,b.x);
+      const sy0=Math.min(a.y,b.y), sy1=Math.max(a.y,b.y);
+      const dx=Math.max(0, Math.max(box.x0-sx1, sx0-box.x1));
+      const dy=Math.max(0, Math.max(box.y0-sy1, sy0-box.y1));
+      min=Math.min(min, Math.hypot(dx,dy));
+    }
+  }
+  return min===Infinity ? 1e9 : min;
+}
+function cleanWaypoints(pts){
+  if(pts.length<2) return pts;
+  // drop near-duplicate consecutive points
+  let out=[pts[0]];
+  for(let i=1;i<pts.length;i++){
+    const p=pts[i], q=out[out.length-1];
+    if(Math.hypot(p.x-q.x, p.y-q.y)>0.5) out.push(p);
+  }
+  // drop collinear intermediate bends
+  if(out.length>=3){
+    const slim=[out[0]];
+    for(let i=1;i<out.length-1;i++){
+      const a=slim[slim.length-1], b=out[i], c=out[i+1];
+      const cross=(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+      if(Math.abs(cross)>1e-3) slim.push(b);
+    }
+    slim.push(out[out.length-1]);
+    out=slim;
+  }
+  return out;
+}
+function routeLength(pts){
+  let L=0;
+  for(let i=0;i<pts.length-1;i++) L+=Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].y-pts[i].y);
+  return L;
+}
+function routeBends(pts){ return Math.max(0, pts.length-2); }
+function firstLastLegsOk(pts){
+  if(pts.length<2) return false;
+  const a=Math.hypot(pts[1].x-pts[0].x, pts[1].y-pts[0].y);
+  const b=Math.hypot(pts[pts.length-1].x-pts[pts.length-2].x,
+                     pts[pts.length-1].y-pts[pts.length-2].y);
+  // straight single segment: no "leg" minimum beyond length > 0
+  if(pts.length===2) return a>0.5;
+  return a>=EDGE_MIN_LEG-0.5 && b>=EDGE_MIN_LEG-0.5;
+}
+function pathDFromPts(pts){
+  let d=`M ${pts[0].x} ${pts[0].y}`;
+  for(let i=1;i<pts.length;i++) d+=` L ${pts[i].x} ${pts[i].y}`;
+  return d;
+}
+function longestSegmentMid(pts){
+  let bestI=0, bestL=-1;
+  for(let i=0;i<pts.length-1;i++){
+    const L=Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].y-pts[i].y);
+    if(L>bestL){ bestL=L; bestI=i; }
+  }
+  const a=pts[bestI], b=pts[bestI+1];
+  return {x:(a.x+b.x)/2, y:(a.y+b.y)/2};
+}
+// Place through-label; nudge off table interiors when the natural mid sits inside one.
+function throughLabelPos(pts){
+  let mid=longestSegmentMid(pts);
+  for(const t of edgeObstacles){
+    const p=nodePos[t], s=nodeSize[t];
+    if(!p||!s) continue;
+    const x0=p.x-s.w/2, x1=p.x+s.w/2, y0=p.y-s.h/2, y1=p.y+s.h/2;
+    if(mid.x>x0&&mid.x<x1&&mid.y>y0&&mid.y<y1){
+      // push to nearest edge of that table + small pad
+      const dl=mid.x-x0, dr=x1-mid.x, dt=mid.y-y0, db=y1-mid.y;
+      const m=Math.min(dl,dr,dt,db);
+      if(m===dl) mid={x:x0-6, y:mid.y};
+      else if(m===dr) mid={x:x1+6, y:mid.y};
+      else if(m===dt) mid={x:mid.x, y:y0-6};
+      else mid={x:mid.x, y:y1+6};
+    }
+  }
+  return mid;
 }
 
-function pickBend(edge, src, tgt, nx, ny, base){
-  // escalate in fine (20px) steps rather than big jumps (the old 60/110/170/240
-  // ladder could overshoot a lot — e.g. a same-row "skip one node" edge only
-  // needing ~140px of clearance would jump straight to 240, producing a much
-  // wider arc than necessary) — take the smallest detour that actually clears
-  const cands=[base];
-  for(let m=20; m<=240; m+=20) cands.push(m,-m);
-  let best=base, bestN=Infinity;
-  for(const b of cands){
-    const n=bendBlocked(edge, src, tgt, nx, ny, b);
-    if(n===0) return b;
-    if(n<bestN){ bestN=n; best=b; }
+// Build a fixed small candidate set for a non-self edge, then pick the best.
+function routeEdge(edge){
+  const sp=nodePos[edge.source], tp=nodePos[edge.target];
+  const ss=nodeSize[edge.source]||{w:160,h:100};
+  const ts=nodeSize[edge.target]||{w:160,h:100};
+  const cands=[];
+  function add(pts, kind, ord){
+    const cleaned=cleanWaypoints(pts);
+    if(cleaned.length<2||!firstLastLegsOk(cleaned)) return;
+    const blocked=polylineHitsObstacles(cleaned, edge);
+    cands.push({
+      pts:cleaned, kind, ord, blocked,
+      bends:routeBends(cleaned),
+      len:routeLength(cleaned),
+      clear: blocked ? 0 : polylineMinClearance(cleaned, edge),
+    });
   }
-  return best;
+
+  // 1. direct straight between center-ray border anchors
+  {
+    const a=borderPt(sp.x,sp.y,ss.w,ss.h,tp.x,tp.y);
+    const b=borderPt(tp.x,tp.y,ts.w,ts.h,sp.x,sp.y);
+    add([a,b], 'straight', 0);
+  }
+
+  // 2. one-bend L: horizontal-first and vertical-first
+  {
+    const outH=tp.x>=sp.x?'R':'L';
+    const inV=tp.y>=sp.y?'T':'B';
+    const a0=sidePt(sp.x,sp.y,ss.w,ss.h,outH);
+    const a2=sidePt(tp.x,tp.y,ts.w,ts.h,inV);
+    add([a0,{x:a2.x,y:a0.y},a2], 'ortho1-hv', 1);
+  }
+  {
+    const outV=tp.y>=sp.y?'B':'T';
+    const inH=tp.x>=sp.x?'L':'R';
+    const a0=sidePt(sp.x,sp.y,ss.w,ss.h,outV);
+    const a2=sidePt(tp.x,tp.y,ts.w,ts.h,inH);
+    add([a0,{x:a0.x,y:a2.y},a2], 'ortho1-vh', 2);
+  }
+
+  // 3. two-bend doglegs: H-first / V-first with a small fixed set of lanes
+  {
+    const signX=tp.x>=sp.x?1:-1;
+    const a0=sidePt(sp.x,sp.y,ss.w,ss.h, signX>0?'R':'L');
+    const a3=sidePt(tp.x,tp.y,ts.w,ts.h, signX>0?'L':'R');
+    const midXs=[(a0.x+a3.x)/2];
+    // lanes just outside intervening expanded boxes
+    for(const t of edgeObstacles){
+      if(t===edge.source||t===edge.target) continue;
+      const box=edgeExpandedBox(t);
+      if(!box) continue;
+      // only consider obstacles roughly between the endpoints on X
+      const lo=Math.min(a0.x,a3.x), hi=Math.max(a0.x,a3.x);
+      if(box.x1<lo-EDGE_LANE||box.x0>hi+EDGE_LANE) continue;
+      midXs.push(box.x0-EDGE_LANE, box.x1+EDGE_LANE);
+    }
+    // unique ~px
+    const seen=new Set();
+    midXs.forEach((mx,i)=>{
+      const k=Math.round(mx);
+      if(seen.has(k)) return;
+      seen.add(k);
+      if(seen.size>6) return; // hard cap on candidate fan-out
+      add([a0,{x:mx,y:a0.y},{x:mx,y:a3.y},a3], 'ortho2-h', 10+i);
+    });
+  }
+  {
+    const signY=tp.y>=sp.y?1:-1;
+    const a0=sidePt(sp.x,sp.y,ss.w,ss.h, signY>0?'B':'T');
+    const a3=sidePt(tp.x,tp.y,ts.w,ts.h, signY>0?'T':'B');
+    const midYs=[(a0.y+a3.y)/2];
+    for(const t of edgeObstacles){
+      if(t===edge.source||t===edge.target) continue;
+      const box=edgeExpandedBox(t);
+      if(!box) continue;
+      const lo=Math.min(a0.y,a3.y), hi=Math.max(a0.y,a3.y);
+      if(box.y1<lo-EDGE_LANE||box.y0>hi+EDGE_LANE) continue;
+      midYs.push(box.y0-EDGE_LANE, box.y1+EDGE_LANE);
+    }
+    const seen=new Set();
+    midYs.forEach((my,i)=>{
+      const k=Math.round(my);
+      if(seen.has(k)) return;
+      seen.add(k);
+      if(seen.size>6) return;
+      add([a0,{x:a0.x,y:my},{x:a3.x,y:my},a3], 'ortho2-v', 20+i);
+    });
+  }
+
+  // Prefer clear routes; among those: fewer bends, shorter, more clearance, stable ord.
+  // Always try the direct segment first conceptually — if it clears, it ranks first
+  // (0 bends + typically shortest + ord 0).
+  const clear=cands.filter(c=>!c.blocked);
+  const pool=clear.length?clear:cands;
+  pool.sort((a,b)=>{
+    if(a.blocked!==b.blocked) return a.blocked?1:-1;
+    if(a.bends!==b.bends) return a.bends-b.bends;
+    if(Math.abs(a.len-b.len)>0.5) return a.len-b.len;
+    if(Math.abs(a.clear-b.clear)>0.5) return b.clear-a.clear;
+    return a.ord-b.ord;
+  });
+  const best=pool[0];
+
+  // If every orth candidate is blocked, fall back to a bounded perpendicular
+  // cubic (legacy-style) — never silently claim a blocked orth path is fine.
+  if(!best||best.blocked){
+    return routeEdgeBezierFallback(edge, sp, ss, tp, ts);
+  }
+  return {
+    d: pathDFromPts(best.pts),
+    pts: best.pts,
+    kind: best.kind,
+    thrAt: throughLabelPos(best.pts),
+  };
+}
+
+// Legacy cubic used only when no clean straight/orthogonal route exists.
+// Still tries increasing bends to reduce table crossings; never forces a
+// bend solely because multiple associations are consolidated.
+function routeEdgeBezierFallback(edge, sp, ss, tp, ts){
+  const src=borderPt(sp.x,sp.y,ss.w,ss.h,tp.x,tp.y);
+  const tgt=borderPt(tp.x,tp.y,ts.w,ts.h,sp.x,sp.y);
+  const dx=tgt.x-src.x, dy=tgt.y-src.y;
+  const dist=Math.sqrt(dx*dx+dy*dy)||1;
+  const nx=-dy/dist, ny=dx/dist;
+  let bend=0, bestN=Infinity, best=0;
+  const bendCands=[0];
+  for(let m=20; m<=240; m+=20){ bendCands.push(m,-m); }
+  for(const b of bendCands){
+    const c1={x:src.x+dx*CURVE_T+nx*b, y:src.y+dy*CURVE_T+ny*b};
+    const c2={x:tgt.x-dx*CURVE_T+nx*b, y:tgt.y-dy*CURVE_T+ny*b};
+    // sample for residual crossings
+    let blocked=0;
+    const cbx0=Math.min(src.x,c1.x,c2.x,tgt.x), cbx1=Math.max(src.x,c1.x,c2.x,tgt.x);
+    const cby0=Math.min(src.y,c1.y,c2.y,tgt.y), cby1=Math.max(src.y,c1.y,c2.y,tgt.y);
+    for(const t of edgeObstacles){
+      if(t===edge.source||t===edge.target) continue;
+      const p=nodePos[t], s=nodeSize[t];
+      if(!p||!s) continue;
+      const x0=p.x-s.w/2-EDGE_CLEAR, x1=p.x+s.w/2+EDGE_CLEAR;
+      const y0=p.y-s.h/2-EDGE_CLEAR, y1=p.y+s.h/2+EDGE_CLEAR;
+      if(x1<cbx0||x0>cbx1||y1<cby0||y0>cby1) continue;
+      for(let i=1;i<14;i++){
+        const q=i/14, u=1-q;
+        const px=u*u*u*src.x+3*u*u*q*c1.x+3*u*q*q*c2.x+q*q*q*tgt.x;
+        const py=u*u*u*src.y+3*u*u*q*c1.y+3*u*q*q*c2.y+q*q*q*tgt.y;
+        if(px>x0&&px<x1&&py>y0&&py<y1){ blocked++; break; }
+      }
+    }
+    if(blocked===0){ bend=b; bestN=0; break; }
+    if(blocked<bestN){ bestN=blocked; best=b; }
+  }
+  if(bestN>0) bend=best;
+  const cx1=src.x+dx*CURVE_T+nx*bend, cy1=src.y+dy*CURVE_T+ny*bend;
+  const cx2=tgt.x-dx*CURVE_T+nx*bend, cy2=tgt.y-dy*CURVE_T+ny*bend;
+  const thrAt={x:(src.x+tgt.x)/2+nx*bend*.5, y:(src.y+tgt.y)/2+ny*bend*.5};
+  return {
+    d:`M ${src.x} ${src.y} C ${cx1} ${cy1},${cx2} ${cy2},${tgt.x} ${tgt.y}`,
+    pts:[src,tgt],
+    kind:'fallback-curve',
+    thrAt,
+  };
 }
 
 function drawEdge(parent, edge) {
@@ -3017,7 +3293,7 @@ function drawEdge(parent, edge) {
     +(edge.assocs.every(a=>a.inferred)?' inf':''),
     'data-source':edge.source, 'data-target':edge.target});
 
-  // self-referential association: small loop at the node's top-right corner
+  // self-referential association: compact loop (curve is appropriate here)
   if(edge.source===edge.target){
     const s=nodeSize[edge.source]||{w:160,h:100};
     const rx=sp.x+s.w/2, ty=sp.y-s.h/2;
@@ -3030,20 +3306,9 @@ function drawEdge(parent, edge) {
     return;
   }
 
-  const ss=nodeSize[edge.source]||{w:160,h:100};
-  const ts=nodeSize[edge.target]||{w:160,h:100};
-  const src=borderPt(sp.x,sp.y,ss.w,ss.h,tp.x,tp.y);
-  const tgt=borderPt(tp.x,tp.y,ts.w,ts.h,sp.x,sp.y);
-  const dx=tgt.x-src.x, dy=tgt.y-src.y;
-  const dist=Math.sqrt(dx*dx+dy*dy)||1;
-  const nx=-dy/dist, ny=dx/dist;
-  // obstacle avoidance: try increasing perpendicular bends until the curve
-  // stops passing under other nodes (so relations stay visible)
-  const bend=pickBend(edge, src, tgt, nx, ny, edge.assocs.length>1?24:0);
-  const cx1=src.x+dx*CURVE_T+nx*bend, cy1=src.y+dy*CURVE_T+ny*bend;
-  const cx2=tgt.x-dx*CURVE_T+nx*bend, cy2=tgt.y-dy*CURVE_T+ny*bend;
+  const route=routeEdge(edge);
   g.appendChild(svgEl('path',{
-    d:`M ${src.x} ${src.y} C ${cx1} ${cy1},${cx2} ${cy2},${tgt.x} ${tgt.y}`,
+    d:route.d,
     'marker-start':`url(#${mk(edge.source)})`,
     'marker-end':`url(#${mk(edge.target)})`,
   }));
@@ -3051,21 +3316,13 @@ function drawEdge(parent, edge) {
   const thrAll=[...new Set(edge.assocs.filter(x=>x.through).map(x=>`⇢${x.through}`))];
   const thr=(thrAll.length>2?thrAll.slice(0,2).concat(`+${thrAll.length-2}`):thrAll).join(' ');
   if(thr){
-    const mx=(src.x+tgt.x)/2+nx*bend*.5, my=(src.y+tgt.y)/2+ny*bend*.5;
+    const mid=route.thrAt||longestSegmentMid(route.pts);
     const lw=thr.length*6+6;
-    g.appendChild(svgEl('rect',{x:mx-lw/2,y:my-8,width:lw,height:14,rx:3,class:'e-lbg'}));
-    const lt=svgEl('text',{x:mx,y:my+1,'text-anchor':'middle','dominant-baseline':'middle',class:'e-ltxt'});
+    g.appendChild(svgEl('rect',{x:mid.x-lw/2,y:mid.y-8,width:lw,height:14,rx:3,class:'e-lbg'}));
+    const lt=svgEl('text',{x:mid.x,y:mid.y+1,'text-anchor':'middle','dominant-baseline':'middle',class:'e-ltxt'});
     lt.textContent=thr; g.appendChild(lt);
   }
   parent.appendChild(g);
-}
-
-function borderPt(cx,cy,w,h,tx,ty){
-  const dx=tx-cx, dy=ty-cy;
-  if(Math.abs(dx)<.001&&Math.abs(dy)<.001) return {x:cx,y:cy};
-  const hw=w/2+2, hh=h/2+2;
-  const s=Math.min(dx?hw/Math.abs(dx):Infinity, dy?hh/Math.abs(dy):Infinity);
-  return {x:cx+dx*s, y:cy+dy*s};
 }
 
 // ── Select / focus ────────────────────────────────────────────────────────
@@ -4230,7 +4487,7 @@ window.addEventListener('mousemove', e=>{
     });
     const eL=document.getElementById('edge-layer');
     // only re-route edges whose endpoint actually moved — the rest of the
-    // diagram's edges are untouched by this drag, and re-running pickBend's
+    // diagram's edges are untouched by this drag, and re-running the edge
     // obstacle search for all of them on every mousemove is the main cost
     // of dragging on a diagram with many edges. A full, guaranteed-correct
     // redraw still happens once on mouseup.

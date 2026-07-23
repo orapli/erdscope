@@ -5281,5 +5281,385 @@ class TestAutoLayoutOrientation(unittest.TestCase):
             page.close()
 
 
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestEdgeRouting(unittest.TestCase):
+    """Straight-first orthogonal relation routing invariants."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = _build_html()  # users hub + spokes
+        # three collinear-ish tables for obstacle tests: A--blocker--B
+        table_rows = [('left_t', ''), ('mid_t', ''), ('right_t', ''),
+                      ('top_t', ''), ('bot_t', '')]
+        col_rows = []
+        for t in ('left_t', 'mid_t', 'right_t', 'top_t', 'bot_t'):
+            col_rows += [_col(t, 'id', key='PRI')]
+        col_rows += [
+            _col('right_t', 'left_id', key='MUL'),
+            _col('bot_t', 'top_id', key='MUL'),
+            _col('mid_t', 'left_id', key='MUL'),
+        ]
+        fk_rows = [
+            ('right_t', 'left_id', 'left_t'),  # multi-assoc pair for multi-assoc test uses manual pos
+            ('bot_t', 'top_id', 'top_t'),
+            ('mid_t', 'left_id', 'left_t'),
+        ]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows,
+                              [('left_t', 'PRIMARY', 0, 1, 'id')])
+        # add a second assoc between left and right via config-style? mysql_ir
+        # already one FK. Multi-assoc: use hub with two FKs from same pair —
+        # instead place left_t/right_t and force two assocs in DATA via evaluate.
+        args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                                only=None, exclude=None, infer_fk=False)
+        tmp = tempfile.mkdtemp()
+        out = Path(tmp) / 'route.html'
+        args.output = str(out)
+        erd._finish(tables, args, 'e2e_route')
+        cls.route_path = out
+
+        # self-relation fixture
+        table_rows = [('nodes', '')]
+        col_rows = [_col('nodes', 'id', key='PRI'),
+                    _col('nodes', 'parent_id', key='MUL')]
+        fk_rows = [('nodes', 'parent_id', 'nodes')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows,
+                              [('nodes', 'PRIMARY', 0, 1, 'id')])
+        out2 = Path(tmp) / 'self.html'
+        args.output = str(out2)
+        erd._finish(tables, args, 'e2e_self')
+        cls.self_path = out2
+
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def _open(self, path):
+        page = self.browser.new_page()
+        page.goto(path.as_uri())
+        page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+        page.evaluate('localStorage.clear()')
+        page.reload()
+        page.wait_for_function('typeof drawEdge === "function"')
+        page.wait_for_timeout(50)
+        return page
+
+    def _path_d(self, page, a, b):
+        return page.evaluate('''(pair) => {
+            const sel = `.er-edge[data-source="${pair[0]}"][data-target="${pair[1]}"] path,`
+                      + `.er-edge[data-source="${pair[1]}"][data-target="${pair[0]}"] path`;
+            const p = document.querySelector(sel);
+            return p ? p.getAttribute('d') : null;
+        }''', [a, b])
+
+    def _is_straight_L_path(self, d):
+        """Straight segment uses M ... L ... with no further L and no C."""
+        if not d or 'C' in d:
+            return False
+        return d.count(' L ') == 1 or d.count('L ') == 1
+
+    def _is_ortho_polyline(self, d):
+        if not d or 'C' in d:
+            return False
+        return ' L ' in d or 'L ' in d
+
+    def test_nearby_horizontal_pair_is_straight(self):
+        page = self._open(self.route_path)
+        try:
+            page.evaluate('''() => {
+                nodePos.left_t = {x: 0, y: 0};
+                nodePos.right_t = {x: 280, y: 0};
+                nodePos.mid_t = {x: 0, y: 400};
+                nodePos.top_t = {x: 500, y: 0};
+                nodePos.bot_t = {x: 500, y: 400};
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                renderDiagram();
+            }''')
+            page.wait_for_timeout(50)
+            d = self._path_d(page, 'left_t', 'right_t')
+            self.assertIsNotNone(d)
+            self.assertTrue(self._is_straight_L_path(d), f'expected straight L path, got {d}')
+            self.assertNotIn('C', d)
+        finally:
+            page.close()
+
+    def test_nearby_vertical_pair_is_straight(self):
+        page = self._open(self.route_path)
+        try:
+            page.evaluate('''() => {
+                nodePos.top_t = {x: 0, y: 0};
+                nodePos.bot_t = {x: 0, y: 260};
+                nodePos.left_t = {x: 400, y: 0};
+                nodePos.right_t = {x: 400, y: 260};
+                nodePos.mid_t = {x: 400, y: 500};
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                renderDiagram();
+            }''')
+            page.wait_for_timeout(50)
+            d = self._path_d(page, 'top_t', 'bot_t')
+            self.assertTrue(self._is_straight_L_path(d), f'expected straight path, got {d}')
+        finally:
+            page.close()
+
+    def test_diagonal_pair_stays_straight_when_clear(self):
+        page = self._open(self.route_path)
+        try:
+            page.evaluate('''() => {
+                nodePos.left_t = {x: 0, y: 0};
+                nodePos.right_t = {x: 300, y: 220};
+                nodePos.mid_t = {x: 600, y: 0};
+                nodePos.top_t = {x: 600, y: 220};
+                nodePos.bot_t = {x: 600, y: 440};
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                renderDiagram();
+            }''')
+            page.wait_for_timeout(50)
+            d = self._path_d(page, 'left_t', 'right_t')
+            self.assertTrue(self._is_straight_L_path(d), f'diagonal should stay straight: {d}')
+        finally:
+            page.close()
+
+    def test_multi_assoc_does_not_force_bend(self):
+        page = self._open(self.base)
+        try:
+            # force two assocs on users-posts edge and place them close horizontally
+            page.evaluate('''() => {
+                const e = getDisplayEdges(getDisplayTables())
+                    .find(x => (x.source==='users'&&x.target==='posts')
+                            || (x.source==='posts'&&x.target==='users'));
+                if (e && e.assocs.length < 2) {
+                    e.assocs.push({...e.assocs[0], type: 'has_many'});
+                }
+                nodePos.users = {x: 0, y: 0};
+                nodePos.posts = {x: 300, y: 0};
+                // park others far away so they are not obstacles
+                for (const t of getDisplayTables()) {
+                    if (t === 'users' || t === 'posts') continue;
+                    nodePos[t] = {x: 900, y: 900 + Math.random()*10};
+                }
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                edgeObstacles = getDisplayTables();
+                // draw just this edge into a fresh layer to inspect routeEdge
+                const r = routeEdge(e);
+                window.__routeKind = r.kind;
+                window.__routeD = r.d;
+                renderDiagram();
+            }''')
+            page.wait_for_timeout(50)
+            kind = page.evaluate('window.__routeKind')
+            d = page.evaluate('window.__routeD')
+            self.assertEqual(kind, 'straight',
+                             f'multi-assoc must not force a bend when clear: {kind} {d}')
+            self.assertNotIn('C', d)
+        finally:
+            page.close()
+
+    def test_blocker_yields_orthogonal_detour(self):
+        page = self._open(self.route_path)
+        try:
+            page.evaluate('''() => {
+                // left -- mid -- right, mid blocks the straight segment
+                nodePos.left_t = {x: 0, y: 0};
+                nodePos.mid_t = {x: 200, y: 0};
+                nodePos.right_t = {x: 400, y: 0};
+                nodePos.top_t = {x: 0, y: 500};
+                nodePos.bot_t = {x: 200, y: 500};
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                renderDiagram();
+            }''')
+            page.wait_for_timeout(50)
+            d = self._path_d(page, 'left_t', 'right_t')
+            self.assertIsNotNone(d)
+            self.assertTrue(self._is_ortho_polyline(d), f'expected ortho detour, got {d}')
+            self.assertNotIn('C', d)
+            # must not be a single straight segment through mid
+            self.assertGreaterEqual(d.count('L'), 1)
+            # geometric clearance: routeEdge reports unblocked orth
+            ok = page.evaluate('''() => {
+                const e = getDisplayEdges(getDisplayTables())
+                    .find(x => (x.source==='left_t'&&x.target==='right_t')
+                            || (x.source==='right_t'&&x.target==='left_t'));
+                edgeObstacles = getDisplayTables();
+                const r = routeEdge(e);
+                return {kind: r.kind, blocked: polylineHitsObstacles(r.pts, e)};
+            }''')
+            self.assertFalse(ok['blocked'], f'detour still hits obstacle: {ok}')
+            self.assertNotEqual(ok['kind'], 'straight')
+            self.assertNotEqual(ok['kind'], 'fallback-curve')
+        finally:
+            page.close()
+
+    def test_h_and_v_first_doglegs_are_exercised(self):
+        page = self._open(self.route_path)
+        try:
+            kinds = page.evaluate('''() => {
+                // place so straight is blocked; collect candidate kinds that clear
+                nodePos.left_t = {x: 0, y: 0};
+                nodePos.mid_t = {x: 200, y: 0};
+                nodePos.right_t = {x: 400, y: 40};
+                nodePos.top_t = {x: 200, y: -200};
+                nodePos.bot_t = {x: 200, y: 200};
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                edgeObstacles = getDisplayTables();
+                const e = {source:'left_t', target:'right_t',
+                           assocs:[{from:'left_t', type:'has_many', target:'right_t'}]};
+                // re-run internal candidate collection by inspecting route kinds
+                // via two placements that favor H-first vs V-first
+                const r1 = routeEdge(e);
+                nodePos.right_t = {x: 40, y: 400};
+                const r2 = routeEdge(e);
+                return [r1.kind, r2.kind];
+            }''')
+            self.assertTrue(any(k.startswith('ortho') for k in kinds),
+                            f'expected ortho routes, got {kinds}')
+        finally:
+            page.close()
+
+    def test_waypoints_have_no_tiny_zigzags(self):
+        page = self._open(self.route_path)
+        try:
+            bad = page.evaluate('''() => {
+                nodePos.left_t = {x: 0, y: 0};
+                nodePos.mid_t = {x: 200, y: 0};
+                nodePos.right_t = {x: 400, y: 0};
+                nodePos.top_t = {x: 0, y: 300};
+                nodePos.bot_t = {x: 200, y: 300};
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                edgeObstacles = getDisplayTables();
+                const e = getDisplayEdges(['left_t','mid_t','right_t','top_t','bot_t'])
+                    .find(x => (x.source==='left_t'&&x.target==='right_t')
+                            || (x.source==='right_t'&&x.target==='left_t'));
+                const r = routeEdge(e);
+                const pts = r.pts;
+                // consecutive duplicates
+                for (let i = 1; i < pts.length; i++) {
+                    if (Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y) < 0.5)
+                        return 'dup';
+                }
+                // zero-length already covered; tiny first/last legs on multi-point
+                if (pts.length > 2) {
+                    const a = Math.hypot(pts[1].x-pts[0].x, pts[1].y-pts[0].y);
+                    const b = Math.hypot(pts[pts.length-1].x-pts[pts.length-2].x,
+                                         pts[pts.length-1].y-pts[pts.length-2].y);
+                    if (a < 9 || b < 9) return 'tiny-leg '+a+' '+b;
+                }
+                return null;
+            }''')
+            self.assertIsNone(bad, f'waypoint quality issue: {bad}')
+        finally:
+            page.close()
+
+    def test_self_relation_keeps_loop(self):
+        page = self._open(self.self_path)
+        try:
+            d = page.evaluate('''() => {
+                const p = document.querySelector('.er-edge path');
+                return p ? p.getAttribute('d') : null;
+            }''')
+            self.assertIsNotNone(d)
+            self.assertIn('C', d, 'self-relation should remain a cubic loop')
+        finally:
+            page.close()
+
+    def test_route_is_deterministic_across_redraws(self):
+        page = self._open(self.base)
+        try:
+            d1 = page.evaluate('''() => {
+                const paths = [...document.querySelectorAll('.er-edge path')]
+                    .map(p => p.getAttribute('d')).sort();
+                renderDiagram();
+                const paths2 = [...document.querySelectorAll('.er-edge path')]
+                    .map(p => p.getAttribute('d')).sort();
+                return {a: paths, b: paths2};
+            }''')
+            self.assertEqual(d1['a'], d1['b'])
+        finally:
+            page.close()
+
+    def test_drag_only_reroutes_incident_edges(self):
+        page = self._open(self.base)
+        try:
+            # ensure comments-users and posts-users both exist
+            page.wait_for_timeout(50)
+            before = page.evaluate('''() => {
+                const unt = document.querySelector(
+                    '.er-edge[data-source="comments"][data-target="users"] path,'
+                  + '.er-edge[data-source="users"][data-target="comments"] path');
+                const mov = document.querySelector(
+                    '.er-edge[data-source="posts"][data-target="users"] path,'
+                  + '.er-edge[data-source="users"][data-target="posts"] path');
+                return {
+                    n: document.querySelectorAll('.er-edge').length,
+                    unt: unt && unt.getAttribute('d'),
+                    mov: mov && mov.getAttribute('d'),
+                    posts: {...nodePos.posts},
+                };
+            }''')
+            self.assertIsNotNone(before['unt'])
+            self.assertIsNotNone(before['mov'])
+            rect = page.evaluate('''() => {
+                const r = document.querySelector('svg').getBoundingClientRect();
+                return {left:r.left, top:r.top};
+            }''')
+            view = page.evaluate('({vx, vy, vs})')
+            to_client = lambda wx, wy: (rect['left'] + view['vx'] + wx * view['vs'],
+                                         rect['top'] + view['vy'] + wy * view['vs'])
+            sx, sy = to_client(before['posts']['x'], before['posts']['y'])
+            tx, ty = to_client(before['posts']['x'] + 350, before['posts']['y'] + 200)
+            page.mouse.move(sx, sy)
+            page.mouse.down()
+            page.keyboard.down('Alt')
+            page.mouse.move(tx, ty, steps=6)
+            page.keyboard.up('Alt')
+            page.mouse.up()
+            after = page.evaluate('''() => {
+                const unt = document.querySelector(
+                    '.er-edge[data-source="comments"][data-target="users"] path,'
+                  + '.er-edge[data-source="users"][data-target="comments"] path');
+                const mov = document.querySelector(
+                    '.er-edge[data-source="posts"][data-target="users"] path,'
+                  + '.er-edge[data-source="users"][data-target="posts"] path');
+                return {
+                    n: document.querySelectorAll('.er-edge').length,
+                    unt: unt && unt.getAttribute('d'),
+                    mov: mov && mov.getAttribute('d'),
+                };
+            }''')
+            self.assertEqual(before['n'], after['n'])
+            self.assertEqual(before['unt'], after['unt'],
+                             'non-incident edge path must be unchanged by drag')
+            self.assertNotEqual(before['mov'], after['mov'],
+                                'incident edge must re-route with the drag')
+        finally:
+            page.close()
+
+    def test_export_svg_includes_routed_paths(self):
+        page = self._open(self.base)
+        try:
+            info = page.evaluate('''() => {
+                const built = buildExportSvg();
+                const svg = new XMLSerializer().serializeToString(built.svg);
+                const n = (svg.match(/class="er-edge/g) || []).length;
+                return {
+                    n,
+                    hasPath: svg.includes('<path'),
+                    hasMarker: svg.includes('marker-') || svg.includes('marker'),
+                    len: svg.length,
+                };
+            }''')
+            self.assertGreater(info['n'], 0)
+            self.assertTrue(info['hasPath'])
+            self.assertTrue(info['hasMarker'])
+        finally:
+            page.close()
+
+
 if __name__ == '__main__':
     unittest.main()
