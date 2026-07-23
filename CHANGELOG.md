@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cross-platform showcase verification.** XLSX artifacts are compared by ZIP
   entries and uncompressed XML rather than environment-specific Deflate bytes,
-  and SQLite signature connections are explicitly closed so Windows can remove
+  and SQLite generator connections are explicitly closed so Windows can remove
   temporary databases after verification.
 
 ## [0.11.2] - 2026-07-24

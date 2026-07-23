@@ -65,8 +65,11 @@ FORMATS = {
 def build_db(path):
     if path.exists():
         path.unlink()
-    with sqlite3.connect(path) as conn:
+    conn = sqlite3.connect(path)
+    try:
         conn.executescript(SCHEMA_SQL)
+    finally:
+        conn.close()
 
 
 def db_signature(path):
