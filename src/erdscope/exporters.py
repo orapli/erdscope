@@ -371,16 +371,26 @@ def write_excel(tables, path, title, template_path=None, notes=None, groups=None
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
         'Target="xl/workbook.xml"/></Relationships>')
 
-    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
-        z.writestr('[Content_Types].xml', content_types)
-        z.writestr('_rels/.rels', root_rels)
-        z.writestr('xl/workbook.xml', workbook)
+    # Explicit ZipInfo metadata makes generated workbooks byte-deterministic.
+    # Besides reproducible builds, this lets committed example workbooks use a
+    # strict drift check instead of an unzip-and-normalize comparison.
+    def put(z, name, data):
+        info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.create_system = 3
+        info.external_attr = 0o600 << 16
+        z.writestr(info, data)
+
+    with zipfile.ZipFile(path, 'w') as z:
+        put(z, '[Content_Types].xml', content_types)
+        put(z, '_rels/.rels', root_rels)
+        put(z, 'xl/workbook.xml', workbook)
         if theme_xml:
-            z.writestr('xl/theme/theme1.xml', theme_xml)
-        z.writestr('xl/_rels/workbook.xml.rels', wb_rels)
-        z.writestr('xl/styles.xml', styles)
+            put(z, 'xl/theme/theme1.xml', theme_xml)
+        put(z, 'xl/_rels/workbook.xml.rels', wb_rels)
+        put(z, 'xl/styles.xml', styles)
         for i, (_, xml) in enumerate(sheets):
-            z.writestr(f'xl/worksheets/sheet{i+1}.xml', xml)
+            put(z, f'xl/worksheets/sheet{i+1}.xml', xml)
 
 # ---------------------------------------------------------------------------
 # HTML template

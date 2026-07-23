@@ -15,6 +15,12 @@
 # module-level free functions (not methods) on purpose — the test suite
 # monkeypatches them by name, and gen_demo calls erd.mysql_ir directly.
 # ---------------------------------------------------------------------------
+import abc
+import re
+import sys
+from pathlib import Path
+
+
 DB_ADAPTERS = {}   # url scheme (lower-case) -> DBAdapter subclass
 
 
@@ -23,7 +29,20 @@ def register_adapter(cls):
     `schemes` (case-insensitively). Returns the class unchanged, so it can also
     be used directly. A later registration for a scheme replaces an earlier one,
     which is exactly what lets a --adapter plugin override a built-in engine."""
+    if not isinstance(cls, type) or not issubclass(cls, DBAdapter):
+        raise TypeError('register_adapter requires a DBAdapter subclass')
+    if getattr(cls, '__abstractmethods__', None):
+        raise TypeError(f'{cls.__name__} must implement fetch(url)')
+    if not isinstance(cls.name, str) or not re.fullmatch(r'[a-z][a-z0-9_-]*', cls.name):
+        raise ValueError(f'{cls.__name__}.name must be a lower-case provider identifier')
+    if not isinstance(cls.label, str):
+        raise ValueError(f'{cls.__name__}.label must be a string')
+    if not isinstance(cls.schemes, (tuple, list)) or not cls.schemes:
+        raise ValueError(f'{cls.__name__}.schemes must be a non-empty tuple/list')
     for scheme in cls.schemes:
+        if not isinstance(scheme, str) or not re.fullmatch(
+                r'[a-z][a-z0-9+.-]*', scheme, flags=re.IGNORECASE):
+            raise ValueError(f'{cls.__name__}.schemes contains invalid URL scheme {scheme!r}')
         DB_ADAPTERS[scheme.lower()] = cls
     return cls
 
@@ -40,6 +59,25 @@ class DBAdapter(abc.ABC):
         (defaults to `name`);
       * implement fetch(url) to return the IR;
       * decorate the class with @register_adapter.
+
+    ``db_provider(url)`` selects this class from the URL scheme, instantiates
+    it with no arguments, calls ``fetch(url)`` once, validates the returned
+    complete tables IR, then wraps it in a DB ProviderResult. ``fetch`` must not
+    return a ProviderResult itself. The minimum useful table shape is::
+
+        {'users': {
+            'primary_key': 'id',
+            'columns': [{'name': 'id', 'type': 'integer',
+                         'nullable': False, 'primary': True}],
+            'indexes': [],
+            'associations': []}}
+
+    Every DB table requires ``primary_key``, ``columns``, ``indexes``, and
+    ``associations``. Columns require ``name``; indexes require ``columns``;
+    associations require ``type``, ``name``, ``target``.
+    See ``validate_tables_ir`` for the executable contract. Keep connections
+    read-only where the engine permits it, close resources in ``fetch``, and
+    never include credentials in errors or returned metadata.
     """
     schemes = ()      # URL schemes handled, e.g. ('postgres', 'postgresql')
     name = ''         # provider id for the ProviderResult Source (§5)
@@ -47,7 +85,7 @@ class DBAdapter(abc.ABC):
 
     @abc.abstractmethod
     def fetch(self, url):
-        """Return the IR (`tables` dict) for `url`. Called once per run."""
+        """Return complete DB tables IR for ``url``. Called once, then validated."""
         raise NotImplementedError
 
 

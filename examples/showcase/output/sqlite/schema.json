@@ -1,0 +1,269 @@
+{
+  "fingerprint": "sha256:89caed134081750093bc7688c5d0efa493309c4b5b496003ab96840fd81ad91e",
+  "format": 1,
+  "schema": {
+    "groups": [
+      {
+        "color": "#0f766e",
+        "id": "publishing",
+        "tables": [
+          "posts",
+          "tags"
+        ],
+        "title": "Publishing"
+      }
+    ],
+    "notes": [
+      {
+        "id": "post-retention",
+        "scope": "table",
+        "table": "posts",
+        "text": "Posts are retained after user anonymization so links remain stable.",
+        "title": "Retention"
+      },
+      {
+        "id": "review-purpose",
+        "scope": "global",
+        "text": "SQLite, config, and SQLAlchemy model inputs describe the same small publishing domain. Generated outputs are committed and drift-checked.",
+        "title": "Review fixture"
+      }
+    ],
+    "tables": {
+      "post_tags": {
+        "associations": [
+          {
+            "foreign_key": "post_id",
+            "name": "post",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "sqlite"
+              }
+            ],
+            "target": "posts",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "tag_id",
+            "name": "tag",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "sqlite"
+              }
+            ],
+            "target": "tags",
+            "type": "belongs_to"
+          }
+        ],
+        "columns": [
+          {
+            "name": "post_id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "tag_id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "post_id",
+              "tag_id"
+            ],
+            "name": "sqlite_autoindex_post_tags_1",
+            "unique": true
+          }
+        ]
+      },
+      "posts": {
+        "associations": [
+          {
+            "foreign_key": "parent_id",
+            "name": "parent",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "sqlite"
+              }
+            ],
+            "target": "posts",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "user_id",
+            "name": "user",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "sqlite"
+              }
+            ],
+            "target": "users",
+            "type": "belongs_to"
+          }
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "user_id",
+            "nullable": false,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "parent_id",
+            "nullable": true,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "sql_type": "VARCHAR(200)",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "nullable": true,
+            "sql_type": "TEXT",
+            "type": "text"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "user_id"
+            ],
+            "name": "idx_posts_user_id",
+            "unique": false
+          }
+        ]
+      },
+      "profiles": {
+        "associations": [
+          {
+            "foreign_key": "user_id",
+            "name": "user",
+            "provenance": "db_fk",
+            "sources": [
+              {
+                "kind": "db",
+                "provider": "sqlite"
+              }
+            ],
+            "target": "users",
+            "type": "has_one"
+          }
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "user_id",
+            "nullable": false,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "bio",
+            "nullable": true,
+            "sql_type": "TEXT",
+            "type": "text"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "user_id"
+            ],
+            "name": "sqlite_autoindex_profiles_1",
+            "unique": true
+          }
+        ]
+      },
+      "tags": {
+        "associations": [],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "label",
+            "nullable": false,
+            "sql_type": "VARCHAR(50)",
+            "type": "string"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "label"
+            ],
+            "name": "sqlite_autoindex_tags_1",
+            "unique": true
+          }
+        ]
+      },
+      "users": {
+        "associations": [],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "sql_type": "INTEGER",
+            "type": "integer"
+          },
+          {
+            "name": "email",
+            "nullable": false,
+            "sql_type": "VARCHAR(255)",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "nullable": false,
+            "sql_type": "VARCHAR(100)",
+            "type": "string"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "email"
+            ],
+            "name": "sqlite_autoindex_users_1",
+            "unique": true
+          }
+        ]
+      }
+    }
+  }
+}

@@ -59,7 +59,7 @@ serialization time, so the DATA_JSON output stays byte-identical.
                       "provider": "mysql"|"postgres"|"rails"|"prisma"|"django"|"config"
                                  |"rails.schema",
                       "location"?: str}            # url (no password) / dir / config path
-    Warning        = {"code": str, "message": str, "table"?: str}
+    Warning        = str   # human-readable; caller adds the "Warning:" prefix
     ProviderResult = {"source": Source, "tables": IR, "warnings": list[Warning]}
 
     # Association provenance (§9). Internally it is a representative
@@ -82,7 +82,7 @@ from urllib.parse import urlparse
 # dynamically, into pyproject.toml's `version` — kept in sync by
 # tests/test_version.py). erd.py must stay importable/runnable standalone,
 # so this can't be sourced from pyproject.toml at runtime.
-__version__ = '0.11.0'
+__version__ = '0.11.1'
 
 # ---------------------------------------------------------------------------
 # Provider / provenance contracts
@@ -108,6 +108,116 @@ def make_provider_result(kind, provider, tables, location=None, warnings=None):
         source['location'] = location
     return {'source': source, 'tables': tables,
             'warnings': list(warnings) if warnings else []}
+
+
+_ASSOCIATION_TYPES = {'belongs_to', 'has_one', 'has_many',
+                      'has_and_belongs_to_many'}
+
+
+def validate_tables_ir(tables, provider='provider', require_complete=False):
+    """Validate the structural provider boundary without rejecting sparse IR.
+
+    Framework overlays may contribute only associations while DB adapters
+    normally contribute complete tables, so this checks container shapes and
+    identity fields. ``require_complete`` applies the stronger DB-adapter
+    contract. Returns ``tables`` unchanged for easy use at dispatch boundaries;
+    raises ValueError with a provider-local path.
+    """
+    if not isinstance(tables, dict):
+        raise ValueError(f'{provider}: tables must be a dict')
+    for tname, table in tables.items():
+        where = f'{provider}: table {tname!r}'
+        if not isinstance(tname, str) or not tname:
+            raise ValueError(f'{provider}: table names must be non-empty strings')
+        if not isinstance(table, dict):
+            raise ValueError(f'{where} must be a dict')
+        if require_complete:
+            missing = {'primary_key', 'columns', 'indexes', 'associations'} - set(table)
+            if missing:
+                raise ValueError(f'{where} is missing DB fields {sorted(missing)}')
+        for field in ('columns', 'indexes', 'associations'):
+            if field in table and not isinstance(table[field], list):
+                raise ValueError(f'{where}.{field} must be a list')
+        if 'comment' in table and table['comment'] is not None \
+                and not isinstance(table['comment'], str):
+            raise ValueError(f'{where}.comment must be a string or null')
+        if 'schema_missing' in table and not isinstance(table['schema_missing'], bool):
+            raise ValueError(f'{where}.schema_missing must be a boolean')
+        pk = table.get('primary_key')
+        if 'primary_key' in table and not (
+                pk is None or isinstance(pk, str)
+                or (isinstance(pk, list) and all(isinstance(x, str) for x in pk))):
+            raise ValueError(f'{where}.primary_key must be a string, list of strings, or null')
+        for i, col in enumerate(table.get('columns', [])):
+            cwhere = f'{where}.columns[{i}]'
+            if not isinstance(col, dict):
+                raise ValueError(f'{cwhere} must be a dict')
+            if not isinstance(col.get('name'), str) or not col['name']:
+                raise ValueError(f'{cwhere}.name must be a non-empty string')
+            for field in ('type', 'sql_type', 'default', 'extra'):
+                if field in col and not isinstance(col[field], str):
+                    raise ValueError(f'{cwhere}.{field} must be a string')
+            if 'comment' in col and col['comment'] is not None \
+                    and not isinstance(col['comment'], str):
+                raise ValueError(f'{cwhere}.comment must be a string or null')
+            for field in ('nullable', 'primary'):
+                if field in col and not isinstance(col[field], bool):
+                    raise ValueError(f'{cwhere}.{field} must be a boolean')
+        for i, index in enumerate(table.get('indexes', [])):
+            iwhere = f'{where}.indexes[{i}]'
+            if not isinstance(index, dict):
+                raise ValueError(f'{iwhere} must be a dict')
+            if not isinstance(index.get('columns'), list) or not index['columns'] or not all(
+                    isinstance(x, str) and x for x in index['columns']):
+                raise ValueError(f'{iwhere}.columns must be a list of non-empty strings')
+            if 'name' in index and not isinstance(index['name'], str):
+                raise ValueError(f'{iwhere}.name must be a string')
+            if 'unique' in index and not isinstance(index['unique'], bool):
+                raise ValueError(f'{iwhere}.unique must be a boolean')
+        for i, assoc in enumerate(table.get('associations', [])):
+            awhere = f'{where}.associations[{i}]'
+            if not isinstance(assoc, dict):
+                raise ValueError(f'{awhere} must be a dict')
+            if assoc.get('type') not in _ASSOCIATION_TYPES:
+                raise ValueError(f'{awhere}.type must be one of '
+                                 f'{sorted(_ASSOCIATION_TYPES)}')
+            for field in ('name', 'target'):
+                if not isinstance(assoc.get(field), str) or not assoc[field]:
+                    raise ValueError(f'{awhere}.{field} must be a non-empty string')
+            for field in ('foreign_key', 'through'):
+                if field in assoc and not isinstance(assoc[field], str):
+                    raise ValueError(f'{awhere}.{field} must be a string')
+            for field in ('polymorphic', 'db_fk', 'schema_fk', 'manual', 'inferred'):
+                if field in assoc and not isinstance(assoc[field], bool):
+                    raise ValueError(f'{awhere}.{field} must be a boolean')
+    return tables
+
+
+def validate_provider_result(result, provider='provider', expected_kind=None,
+                             expected_provider=None):
+    """Validate a parser's ProviderResult and return it unchanged."""
+    if not isinstance(result, dict):
+        raise ValueError(f'{provider}: result must be a ProviderResult dict')
+    if set(result) != {'source', 'tables', 'warnings'}:
+        raise ValueError(f'{provider}: result must contain exactly source, tables, warnings')
+    source = result['source']
+    if not isinstance(source, dict):
+        raise ValueError(f'{provider}: source must be a dict')
+    if not isinstance(source.get('kind'), str) or not source['kind']:
+        raise ValueError(f'{provider}: source.kind must be a non-empty string')
+    if not isinstance(source.get('provider'), str) or not source['provider']:
+        raise ValueError(f'{provider}: source.provider must be a non-empty string')
+    if 'location' in source and not isinstance(source['location'], str):
+        raise ValueError(f'{provider}: source.location must be a string when present')
+    if expected_kind is not None and source['kind'] != expected_kind:
+        raise ValueError(f'{provider}: source.kind must be {expected_kind!r}')
+    if expected_provider is not None and source['provider'] != expected_provider:
+        raise ValueError(f'{provider}: source.provider must be {expected_provider!r}')
+    if not isinstance(result['warnings'], list) or not all(
+            isinstance(x, str) for x in result['warnings']):
+        raise ValueError(f'{provider}: warnings must be a list of strings')
+    validate_tables_ir(result['tables'], provider)
+    return result
 
 
 def provenance_of(assoc):
@@ -177,6 +287,12 @@ SQL_TYPES = {
 # module-level free functions (not methods) on purpose — the test suite
 # monkeypatches them by name, and gen_demo calls erd.mysql_ir directly.
 # ---------------------------------------------------------------------------
+import abc
+import re
+import sys
+from pathlib import Path
+
+
 DB_ADAPTERS = {}   # url scheme (lower-case) -> DBAdapter subclass
 
 
@@ -185,7 +301,20 @@ def register_adapter(cls):
     `schemes` (case-insensitively). Returns the class unchanged, so it can also
     be used directly. A later registration for a scheme replaces an earlier one,
     which is exactly what lets a --adapter plugin override a built-in engine."""
+    if not isinstance(cls, type) or not issubclass(cls, DBAdapter):
+        raise TypeError('register_adapter requires a DBAdapter subclass')
+    if getattr(cls, '__abstractmethods__', None):
+        raise TypeError(f'{cls.__name__} must implement fetch(url)')
+    if not isinstance(cls.name, str) or not re.fullmatch(r'[a-z][a-z0-9_-]*', cls.name):
+        raise ValueError(f'{cls.__name__}.name must be a lower-case provider identifier')
+    if not isinstance(cls.label, str):
+        raise ValueError(f'{cls.__name__}.label must be a string')
+    if not isinstance(cls.schemes, (tuple, list)) or not cls.schemes:
+        raise ValueError(f'{cls.__name__}.schemes must be a non-empty tuple/list')
     for scheme in cls.schemes:
+        if not isinstance(scheme, str) or not re.fullmatch(
+                r'[a-z][a-z0-9+.-]*', scheme, flags=re.IGNORECASE):
+            raise ValueError(f'{cls.__name__}.schemes contains invalid URL scheme {scheme!r}')
         DB_ADAPTERS[scheme.lower()] = cls
     return cls
 
@@ -202,6 +331,25 @@ class DBAdapter(abc.ABC):
         (defaults to `name`);
       * implement fetch(url) to return the IR;
       * decorate the class with @register_adapter.
+
+    ``db_provider(url)`` selects this class from the URL scheme, instantiates
+    it with no arguments, calls ``fetch(url)`` once, validates the returned
+    complete tables IR, then wraps it in a DB ProviderResult. ``fetch`` must not
+    return a ProviderResult itself. The minimum useful table shape is::
+
+        {'users': {
+            'primary_key': 'id',
+            'columns': [{'name': 'id', 'type': 'integer',
+                         'nullable': False, 'primary': True}],
+            'indexes': [],
+            'associations': []}}
+
+    Every DB table requires ``primary_key``, ``columns``, ``indexes``, and
+    ``associations``. Columns require ``name``; indexes require ``columns``;
+    associations require ``type``, ``name``, ``target``.
+    See ``validate_tables_ir`` for the executable contract. Keep connections
+    read-only where the engine permits it, close resources in ``fetch``, and
+    never include credentials in errors or returned metadata.
     """
     schemes = ()      # URL schemes handled, e.g. ('postgres', 'postgresql')
     name = ''         # provider id for the ProviderResult Source (§5)
@@ -209,7 +357,7 @@ class DBAdapter(abc.ABC):
 
     @abc.abstractmethod
     def fetch(self, url):
-        """Return the IR (`tables` dict) for `url`. Called once per run."""
+        """Return complete DB tables IR for ``url``. Called once, then validated."""
         raise NotImplementedError
 
 
@@ -1176,6 +1324,11 @@ def reconcile_db_fks(tables):
 # the post-merge *_id FK inference pass. Those stay module-level free functions
 # because the test suite calls them by name.
 # ---------------------------------------------------------------------------
+import abc
+import re
+import sys
+
+
 IRREGULAR = {
     'person':'people','child':'children','mouse':'mice','datum':'data',
     'medium':'media','analysis':'analyses','criterion':'criteria',
@@ -1206,7 +1359,21 @@ FRAMEWORK_OVERLAYS = []   # registered FrameworkOverlay subclasses (see priority
 def register_overlay(cls):
     """Class decorator: register a FrameworkOverlay subclass. Returns the class
     unchanged. Detection consults overlays in `priority` order (see
-    framework_overlay_for), so registration/concat order does not matter."""
+    framework_overlay_for), so registration/concat order does not matter. A
+    later registration with the same `name` replaces the earlier class, matching
+    DB adapter plugin overrides and making plugin reload deterministic."""
+    if not isinstance(cls, type) or not issubclass(cls, FrameworkOverlay):
+        raise TypeError('register_overlay requires a FrameworkOverlay subclass')
+    if getattr(cls, '__abstractmethods__', None):
+        raise TypeError(f'{cls.__name__} must implement detect(root) and build(root, table_map)')
+    if not isinstance(cls.name, str) or not re.fullmatch(r'[a-z][a-z0-9_-]*', cls.name):
+        raise ValueError(f'{cls.__name__}.name must be a lower-case source identifier')
+    if not isinstance(cls.priority, int):
+        raise ValueError(f'{cls.__name__}.priority must be an integer')
+    if not isinstance(cls.expects, str) or not cls.expects.strip():
+        raise ValueError(f'{cls.__name__}.expects must describe accepted input')
+    FRAMEWORK_OVERLAYS[:] = [existing for existing in FRAMEWORK_OVERLAYS
+                             if existing.name != cls.name]
     FRAMEWORK_OVERLAYS.append(cls)
     return cls
 
@@ -1228,6 +1395,19 @@ class FrameworkOverlay(abc.ABC):
       * implement build(root, table_map) -> ProviderResult (table_map is the
         Rails table override map; ignore it if not applicable);
       * decorate the class with @register_overlay.
+
+    Untyped ``--models`` calls ``detect`` on every overlay in priority order,
+    then calls the winner's ``build``. Typed ``<name>.models`` skips detection
+    and calls ``build`` directly. ``build`` must return exactly::
+
+        make_provider_result('framework', self.name, tables,
+                             location=str(root), warnings=[])
+
+    ``tables`` is sparse IR: association-only overlays may return
+    ``{'users': {'associations': [...]}}`` without columns/indexes/primary_key.
+    Results are checked by ``validate_provider_result`` before merge; see that
+    function and ``validate_tables_ir`` for the executable output contract.
+    Warnings are human-readable strings without a leading ``Warning:``.
     """
     name = ''
     priority = 100
@@ -1291,9 +1471,17 @@ def framework_provider(mroot, table_map=None):
     root) and parses it."""
     overlay = framework_overlay_for(mroot)
     if overlay is None:
+        expected = ', '.join(f'{cls.name}.models' for cls in sorted(
+            FRAMEWORK_OVERLAYS, key=lambda c: (c.priority, c.name)))
         sys.exit(f'Error: could not detect the code kind at {mroot} '
-                 '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
-    return overlay.build(mroot, table_map)
+                 f'(registered model types: {expected or "none"})')
+    result = overlay.build(mroot, table_map)
+    try:
+        return validate_provider_result(
+            result, f'framework overlay {overlay.name!r}',
+            expected_kind='framework', expected_provider=overlay.name)
+    except ValueError as e:
+        sys.exit(f'Error: invalid output from framework overlay {overlay.name!r}: {e}')
 
 # ---------------------------------------------------------------------------
 # FK column inference — guess relations from `xxx_id` columns (IR post-pass)
@@ -3284,7 +3472,8 @@ _FILE_SOURCE_TYPES = {'rails.schema': 'a schema.rb file', 'dbml': 'a .dbml file'
 
 def _models_type_builder(overlay_cls):
     def build(spec, table_map):
-        return overlay_cls().build(spec['path'], table_map)
+        result = overlay_cls().build(spec['path'], table_map)
+        return _validated_overlay_result(overlay_cls, result)
     return build
 
 
@@ -3297,6 +3486,16 @@ def _source_type_builder(type_name):
         if f'{cls.name}.models' == type_name:
             return _models_type_builder(cls)
     return None
+
+
+def _validated_overlay_result(overlay_cls, result):
+    """Enforce the FrameworkOverlay output contract at every dispatch path."""
+    try:
+        return validate_provider_result(
+            result, f'framework overlay {overlay_cls.name!r}',
+            expected_kind='framework', expected_provider=overlay_cls.name)
+    except ValueError as e:
+        sys.exit(f'Error: invalid output from framework overlay {overlay_cls.name!r}: {e}')
 
 
 def known_source_type_names():
@@ -3471,15 +3670,16 @@ def _run_untyped_spec(spec, table_map):
         return result
     matches = framework_overlays_matching(path)
     if not matches:
-        sys.exit(f'Error: could not detect the code kind at {given} (expected a Rails '
-                 'app/models dir, a schema.prisma, a Django project, or a db/schema.rb '
-                 'file — declare `sources[].type` in the config to be explicit)')
+        model_types = ', '.join(n for n in known_source_type_names() if n.endswith('.models'))
+        sys.exit(f'Error: could not detect the code kind at {given} '
+                 f'(registered model types: {model_types or "none"}; db/schema.rb is also '
+                 'auto-detected — declare `sources[].type` in the config to be explicit)')
     winner = matches[0]
     if len(matches) > 1:
         names = ', '.join(c.name for c in matches)
         print(f'Note: {given} matched multiple frameworks ({names}); using {winner.name}. '
               f'Declare sources[].type in the config to override.', file=sys.stderr)
-    result = winner().build(path, table_map)
+    result = _validated_overlay_result(winner, winner().build(path, table_map))
     print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
           file=sys.stderr)
     return result
@@ -3517,7 +3717,13 @@ def db_provider(url):
         sys.exit(f'Error: no database adapter for URL scheme {scheme!r} '
                  f'(known schemes: {known})')
     adapter = adapter_cls()
-    return make_provider_result('db', adapter.name, adapter.fetch(url),
+    tables = adapter.fetch(url)
+    try:
+        tables = validate_tables_ir(tables, f'database adapter {adapter.name!r}',
+                                    require_complete=True)
+    except ValueError as e:
+        sys.exit(f'Error: invalid output from database adapter {adapter.name!r}: {e}')
+    return make_provider_result('db', adapter.name, tables,
                                 location=_password_free_url(url))
 
 def relations_to_config_layer(relations, base_tables):
@@ -4165,16 +4371,26 @@ def write_excel(tables, path, title, template_path=None, notes=None, groups=None
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
         'Target="xl/workbook.xml"/></Relationships>')
 
-    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
-        z.writestr('[Content_Types].xml', content_types)
-        z.writestr('_rels/.rels', root_rels)
-        z.writestr('xl/workbook.xml', workbook)
+    # Explicit ZipInfo metadata makes generated workbooks byte-deterministic.
+    # Besides reproducible builds, this lets committed example workbooks use a
+    # strict drift check instead of an unzip-and-normalize comparison.
+    def put(z, name, data):
+        info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.create_system = 3
+        info.external_attr = 0o600 << 16
+        z.writestr(info, data)
+
+    with zipfile.ZipFile(path, 'w') as z:
+        put(z, '[Content_Types].xml', content_types)
+        put(z, '_rels/.rels', root_rels)
+        put(z, 'xl/workbook.xml', workbook)
         if theme_xml:
-            z.writestr('xl/theme/theme1.xml', theme_xml)
-        z.writestr('xl/_rels/workbook.xml.rels', wb_rels)
-        z.writestr('xl/styles.xml', styles)
+            put(z, 'xl/theme/theme1.xml', theme_xml)
+        put(z, 'xl/_rels/workbook.xml.rels', wb_rels)
+        put(z, 'xl/styles.xml', styles)
         for i, (_, xml) in enumerate(sheets):
-            z.writestr(f'xl/worksheets/sheet{i+1}.xml', xml)
+            put(z, f'xl/worksheets/sheet{i+1}.xml', xml)
 
 # ---------------------------------------------------------------------------
 # HTML template

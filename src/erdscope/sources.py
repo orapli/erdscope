@@ -57,7 +57,8 @@ _FILE_SOURCE_TYPES = {'rails.schema': 'a schema.rb file', 'dbml': 'a .dbml file'
 
 def _models_type_builder(overlay_cls):
     def build(spec, table_map):
-        return overlay_cls().build(spec['path'], table_map)
+        result = overlay_cls().build(spec['path'], table_map)
+        return _validated_overlay_result(overlay_cls, result)
     return build
 
 
@@ -70,6 +71,16 @@ def _source_type_builder(type_name):
         if f'{cls.name}.models' == type_name:
             return _models_type_builder(cls)
     return None
+
+
+def _validated_overlay_result(overlay_cls, result):
+    """Enforce the FrameworkOverlay output contract at every dispatch path."""
+    try:
+        return validate_provider_result(
+            result, f'framework overlay {overlay_cls.name!r}',
+            expected_kind='framework', expected_provider=overlay_cls.name)
+    except ValueError as e:
+        sys.exit(f'Error: invalid output from framework overlay {overlay_cls.name!r}: {e}')
 
 
 def known_source_type_names():
@@ -244,15 +255,16 @@ def _run_untyped_spec(spec, table_map):
         return result
     matches = framework_overlays_matching(path)
     if not matches:
-        sys.exit(f'Error: could not detect the code kind at {given} (expected a Rails '
-                 'app/models dir, a schema.prisma, a Django project, or a db/schema.rb '
-                 'file — declare `sources[].type` in the config to be explicit)')
+        model_types = ', '.join(n for n in known_source_type_names() if n.endswith('.models'))
+        sys.exit(f'Error: could not detect the code kind at {given} '
+                 f'(registered model types: {model_types or "none"}; db/schema.rb is also '
+                 'auto-detected — declare `sources[].type` in the config to be explicit)')
     winner = matches[0]
     if len(matches) > 1:
         names = ', '.join(c.name for c in matches)
         print(f'Note: {given} matched multiple frameworks ({names}); using {winner.name}. '
               f'Declare sources[].type in the config to override.', file=sys.stderr)
-    result = winner().build(path, table_map)
+    result = _validated_overlay_result(winner, winner().build(path, table_map))
     print(f'Merged {result["source"]["provider"]} {_progress_noun(result)} from {given}',
           file=sys.stderr)
     return result

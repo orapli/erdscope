@@ -1,0 +1,55 @@
+Table post_tags {
+  post_id INTEGER [not null]
+  tag_id INTEGER [not null]
+
+  indexes {
+    (post_id, tag_id) [pk]
+    (post_id, tag_id) [unique, name: 'sqlite_autoindex_post_tags_1']
+  }
+}
+
+Table posts {
+  id INTEGER [pk, not null]
+  user_id INTEGER [not null]
+  parent_id INTEGER
+  title VARCHAR(200) [not null]
+  body TEXT
+
+  indexes {
+    (user_id) [name: 'idx_posts_user_id']
+  }
+}
+
+Table profiles {
+  id INTEGER [pk, not null]
+  user_id INTEGER [not null, unique]
+  bio TEXT
+
+  indexes {
+    (user_id) [unique, name: 'sqlite_autoindex_profiles_1']
+  }
+}
+
+Table tags {
+  id INTEGER [pk, not null]
+  label VARCHAR(50) [not null, unique]
+
+  indexes {
+    (label) [unique, name: 'sqlite_autoindex_tags_1']
+  }
+}
+
+Table users {
+  id INTEGER [pk, not null]
+  email VARCHAR(255) [not null, unique]
+  name VARCHAR(100) [not null]
+
+  indexes {
+    (email) [unique, name: 'sqlite_autoindex_users_1']
+  }
+}
+
+Ref: post_tags.post_id > posts.id
+Ref: post_tags.tag_id > tags.id
+Ref: posts.parent_id > posts.id
+Ref: posts.user_id > users.id

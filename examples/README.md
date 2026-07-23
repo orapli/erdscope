@@ -3,6 +3,11 @@
 A ready-to-run sample so you can try erdscope in one command — no database
 server to set up.
 
+For maintainer review, [`showcase/`](showcase/) contains equivalent SQLite,
+JSON-config, and SQLAlchemy-model inputs plus committed HTML, Excel, JSON,
+Digest, DBML, Mermaid, and PlantUML results. Its generator and CI drift check
+keep every output synchronized with code changes.
+
 If you `pip install`ed erdscope rather than cloning this repository, `erdscope demo`
 is the fastest path — it builds this same sample database in a temp directory and
 opens the diagram for you, no files to fetch. Everything below is for working with

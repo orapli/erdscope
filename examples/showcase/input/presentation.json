@@ -1,0 +1,25 @@
+{
+  "title": "Provider showcase",
+  "notes": [
+    {
+      "id": "review-purpose",
+      "target": {"type": "global"},
+      "title": "Review fixture",
+      "text": "SQLite, config, and SQLAlchemy model inputs describe the same small publishing domain. Generated outputs are committed and drift-checked."
+    },
+    {
+      "id": "post-retention",
+      "target": {"type": "table", "table": "posts"},
+      "title": "Retention",
+      "text": "Posts are retained after user anonymization so links remain stable."
+    }
+  ],
+  "groups": [
+    {
+      "id": "publishing",
+      "title": "Publishing",
+      "tables": ["posts", "tags"],
+      "color": "#0f766e"
+    }
+  ]
+}

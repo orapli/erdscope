@@ -1,0 +1,38 @@
+@startuml
+hide circle
+skinparam linetype ortho
+
+entity posts {
+  * id : integer <<PK>>
+  --
+  * user_id : integer <<FK>>
+  parent_id : integer <<FK>>
+  * title : string
+  body : text
+}
+
+entity profiles {
+  * id : integer <<PK>>
+  --
+  * user_id : integer <<FK>>
+  bio : text
+}
+
+entity tags {
+  * id : integer <<PK>>
+  --
+  * label : string
+}
+
+entity users {
+  * id : integer <<PK>>
+  --
+  * email : string
+  * name : string
+}
+
+posts ||--o{ posts : parent
+posts }o--o{ tags : tags
+users ||--o{ posts : user
+profiles ||--|| users : user
+@enduml

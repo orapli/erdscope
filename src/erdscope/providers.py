@@ -32,7 +32,13 @@ def db_provider(url):
         sys.exit(f'Error: no database adapter for URL scheme {scheme!r} '
                  f'(known schemes: {known})')
     adapter = adapter_cls()
-    return make_provider_result('db', adapter.name, adapter.fetch(url),
+    tables = adapter.fetch(url)
+    try:
+        tables = validate_tables_ir(tables, f'database adapter {adapter.name!r}',
+                                    require_complete=True)
+    except ValueError as e:
+        sys.exit(f'Error: invalid output from database adapter {adapter.name!r}: {e}')
+    return make_provider_result('db', adapter.name, tables,
                                 location=_password_free_url(url))
 
 def relations_to_config_layer(relations, base_tables):

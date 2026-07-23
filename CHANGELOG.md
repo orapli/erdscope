@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-07-24
+
+### Added
+
+- **Executable provider contracts.** Database adapters and framework overlays
+  now validate registration metadata and returned IR at their dispatch
+  boundaries. Base-class documentation includes concrete return shapes,
+  sparse-versus-complete table rules, typed/untyped model dispatch, and plugin
+  override behavior. Invalid third-party output fails early with a path-specific
+  message while exceptions raised by provider acquisition remain intact.
+- **Committed multi-provider review showcase.** Equivalent SQLite, JSON-config,
+  and SQLAlchemy-model inputs now ship with generated HTML, Excel, canonical
+  JSON, Digest, DBML, Mermaid, and PlantUML results. A deterministic generator,
+  unittest, and CI drift gate require these review artifacts to stay current.
+
+### Changed
+
+- **Reproducible Excel output.** XLSX ZIP entries now use fixed metadata, making
+  workbooks byte-deterministic and suitable for committed-output drift checks.
+- **Plugin reload behavior.** A later framework overlay registration replaces
+  an earlier overlay with the same name, matching database scheme overrides.
+
+### Fixed
+
+- **Edge-size fallback consistency.** Relation routing and self-loop drawing now
+  calculate an uncached node's real size instead of assuming a fixed rectangle.
+- **Provider diagnostics.** Model detection errors list registered source types
+  dynamically, and provider-raised `ValueError` exceptions are no longer
+  mislabeled as invalid return values.
+
 ## [0.11.0] - 2026-07-23
 
 ### Added

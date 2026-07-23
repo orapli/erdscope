@@ -59,7 +59,7 @@ serialization time, so the DATA_JSON output stays byte-identical.
                       "provider": "mysql"|"postgres"|"rails"|"prisma"|"django"|"config"
                                  |"rails.schema",
                       "location"?: str}            # url (no password) / dir / config path
-    Warning        = {"code": str, "message": str, "table"?: str}
+    Warning        = str   # human-readable; caller adds the "Warning:" prefix
     ProviderResult = {"source": Source, "tables": IR, "warnings": list[Warning]}
 
     # Association provenance (§9). Internally it is a representative
@@ -82,7 +82,7 @@ from urllib.parse import urlparse
 # dynamically, into pyproject.toml's `version` — kept in sync by
 # tests/test_version.py). erd.py must stay importable/runnable standalone,
 # so this can't be sourced from pyproject.toml at runtime.
-__version__ = '0.11.0'
+__version__ = '0.11.1'
 
 # ---------------------------------------------------------------------------
 # Provider / provenance contracts

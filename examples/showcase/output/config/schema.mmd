@@ -1,0 +1,31 @@
+erDiagram
+    posts ||--o{ post_tags : "post"
+    tags ||--o{ post_tags : "tag"
+    posts ||--o{ posts : "parent"
+    users ||--o{ posts : "user"
+    profiles ||--|| users : "user"
+    post_tags {
+        integer post_id PK
+        integer tag_id PK
+    }
+    posts {
+        integer id PK
+        integer user_id FK
+        integer parent_id FK
+        string title
+        text body
+    }
+    profiles {
+        integer id PK
+        integer user_id FK
+        text bio
+    }
+    tags {
+        integer id PK
+        string label
+    }
+    users {
+        integer id PK
+        string email
+        string name
+    }

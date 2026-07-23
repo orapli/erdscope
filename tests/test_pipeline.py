@@ -641,6 +641,43 @@ class TestDBAdapterRegistry(unittest.TestCase):
             erd.db_provider('mongodb://h/d')
         self.assertIn('mongodb', str(cm.exception))
 
+    def test_registration_rejects_invalid_scheme(self):
+        with self.assertRaises(ValueError):
+            @erd.register_adapter
+            class BadSchemeAdapter(erd.DBAdapter):
+                schemes = ('Not A Scheme',)
+                name = 'bad'
+                def fetch(self, url): return {}
+
+    def test_dispatch_rejects_invalid_tables_ir(self):
+        @erd.register_adapter
+        class BrokenAdapter(erd.DBAdapter):
+            schemes = ('broken',)
+            name = 'broken'
+            def fetch(self, url): return {'users': {'columns': {}}}
+        with self.assertRaises(SystemExit) as cm:
+            erd.db_provider('broken://host/db')
+        self.assertIn('invalid output from database adapter', str(cm.exception))
+
+    def test_dispatch_requires_complete_db_table_shape(self):
+        @erd.register_adapter
+        class SparseDBAdapter(erd.DBAdapter):
+            schemes = ('sparsedb',)
+            name = 'sparsedb'
+            def fetch(self, url): return {'users': {'associations': []}}
+        with self.assertRaises(SystemExit) as cm:
+            erd.db_provider('sparsedb://host/db')
+        self.assertIn('missing DB fields', str(cm.exception))
+
+    def test_fetch_value_error_is_not_misreported_as_invalid_output(self):
+        @erd.register_adapter
+        class FailingAdapter(erd.DBAdapter):
+            schemes = ('failing',)
+            name = 'failing'
+            def fetch(self, url): raise ValueError('bad connection option')
+        with self.assertRaisesRegex(ValueError, 'bad connection option'):
+            erd.db_provider('failing://host/db')
+
 
 class TestFrameworkOverlayRegistry(unittest.TestCase):
     """The FrameworkOverlay base + registry: register/detect, dispatch through
@@ -670,6 +707,7 @@ class TestFrameworkOverlayRegistry(unittest.TestCase):
         class MarkerOverlay(erd.FrameworkOverlay):
             name = 'marker'
             priority = 0  # runs before the built-ins
+            expects = 'a directory containing .marker'
             def detect(self, root):
                 return root.is_dir() and (root / '.marker').exists()
             def build(self, root, table_map):
@@ -687,6 +725,106 @@ class TestFrameworkOverlayRegistry(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 erd.framework_provider(Path(d))
             self.assertIn('could not detect', str(cm.exception))
+
+    def test_registration_rejects_incomplete_metadata(self):
+        with self.assertRaises(ValueError):
+            @erd.register_overlay
+            class MissingName(erd.FrameworkOverlay):
+                expects = 'anything'
+                def detect(self, root): return False
+                def build(self, root, table_map): return None
+
+    def test_dispatch_rejects_invalid_provider_result(self):
+        @erd.register_overlay
+        class BrokenOverlay(erd.FrameworkOverlay):
+            name = 'broken'
+            priority = -1
+            expects = 'a directory containing .broken'
+            def detect(self, root): return True
+            def build(self, root, table_map):
+                return {'tables': {}}
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(SystemExit) as cm:
+                erd.framework_provider(Path(d))
+            self.assertIn('invalid output from framework overlay', str(cm.exception))
+
+    def test_sparse_association_only_result_is_valid(self):
+        result = erd.make_provider_result(
+            'framework', 'sparse',
+            {'users': {'associations': [
+                {'type': 'has_many', 'name': 'posts', 'target': 'posts'}]}})
+        self.assertIs(erd.validate_provider_result(
+            result, expected_kind='framework', expected_provider='sparse'), result)
+
+    def test_build_value_error_is_not_misreported_as_invalid_output(self):
+        @erd.register_overlay
+        class FailingOverlay(erd.FrameworkOverlay):
+            name = 'failing_overlay'
+            priority = -1
+            expects = 'anything'
+            def detect(self, root): return True
+            def build(self, root, table_map): raise ValueError('bad model syntax')
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, 'bad model syntax'):
+                erd.framework_provider(Path(d))
+
+    def test_later_overlay_registration_replaces_same_name(self):
+        @erd.register_overlay
+        class FirstOverlay(erd.FrameworkOverlay):
+            name = 'duplicate_test'
+            expects = 'anything'
+            def detect(self, root): return False
+            def build(self, root, table_map): return None
+        @erd.register_overlay
+        class SecondOverlay(erd.FrameworkOverlay):
+            name = 'duplicate_test'
+            expects = 'anything else'
+            def detect(self, root): return False
+            def build(self, root, table_map): return None
+        matches = [c for c in erd.FRAMEWORK_OVERLAYS if c.name == 'duplicate_test']
+        self.assertEqual(matches, [SecondOverlay])
+
+
+class TestProviderBoundaryValidation(unittest.TestCase):
+    def _tables(self):
+        return {'users': {
+            'primary_key': 'id',
+            'columns': [{'name': 'id', 'type': 'integer',
+                         'nullable': False, 'primary': True}],
+            'indexes': [{'name': 'PRIMARY', 'columns': ['id'], 'unique': True}],
+            'associations': []}}
+
+    def test_complete_db_shape_is_valid(self):
+        tables = self._tables()
+        self.assertIs(erd.validate_tables_ir(tables, require_complete=True), tables)
+
+    def test_optional_field_types_are_checked(self):
+        mutations = [
+            lambda t: t['users'].__setitem__('comment', 1),
+            lambda t: t['users']['columns'][0].__setitem__('nullable', 'no'),
+            lambda t: t['users']['columns'][0].__setitem__('type', 42),
+            lambda t: t['users']['indexes'][0].__setitem__('unique', 1),
+            lambda t: t['users']['indexes'][0].__setitem__('columns', []),
+            lambda t: t['users'].__setitem__('associations', [{
+                'type': 'belongs_to', 'name': 'account', 'target': 'accounts',
+                'foreign_key': ['account_id']}]),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                tables = self._tables()
+                mutate(tables)
+                with self.assertRaises(ValueError):
+                    erd.validate_tables_ir(tables, require_complete=True)
+
+    def test_provider_result_rejects_wrong_location_and_extra_key(self):
+        result = erd.make_provider_result('framework', 'x', {})
+        result['source']['location'] = 123
+        with self.assertRaises(ValueError):
+            erd.validate_provider_result(result)
+        result = erd.make_provider_result('framework', 'x', {})
+        result['extra'] = True
+        with self.assertRaises(ValueError):
+            erd.validate_provider_result(result)
 
 
 class TestAdapterPlugins(_NoDBDriver):
@@ -752,6 +890,7 @@ class TestAdapterPlugins(_NoDBDriver):
             "class GadgetOverlay(FrameworkOverlay):\n"
             "    name = 'gadget'\n"
             "    priority = 0\n"
+            "    expects = 'a directory containing .gadget'\n"
             "    def detect(self, root):\n"
             "        return root.is_dir() and (root / '.gadget').exists()\n"
             "    def build(self, root, table_map):\n"

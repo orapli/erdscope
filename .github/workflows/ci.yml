@@ -41,6 +41,9 @@ jobs:
       - name: erd.py is built from src/erdscope/
         run: python3 tools/build_single_file.py --check
 
+      - name: Review showcase outputs are regenerated and committed
+        run: python3 examples/showcase/generate.py --check
+
       - name: Demo is regenerated and committed
         run: |
           python3 docs/gen_demo.py

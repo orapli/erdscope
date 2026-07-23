@@ -210,7 +210,8 @@ boundaries are listed in the
 - **[Live demo](https://orapli.github.io/erdscope/)** — explore a generated shop schema.
 - **[Recipes](https://orapli.github.io/erdscope/recipes.html)** — task-oriented guides with copy-paste commands ([日本語](https://orapli.github.io/erdscope/recipes.ja.html)).
 - **[User manual](https://orapli.github.io/erdscope/manual.html)** — complete setup, viewer, config, export, and troubleshooting guide.
-- **[Examples](examples/)** — ready-to-run SQLite and config-only inputs.
+- **[Examples](examples/)** — ready-to-run inputs plus a drift-checked
+  SQLite/config/model showcase with committed HTML, Excel, and schema outputs.
 - **[Changelog](CHANGELOG.md)** — features and behavior by release.
 - **[Issues](https://github.com/orapli/erdscope/issues)** — bug reports and feature requests.
 

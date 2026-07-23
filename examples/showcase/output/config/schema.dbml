@@ -1,0 +1,54 @@
+Table post_tags {
+  post_id integer [not null]
+  tag_id integer [not null]
+
+  indexes {
+    (post_id, tag_id) [pk]
+  }
+}
+
+Table posts {
+  id integer [pk, not null]
+  user_id integer [not null]
+  parent_id integer
+  title string [not null]
+  body text
+
+  indexes {
+    (user_id) [name: 'idx_posts_user_id']
+  }
+}
+
+Table profiles {
+  id integer [pk, not null]
+  user_id integer [not null, unique]
+  bio text
+
+  indexes {
+    (user_id) [unique, name: 'uk_profiles_user_id']
+  }
+}
+
+Table tags {
+  id integer [pk, not null]
+  label string [not null, unique]
+
+  indexes {
+    (label) [unique, name: 'uk_tags_label']
+  }
+}
+
+Table users {
+  id integer [pk, not null]
+  email string [not null, unique]
+  name string [not null]
+
+  indexes {
+    (email) [unique, name: 'uk_users_email']
+  }
+}
+
+Ref: post_tags.post_id > posts.id
+Ref: post_tags.tag_id > tags.id
+Ref: posts.parent_id > posts.id
+Ref: posts.user_id > users.id

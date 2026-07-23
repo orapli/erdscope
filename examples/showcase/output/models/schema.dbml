@@ -1,0 +1,27 @@
+Table posts {
+  id integer [pk, not null]
+  user_id integer [not null]
+  parent_id integer
+  title string [not null]
+  body text
+}
+
+Table profiles {
+  id integer [pk, not null]
+  user_id integer [not null]
+  bio text
+}
+
+Table tags {
+  id integer [pk, not null]
+  label string [not null]
+}
+
+Table users {
+  id integer [pk, not null]
+  email string [not null]
+  name string [not null]
+}
+
+Ref: posts.parent_id > posts.id
+Ref: posts.user_id > users.id

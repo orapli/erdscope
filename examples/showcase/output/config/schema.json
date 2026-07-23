@@ -1,0 +1,297 @@
+{
+  "fingerprint": "sha256:1e217558d91407df528925594d4545a305677a449856d0e5cdb6de8aeffa7e7b",
+  "format": 1,
+  "schema": {
+    "groups": [
+      {
+        "color": "#0f766e",
+        "id": "publishing",
+        "tables": [
+          "posts",
+          "tags"
+        ],
+        "title": "Publishing"
+      }
+    ],
+    "notes": [
+      {
+        "id": "post-retention",
+        "scope": "table",
+        "table": "posts",
+        "text": "Posts are retained after user anonymization so links remain stable.",
+        "title": "Retention"
+      },
+      {
+        "id": "review-purpose",
+        "scope": "global",
+        "text": "SQLite, config, and SQLAlchemy model inputs describe the same small publishing domain. Generated outputs are committed and drift-checked.",
+        "title": "Review fixture"
+      }
+    ],
+    "tables": {
+      "post_tags": {
+        "associations": [
+          {
+            "foreign_key": "post_id",
+            "name": "post",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "posts",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "tag_id",
+            "name": "tag",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "tags",
+            "type": "belongs_to"
+          }
+        ],
+        "columns": [
+          {
+            "name": "post_id",
+            "nullable": false,
+            "primary": true,
+            "type": "integer"
+          },
+          {
+            "name": "tag_id",
+            "nullable": false,
+            "primary": true,
+            "type": "integer"
+          }
+        ],
+        "indexes": []
+      },
+      "posts": {
+        "associations": [
+          {
+            "foreign_key": "parent_id",
+            "name": "parent",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "posts",
+            "type": "belongs_to"
+          },
+          {
+            "foreign_key": "user_id",
+            "name": "user",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "users",
+            "type": "belongs_to"
+          },
+          {
+            "name": "tags",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "tags",
+            "through": "post_tags",
+            "type": "has_and_belongs_to_many"
+          }
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "type": "integer"
+          },
+          {
+            "name": "user_id",
+            "nullable": false,
+            "type": "integer"
+          },
+          {
+            "name": "parent_id",
+            "nullable": true,
+            "type": "integer"
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "nullable": true,
+            "type": "text"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "user_id"
+            ],
+            "name": "idx_posts_user_id",
+            "unique": false
+          }
+        ]
+      },
+      "profiles": {
+        "associations": [
+          {
+            "foreign_key": "user_id",
+            "name": "user",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "users",
+            "type": "has_one"
+          }
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "type": "integer"
+          },
+          {
+            "name": "user_id",
+            "nullable": false,
+            "type": "integer"
+          },
+          {
+            "name": "bio",
+            "nullable": true,
+            "type": "text"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "user_id"
+            ],
+            "name": "uk_profiles_user_id",
+            "unique": true
+          }
+        ]
+      },
+      "tags": {
+        "associations": [
+          {
+            "name": "posts",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "posts",
+            "through": "post_tags",
+            "type": "has_and_belongs_to_many"
+          }
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "type": "integer"
+          },
+          {
+            "name": "label",
+            "nullable": false,
+            "type": "string"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "label"
+            ],
+            "name": "uk_tags_label",
+            "unique": true
+          }
+        ]
+      },
+      "users": {
+        "associations": [
+          {
+            "name": "posts",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "posts",
+            "type": "has_many"
+          },
+          {
+            "name": "profile",
+            "provenance": "manual",
+            "sources": [
+              {
+                "kind": "config",
+                "provider": "config"
+              }
+            ],
+            "target": "profiles",
+            "type": "has_one"
+          }
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "nullable": false,
+            "primary": true,
+            "type": "integer"
+          },
+          {
+            "name": "email",
+            "nullable": false,
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "nullable": false,
+            "type": "string"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "email"
+            ],
+            "name": "uk_users_email",
+            "unique": true
+          }
+        ]
+      }
+    }
+  }
+}

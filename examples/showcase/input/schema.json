@@ -1,0 +1,90 @@
+{
+  "title": "Provider showcase",
+  "tables": {
+    "users": {
+      "primary_key": "id",
+      "columns": [
+        {"name": "id", "type": "integer", "nullable": false, "primary": true},
+        {"name": "email", "type": "string", "nullable": false},
+        {"name": "name", "type": "string", "nullable": false}
+      ],
+      "indexes": [{"name": "uk_users_email", "columns": ["email"], "unique": true}],
+      "associations": [
+        {"type": "has_many", "name": "posts", "target": "posts"},
+        {"type": "has_one", "name": "profile", "target": "profiles"}
+      ]
+    },
+    "profiles": {
+      "primary_key": "id",
+      "columns": [
+        {"name": "id", "type": "integer", "nullable": false, "primary": true},
+        {"name": "user_id", "type": "integer", "nullable": false},
+        {"name": "bio", "type": "text", "nullable": true}
+      ],
+      "indexes": [{"name": "uk_profiles_user_id", "columns": ["user_id"], "unique": true}],
+      "associations": [
+        {"type": "has_one", "name": "user", "target": "users", "foreign_key": "user_id"}
+      ]
+    },
+    "posts": {
+      "primary_key": "id",
+      "columns": [
+        {"name": "id", "type": "integer", "nullable": false, "primary": true},
+        {"name": "user_id", "type": "integer", "nullable": false},
+        {"name": "parent_id", "type": "integer", "nullable": true},
+        {"name": "title", "type": "string", "nullable": false},
+        {"name": "body", "type": "text", "nullable": true}
+      ],
+      "indexes": [{"name": "idx_posts_user_id", "columns": ["user_id"], "unique": false}],
+      "associations": [
+        {"type": "belongs_to", "name": "user", "target": "users", "foreign_key": "user_id"},
+        {"type": "belongs_to", "name": "parent", "target": "posts", "foreign_key": "parent_id"},
+        {"type": "has_and_belongs_to_many", "name": "tags", "target": "tags", "through": "post_tags"}
+      ]
+    },
+    "tags": {
+      "primary_key": "id",
+      "columns": [
+        {"name": "id", "type": "integer", "nullable": false, "primary": true},
+        {"name": "label", "type": "string", "nullable": false}
+      ],
+      "indexes": [{"name": "uk_tags_label", "columns": ["label"], "unique": true}],
+      "associations": [
+        {"type": "has_and_belongs_to_many", "name": "posts", "target": "posts", "through": "post_tags"}
+      ]
+    },
+    "post_tags": {
+      "primary_key": ["post_id", "tag_id"],
+      "columns": [
+        {"name": "post_id", "type": "integer", "nullable": false, "primary": true},
+        {"name": "tag_id", "type": "integer", "nullable": false, "primary": true}
+      ],
+      "associations": [
+        {"type": "belongs_to", "name": "post", "target": "posts", "foreign_key": "post_id"},
+        {"type": "belongs_to", "name": "tag", "target": "tags", "foreign_key": "tag_id"}
+      ]
+    }
+  },
+  "notes": [
+    {
+      "id": "review-purpose",
+      "target": {"type": "global"},
+      "title": "Review fixture",
+      "text": "SQLite, config, and SQLAlchemy model inputs describe the same small publishing domain. Generated outputs are committed and drift-checked."
+    },
+    {
+      "id": "post-retention",
+      "target": {"type": "table", "table": "posts"},
+      "title": "Retention",
+      "text": "Posts are retained after user anonymization so links remain stable."
+    }
+  ],
+  "groups": [
+    {
+      "id": "publishing",
+      "title": "Publishing",
+      "tables": ["posts", "tags"],
+      "color": "#0f766e"
+    }
+  ]
+}

@@ -15,6 +15,11 @@
 # the post-merge *_id FK inference pass. Those stay module-level free functions
 # because the test suite calls them by name.
 # ---------------------------------------------------------------------------
+import abc
+import re
+import sys
+
+
 IRREGULAR = {
     'person':'people','child':'children','mouse':'mice','datum':'data',
     'medium':'media','analysis':'analyses','criterion':'criteria',
@@ -45,7 +50,21 @@ FRAMEWORK_OVERLAYS = []   # registered FrameworkOverlay subclasses (see priority
 def register_overlay(cls):
     """Class decorator: register a FrameworkOverlay subclass. Returns the class
     unchanged. Detection consults overlays in `priority` order (see
-    framework_overlay_for), so registration/concat order does not matter."""
+    framework_overlay_for), so registration/concat order does not matter. A
+    later registration with the same `name` replaces the earlier class, matching
+    DB adapter plugin overrides and making plugin reload deterministic."""
+    if not isinstance(cls, type) or not issubclass(cls, FrameworkOverlay):
+        raise TypeError('register_overlay requires a FrameworkOverlay subclass')
+    if getattr(cls, '__abstractmethods__', None):
+        raise TypeError(f'{cls.__name__} must implement detect(root) and build(root, table_map)')
+    if not isinstance(cls.name, str) or not re.fullmatch(r'[a-z][a-z0-9_-]*', cls.name):
+        raise ValueError(f'{cls.__name__}.name must be a lower-case source identifier')
+    if not isinstance(cls.priority, int):
+        raise ValueError(f'{cls.__name__}.priority must be an integer')
+    if not isinstance(cls.expects, str) or not cls.expects.strip():
+        raise ValueError(f'{cls.__name__}.expects must describe accepted input')
+    FRAMEWORK_OVERLAYS[:] = [existing for existing in FRAMEWORK_OVERLAYS
+                             if existing.name != cls.name]
     FRAMEWORK_OVERLAYS.append(cls)
     return cls
 
@@ -67,6 +86,19 @@ class FrameworkOverlay(abc.ABC):
       * implement build(root, table_map) -> ProviderResult (table_map is the
         Rails table override map; ignore it if not applicable);
       * decorate the class with @register_overlay.
+
+    Untyped ``--models`` calls ``detect`` on every overlay in priority order,
+    then calls the winner's ``build``. Typed ``<name>.models`` skips detection
+    and calls ``build`` directly. ``build`` must return exactly::
+
+        make_provider_result('framework', self.name, tables,
+                             location=str(root), warnings=[])
+
+    ``tables`` is sparse IR: association-only overlays may return
+    ``{'users': {'associations': [...]}}`` without columns/indexes/primary_key.
+    Results are checked by ``validate_provider_result`` before merge; see that
+    function and ``validate_tables_ir`` for the executable output contract.
+    Warnings are human-readable strings without a leading ``Warning:``.
     """
     name = ''
     priority = 100
@@ -130,9 +162,17 @@ def framework_provider(mroot, table_map=None):
     root) and parses it."""
     overlay = framework_overlay_for(mroot)
     if overlay is None:
+        expected = ', '.join(f'{cls.name}.models' for cls in sorted(
+            FRAMEWORK_OVERLAYS, key=lambda c: (c.priority, c.name)))
         sys.exit(f'Error: could not detect the code kind at {mroot} '
-                 '(expected a Rails app/models dir, a schema.prisma, or a Django project)')
-    return overlay.build(mroot, table_map)
+                 f'(registered model types: {expected or "none"})')
+    result = overlay.build(mroot, table_map)
+    try:
+        return validate_provider_result(
+            result, f'framework overlay {overlay.name!r}',
+            expected_kind='framework', expected_provider=overlay.name)
+    except ValueError as e:
+        sys.exit(f'Error: invalid output from framework overlay {overlay.name!r}: {e}')
 
 # ---------------------------------------------------------------------------
 # FK column inference — guess relations from `xxx_id` columns (IR post-pass)
