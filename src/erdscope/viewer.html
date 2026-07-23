@@ -798,8 +798,12 @@ let autoLayout     = false; // re-layout automatically whenever the display set 
 // implemented for overview full layouts. Focus always uses Vertical.
 let layoutOrientation = 'vertical'; // 'auto' | 'vertical' | 'horizontal'
 const LAYOUT_ORIENTATION_IMPLEMENTED = { auto: true, vertical: true, horizontal: true };
-// Which engine last committed positions during gridLayout (policy may still
-// be 'auto'). Useful for tests and tooltips; not persisted.
+// Which placement engine gridLayout last *chose* when it committed a snap
+// (the Layout policy may still be 'auto'). Not a live description of the
+// current coordinates: focus exit restores basePos, Undo restores a prior
+// position snapshot, and incremental Auto-tidy-off placement never runs
+// gridLayout — so after those paths lastLayoutEngine can disagree with
+// the geometry on screen. Diagnostics and e2e only; not persisted.
 let lastLayoutEngine = 'vertical'; // 'vertical' | 'horizontal'
 let colHighlight   = null;  // {table, match} — column-search hit to highlight in the node
 // left-pane #search's own regex/case toggles — independent of the toolbar

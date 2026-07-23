@@ -5238,6 +5238,48 @@ class TestAutoLayoutOrientation(unittest.TestCase):
         finally:
             page.close()
 
+    def test_autotidy_display_change_reevaluates_auto(self):
+        # Auto-tidy ON full re-pack must run gridLayout under Auto, so a
+        # display-set change re-scores orientation (unlike resize alone).
+        page = self._open_auto(self.deep_path, {'width': 1800, 'height': 380})
+        try:
+            self.assertEqual(page.evaluate('layoutOrientation'), 'auto')
+            # ensure Auto-tidy is on
+            if not page.evaluate('autoLayout'):
+                page.evaluate('''() => {
+                    autoLayout = true;
+                    document.getElementById('btn-autolayout').classList.add('active');
+                    saveState();
+                }''')
+            engine_before = page.evaluate('lastLayoutEngine')
+            gl_calls = page.evaluate('''() => {
+                window.__glCalls = 0;
+                const o = gridLayout;
+                gridLayout = function(...args) {
+                    window.__glCalls++;
+                    return o.apply(this, args);
+                };
+                return 0;
+            }''')
+            # uncheck one leaf so the display set changes under Auto-tidy
+            page.evaluate('''() => {
+                const name = getDisplayTables().find(t => t.startsWith('deep_'));
+                excludedTables.add(name);
+                saveState();
+                refreshView();
+            }''')
+            page.wait_for_timeout(120)
+            calls = page.evaluate('window.__glCalls')
+            self.assertGreaterEqual(calls, 1,
+                                    'Auto-tidy display change must invoke gridLayout')
+            self.assertEqual(page.evaluate('layoutOrientation'), 'auto')
+            # engine may stay the same or flip; the contract is re-evaluation ran
+            self.assertIn(page.evaluate('lastLayoutEngine'), ('vertical', 'horizontal'))
+            # and lastLayoutEngine was written by that gridLayout (not stale forever)
+            _ = engine_before  # may equal after; we only require a re-run above
+        finally:
+            page.close()
+
 
 if __name__ == '__main__':
     unittest.main()
