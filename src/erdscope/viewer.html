@@ -637,9 +637,9 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
         <button class="diag-btn" id="btn-undo" title="Undo layout change (Ctrl/Cmd+Z)" disabled>↶</button>
         <button class="diag-btn" id="btn-redo" title="Redo layout change (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
         <button class="diag-btn" id="btn-reset" title="Re-layout now (repack to fill the screen)">↺</button>
-        <div id="layout-orient-group" title="Layout orientation for the overview (Vertical / Horizontal; Auto coming later). Independent of Direction (Both/Deps/Dependents). Overview Auto-tidy and ↺ only — not Focus mode.">
+        <div id="layout-orient-group" title="Layout orientation for the overview (Auto / Vertical / Horizontal). Independent of Direction (Both/Deps/Dependents). Overview Auto-tidy and ↺ only — not Focus mode.">
           <span class="lo-label">Layout</span>
-          <button type="button" class="diag-btn lo-btn" data-lo="auto" disabled title="Auto: Coming later — will pick Vertical or Horizontal for the viewport">Auto</button>
+          <button type="button" class="diag-btn lo-btn" data-lo="auto" title="Auto: pick Vertical or Horizontal for the current viewport on overview full layouts (near-ties keep Vertical)">Auto</button>
           <button type="button" class="diag-btn lo-btn active" data-lo="vertical" title="Vertical: top/bottom depth rows (compatibility default)">↕ Vertical</button>
           <button type="button" class="diag-btn lo-btn" data-lo="horizontal" title="Horizontal: hub-centered left/right branches (overview full layouts only)">↔ Horizontal</button>
         </div>
@@ -794,12 +794,13 @@ let autoLayout     = false; // re-layout automatically whenever the display set 
 // Direction: Both/Deps/Dependents). Missing/invalid values fall back to
 // 'vertical' for old localStorage, named views, and share links.
 //
-// Placement engines: Vertical and Horizontal are implemented. Auto still
-// waits for candidate scoring (A3) and stays disabled with Coming later.
-// Unimplemented options keep round-tripping in state/views/share so enabling
-// them later does not break old payloads.
+// Placement engines: Vertical, Horizontal, and Auto (viewport-scored) are
+// implemented for overview full layouts. Focus always uses Vertical.
 let layoutOrientation = 'vertical'; // 'auto' | 'vertical' | 'horizontal'
-const LAYOUT_ORIENTATION_IMPLEMENTED = { auto: false, vertical: true, horizontal: true };
+const LAYOUT_ORIENTATION_IMPLEMENTED = { auto: true, vertical: true, horizontal: true };
+// Which engine last committed positions during gridLayout (policy may still
+// be 'auto'). Useful for tests and tooltips; not persisted.
+let lastLayoutEngine = 'vertical'; // 'vertical' | 'horizontal'
 let colHighlight   = null;  // {table, match} — column-search hit to highlight in the node
 // left-pane #search's own regex/case toggles — independent of the toolbar
 // Highlight box's wordRegexMode/wordCaseSensitive below (see makeMatcher's
@@ -1404,9 +1405,14 @@ function leastTravelClearancePos(p, s, box, allowUp){
   cands.sort((a,b)=> (a.cost-b.cost) || (a.ord-b.ord));
   return cands[0].pos;
 }
+// Set true for the duration of a Horizontal runPass (including Auto's
+// Horizontal candidate) so group/residual clearance can push up without
+// permanently coupling to the user's Layout policy.
+let _runPassIsHorizontal=false;
 function layoutAllowsUpClearance(){
-  // overview Horizontal only — focus always uses the Vertical engine
-  return layoutOrientation==='horizontal' && !focusedTable;
+  // focus always uses the Vertical engine; overview Horizontal (or Auto's
+  // Horizontal evaluation pass) may push up as least-travel
+  return _runPassIsHorizontal && !focusedTable;
 }
 
 function resolveResidualOverlaps(tables){
@@ -1490,16 +1496,28 @@ function evacuateOverlappingTables(tables){
   });
 }
 
-// rank layout candidates {fitScale, overlap, edgeLen}: no-overlap always
-// beats any-overlap, then larger fitScale wins, then shorter edgeLen, then a
-// stable sort keeps declaration order as the final deterministic tie-break
-// (so repeated layouts of the same schema never move tables arbitrarily).
-// If EVERY candidate still has a residual overlap after obstacle resolution
-// (rare — resolveGroupObstacles' own docs already accept some residual
-// overlap risk as a possibility, this isn't a new failure mode), fall back
-// to the first/traditional candidate rather than whichever merely scored
-// best fit/edge among several imperfect ones — a safe, bounded fallback,
-// not another collision-solving pass.
+// Auto orientation tolerances: if fitScale and edgeLen differ by at most
+// these *relative* amounts, treat candidates as effectively tied and prefer
+// Vertical (anti-jitter / compatibility default). Documented constants —
+// not knobs. Absolute floors avoid division noise on tiny values.
+const AUTO_FIT_SCALE_REL=0.08;
+const AUTO_EDGE_LEN_REL=0.05;
+function layoutCandidatesEffectivelyTied(a, b){
+  if(!!a.overlap!==!!b.overlap) return false;
+  const maxFit=Math.max(a.fitScale, b.fitScale, 1e-6);
+  if(Math.abs(a.fitScale-b.fitScale)/maxFit>AUTO_FIT_SCALE_REL) return false;
+  const maxE=Math.max(a.edgeLen, b.edgeLen, 1e-6);
+  if(Math.abs(a.edgeLen-b.edgeLen)/maxE>AUTO_EDGE_LEN_REL) return false;
+  return true;
+}
+
+// rank layout candidates {fitScale, overlap, edgeLen[, orientation]}:
+// no-overlap always beats any-overlap, then larger fitScale, then shorter
+// edgeLen, then declaration order. If EVERY candidate still overlaps, fall
+// back to the first candidate (safe Vertical-first when Auto builds the
+// list as V then H). When orientations are mixed (Auto), a Horizontal win
+// that is only within tolerance of a clean Vertical candidate yields to
+// Vertical instead.
 function pickBestLayoutCandidate(results){
   const ranked=results.slice().sort((a,b)=>{
     if(a.overlap!==b.overlap) return a.overlap ? 1 : -1;
@@ -1508,7 +1526,15 @@ function pickBestLayoutCandidate(results){
     return 0;
   });
   if(ranked[0].overlap) return results[0];
-  return ranked[0];
+  const best=ranked[0];
+  if(best.orientation==='horizontal'){
+    // prefer the best clean Vertical that is effectively tied with best
+    for(const r of ranked){
+      if(r.overlap || r.orientation!=='vertical') continue;
+      if(layoutCandidatesEffectivelyTied(best, r)) return r;
+    }
+  }
+  return best;
 }
 
 // `adaptive`: evaluate the bounded row-width candidate set (see runPass
@@ -1528,8 +1554,11 @@ function gridLayout(tables, preferredHub, adaptive) {
   const small=tables.length<=40;
   // Overview Horizontal uses a real left/right branch engine (not an X/Y
   // swap). Focus always keeps the Vertical hub-spoke path via preferredHub.
-  // Auto still falls through to Vertical until A3 candidate scoring lands.
-  const useHorizontal = !preferredHub && layoutOrientation==='horizontal';
+  // Auto evaluates a bounded set of Vertical + Horizontal finals and picks
+  // deterministically (Vertical on near-ties) — only when gridLayout already
+  // runs a full overview layout (↺, Layout change, Auto-tidy full pack).
+  const forceVertical = !!preferredHub; // focus mode
+  const orientMode = forceVertical ? 'vertical' : layoutOrientation; // auto|vertical|horizontal
 
   const adj=new Map(tables.map(t=>[t,new Set()]));
   for(const [n,t] of Object.entries(DATA.tables)){
@@ -1960,16 +1989,18 @@ function gridLayout(tables, preferredHub, adaptive) {
     });
   }
 
-  // Lay the whole diagram out once under a given row-width policy and score
-  // the result — mutates the live nodePos/nodeSize as it goes (layoutComponent
-  // always writes fresh positions for every table in `tables`, never reads
-  // stale ones, so passes don't contaminate each other) but returns a
-  // snapshot rather than leaving its result committed; only the winning
-  // candidate's snapshot is written back by the caller below.
-  function runPass(policy){
+  // Lay the whole diagram out once under a given row-width policy + engine
+  // and score the result — mutates the live nodePos/nodeSize as it goes
+  // (layoutComponent always writes fresh positions for every table in
+  // `tables`, never reads stale ones, so passes don't contaminate each
+  // other) but returns a snapshot rather than leaving its result committed;
+  // only the winning candidate's snapshot is written back by the caller.
+  // `horizontal=true` selects layoutComponentHorizontal; false = Vertical.
+  function runPass(policy, horizontal){
     widthPolicy=policy;
+    _runPassIsHorizontal=!!horizontal;
     // shelf-pack component boxes (largest first) toward the viewport shape
-    const boxes=comps.map(c=> useHorizontal ? layoutComponentHorizontal(c) : layoutComponent(c));
+    const boxes=comps.map(c=> horizontal ? layoutComponentHorizontal(c) : layoutComponent(c));
     const area=boxes.reduce((s,b)=>s+(b.w+gap)*(b.h+gap),0);
     const targetW=Math.max(900, Math.sqrt(area*viewAspect()));
     boxes.sort((a,b)=>b.w*b.h-a.w*a.h);
@@ -2013,14 +2044,35 @@ function gridLayout(tables, preferredHub, adaptive) {
     const fitScale = fitScaleFor(bbox, svg.getBoundingClientRect(), tables.length);
     const edgeLen = totalAdjEdgeLength(adj);
     const snap={}; tables.forEach(t=>{ snap[t]={...nodePos[t]}; });
-    return {snap, fitScale, overlap, edgeLen};
+    _runPassIsHorizontal=false;
+    return {
+      snap, fitScale, overlap, edgeLen,
+      orientation: horizontal ? 'horizontal' : 'vertical',
+    };
   }
 
-  // Vertical: adaptive evaluates row-width policies [1, 1.6, 'max'].
-  // Horizontal has no width-policy variants yet — a single deterministic pass.
-  const policies = useHorizontal ? [1] : (adaptive ? [1, 1.6, 'max'] : [1]);
-  const candidates=policies.map(runPass);
+  // Candidate set (bounded, never open-ended):
+  //   Vertical explicit / focus: adaptive row-width policies when requested
+  //   Horizontal explicit: one Horizontal pass
+  //   Auto: Vertical policies first, then one Horizontal — Vertical-first
+  //         order also makes the all-overlap fallback safe
+  let candidates;
+  try{
+    if(orientMode==='horizontal'){
+      candidates=[runPass(1, true)];
+    } else if(orientMode==='auto'){
+      const vPolicies=adaptive ? [1, 1.6, 'max'] : [1];
+      candidates=vPolicies.map(p=>runPass(p, false));
+      candidates.push(runPass(1, true));
+    } else {
+      const vPolicies=adaptive ? [1, 1.6, 'max'] : [1];
+      candidates=vPolicies.map(p=>runPass(p, false));
+    }
+  } finally {
+    _runPassIsHorizontal=false;
+  }
   const best=pickBestLayoutCandidate(candidates);
+  lastLayoutEngine=best.orientation||'vertical';
   tables.forEach(t=>{ nodePos[t]=best.snap[t]; });
 }
 
@@ -4481,7 +4533,7 @@ function updateLayoutOrientationUI(){
     b.disabled=focused || !impl;
     if(lo==='auto'){
       b.title=impl
-        ? 'Auto: pick Vertical or Horizontal for the current viewport (overview full layouts only)'
+        ? 'Auto: pick Vertical or Horizontal for the current viewport on overview full layouts (near-ties keep Vertical)'
         : 'Auto: Coming later — will pick Vertical or Horizontal for the viewport';
     } else if(lo==='horizontal'){
       b.title=impl
@@ -4495,7 +4547,7 @@ function updateLayoutOrientationUI(){
   if(g){
     g.title=focused
       ? 'Layout applies to the overview only (disabled while focused). Use ↺ inside Focus for the hub-spoke layout.'
-      : 'Layout orientation for the overview (Vertical / Horizontal; Auto coming later). Independent of Direction (Both/Deps/Dependents).';
+      : 'Layout orientation for the overview (Auto / Vertical / Horizontal). Independent of Direction (Both/Deps/Dependents). Applies to overview Auto-tidy and ↺ only.';
   }
 }
 

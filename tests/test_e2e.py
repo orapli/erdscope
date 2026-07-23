@@ -4362,23 +4362,17 @@ class TestLayoutOrientation(unittest.TestCase):
         }''')
         self.assertEqual(self.page.evaluate('layoutOrientation'), 'vertical')
 
-    def test_auto_stays_disabled_horizontal_is_enabled(self):
-        self.assertFalse(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.auto'))
+    def test_all_three_layout_options_are_enabled_in_overview(self):
+        self.assertTrue(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.auto'))
         self.assertTrue(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.horizontal'))
         self.assertTrue(self.page.evaluate('LAYOUT_ORIENTATION_IMPLEMENTED.vertical'))
-        self.assertTrue(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"auto\"]').disabled"))
-        self.assertFalse(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
-        self.assertFalse(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"vertical\"]').disabled"))
-        auto_title = self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"auto\"]').title")
-        self.assertIn('Coming later', auto_title)
-        before = self.page.evaluate('layoutOrientation')
-        self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"auto\"]').click()")
-        self.assertEqual(self.page.evaluate('layoutOrientation'), before)
+        for lo in ('auto', 'vertical', 'horizontal'):
+            self.assertFalse(self.page.evaluate(
+                f"document.querySelector('.lo-btn[data-lo=\"{lo}\"]').disabled"),
+                f'{lo} must be enabled in overview')
+        self.page.click('.lo-btn[data-lo="auto"]')
+        self.page.wait_for_timeout(80)
+        self.assertEqual(self.page.evaluate('layoutOrientation'), 'auto')
         self.page.click('.lo-btn[data-lo="horizontal"]')
         self.page.wait_for_timeout(80)
         self.assertEqual(self.page.evaluate('layoutOrientation'), 'horizontal')
@@ -4503,13 +4497,11 @@ class TestLayoutOrientation(unittest.TestCase):
         self.assertEqual(self.page.evaluate('layoutOrientation'), before)
         self.page.click('#btn-unfocus')
         self.page.wait_for_timeout(80)
-        # implemented options re-enable; Auto stays gated
-        self.assertFalse(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"vertical\"]').disabled"))
-        self.assertFalse(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"horizontal\"]').disabled"))
-        self.assertTrue(self.page.evaluate(
-            "document.querySelector('.lo-btn[data-lo=\"auto\"]').disabled"))
+        # all implemented options re-enable after leaving focus
+        for lo in ('auto', 'vertical', 'horizontal'):
+            self.assertFalse(self.page.evaluate(
+                f"document.querySelector('.lo-btn[data-lo=\"{lo}\"]').disabled"),
+                f'{lo} must re-enable after focus')
 
     def test_relayout_overview_pushes_undo_of_positions_only(self):
         self.page.evaluate('''() => {
@@ -5059,6 +5051,190 @@ class TestHorizontalLayout(unittest.TestCase):
             max_abs_dy = max(abs(y) for y in ys)
             self.assertGreater(max_abs_dy, 20,
                                'Vertical layout should separate spokes on Y from hub')
+        finally:
+            page.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestAutoLayoutOrientation(unittest.TestCase):
+    """Auto orientation: viewport-scored Vertical vs Horizontal with
+    Vertical near-tie preference and deterministic re-evaluation only on
+    full overview layouts."""
+
+    @classmethod
+    def setUpClass(cls):
+        # wide fan-out benefits from Horizontal (or wide Vertical row) on a
+        # short-wide viewport; a deep chain prefers Vertical on a tall-narrow one
+        cls.fan_path = _build_html_star_spokes(6, with_depth2=False)
+        cls.chain_path = _build_html_star_spokes(1, with_depth2=True)
+        # deeper chain for tall viewport preference
+        table_rows = [('hub', '')]
+        col_rows = [_col('hub', 'id', key='PRI')]
+        fk_rows = []
+        prev = 'hub'
+        for i in range(8):
+            t = f'deep_{i:02d}'
+            table_rows.append((t, ''))
+            col_rows += [_col(t, 'id', key='PRI'), _col(t, 'parent_id', key='MUL')]
+            fk_rows.append((t, 'parent_id', prev))
+            prev = t
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [('hub', 'PRIMARY', 0, 1, 'id')])
+        args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                                only=None, exclude=None, infer_fk=False)
+        tmp = tempfile.mkdtemp()
+        out = Path(tmp) / 'deep_chain.html'
+        args.output = str(out)
+        erd._finish(tables, args, 'e2e_auto_chain')
+        cls.deep_path = out
+
+        cls.pw = sync_playwright().start()
+        try:
+            cls.browser = cls.pw.chromium.launch()
+        except Exception as e:
+            cls.pw.stop()
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def _open_auto(self, path, viewport):
+        page = self.browser.new_page(viewport=viewport)
+        page.goto(path.as_uri())
+        page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+        page.evaluate('localStorage.clear()')
+        page.reload()
+        page.wait_for_function('typeof nodePos !== "undefined" && Object.keys(nodePos).length > 0')
+        # set orientation + full re-layout via JS: on tall/narrow viewports the
+        # bottom toolbar can sit under the left pane and Playwright clicks fail
+        page.evaluate('''() => {
+            layoutOrientation = 'auto';
+            saveState();
+            updateLayoutOrientationUI();
+            pushUndoSnapshot();
+            relayoutOverviewForOrientation();
+        }''')
+        page.wait_for_timeout(150)
+        page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+        return page
+
+    def test_wide_short_viewport_picks_horizontal_for_deep_chain(self):
+        # a pure chain is long on X under Horizontal and tall under Vertical —
+        # a short-wide viewport makes Horizontal the materially better fit
+        page = self._open_auto(self.deep_path, {'width': 1800, 'height': 380})
+        try:
+            self.assertEqual(page.evaluate('layoutOrientation'), 'auto')
+            engine = page.evaluate('lastLayoutEngine')
+            self.assertEqual(engine, 'horizontal',
+                             'wide/short viewport should pick Horizontal for a deep chain')
+            spread = page.evaluate('''() => {
+                const names = getDisplayTables();
+                const xs = names.map(t => nodePos[t].x);
+                const ys = names.map(t => nodePos[t].y);
+                return {
+                    dx: Math.max(...xs) - Math.min(...xs),
+                    dy: Math.max(...ys) - Math.min(...ys),
+                };
+            }''')
+            self.assertGreater(spread['dx'], spread['dy'],
+                               f'Horizontal chain should be wider than tall: {spread}')
+        finally:
+            page.close()
+
+    def test_tall_narrow_viewport_prefers_vertical_for_deep_chain(self):
+        page = self._open_auto(self.deep_path, {'width': 480, 'height': 1300})
+        try:
+            engine = page.evaluate('lastLayoutEngine')
+            self.assertEqual(engine, 'vertical',
+                             'tall/narrow viewport should pick Vertical for a deep chain')
+            spread = page.evaluate('''() => {
+                const names = getDisplayTables().filter(t => t !== 'hub');
+                const xs = names.map(t => nodePos[t].x);
+                const ys = names.map(t => nodePos[t].y);
+                return {
+                    dx: Math.max(...xs) - Math.min(...xs),
+                    dy: Math.max(...ys) - Math.min(...ys),
+                };
+            }''')
+            self.assertGreater(spread['dy'], spread['dx'] * 0.5,
+                               f'Vertical chain should be taller than wide: {spread}')
+        finally:
+            page.close()
+
+    def test_wide_short_viewport_prefers_vertical_for_star_fan(self):
+        # six equal spokes: Vertical is a short-wide pack; Horizontal stacks
+        # three branches per side and is taller — short viewport keeps Vertical
+        page = self._open_auto(self.fan_path, {'width': 1600, 'height': 400})
+        try:
+            engine = page.evaluate('lastLayoutEngine')
+            self.assertEqual(engine, 'vertical',
+                             f'wide/short viewport should keep Vertical for a star fan, '
+                             f'got {engine}')
+        finally:
+            page.close()
+
+    def test_near_tie_prefers_vertical(self):
+        # pure unit test of the picker: equal clean scores → first Vertical wins
+        # via effectively-tied + orientation preference
+        page = self.browser.new_page()
+        try:
+            page.goto(self.fan_path.as_uri())
+            page.wait_for_function('typeof pickBestLayoutCandidate === "function"')
+            result = page.evaluate('''() => {
+                const v = {snap:{a:1}, fitScale:0.50, overlap:false, edgeLen:1000,
+                           orientation:'vertical'};
+                const h = {snap:{a:2}, fitScale:0.51, overlap:false, edgeLen:990,
+                           orientation:'horizontal'};
+                // 2% fit / 1% edge — inside AUTO_FIT_SCALE_REL 0.08 / EDGE 0.05
+                const best = pickBestLayoutCandidate([v, h]);
+                return best.orientation;
+            }''')
+            self.assertEqual(result, 'vertical',
+                             'near-tied Horizontal must yield to Vertical')
+            # clearly better Horizontal still wins
+            result2 = page.evaluate('''() => {
+                const v = {snap:{}, fitScale:0.30, overlap:false, edgeLen:2000,
+                           orientation:'vertical'};
+                const h = {snap:{}, fitScale:0.80, overlap:false, edgeLen:500,
+                           orientation:'horizontal'};
+                return pickBestLayoutCandidate([v, h]).orientation;
+            }''')
+            self.assertEqual(result2, 'horizontal')
+        finally:
+            page.close()
+
+    def test_auto_layout_is_deterministic_across_resets(self):
+        page = self._open_auto(self.fan_path, {'width': 1200, 'height': 700})
+        try:
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
+            a = page.evaluate(
+                '({engine: lastLayoutEngine, pos: JSON.parse(JSON.stringify(nodePos))})')
+            page.click('#btn-reset')
+            page.wait_for_timeout(100)
+            b = page.evaluate(
+                '({engine: lastLayoutEngine, pos: JSON.parse(JSON.stringify(nodePos))})')
+            self.assertEqual(a['engine'], b['engine'])
+            for name in a['pos']:
+                self.assertAlmostEqual(a['pos'][name]['x'], b['pos'][name]['x'], places=3)
+                self.assertAlmostEqual(a['pos'][name]['y'], b['pos'][name]['y'], places=3)
+        finally:
+            page.close()
+
+    def test_resize_alone_does_not_relayout_under_auto(self):
+        page = self._open_auto(self.fan_path, {'width': 1200, 'height': 700})
+        try:
+            before = page.evaluate(
+                '({engine: lastLayoutEngine, pos: JSON.parse(JSON.stringify(nodePos))})')
+            page.set_viewport_size({'width': 400, 'height': 900})
+            page.wait_for_timeout(100)
+            after = page.evaluate(
+                '({engine: lastLayoutEngine, pos: JSON.parse(JSON.stringify(nodePos))})')
+            self.assertEqual(before['engine'], after['engine'])
+            for name in before['pos']:
+                self.assertAlmostEqual(before['pos'][name]['x'], after['pos'][name]['x'], places=3)
+                self.assertAlmostEqual(before['pos'][name]['y'], after['pos'][name]['y'], places=3)
         finally:
             page.close()
 
