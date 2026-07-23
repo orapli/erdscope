@@ -3026,6 +3026,23 @@ function polylineHitsObstacles(pts, edge){
   }
   return false;
 }
+// Endpoint boxes are excluded from ordinary obstacle checks, but an
+// orthogonal elbow must not enter either endpoint through one side and leave
+// through another.  All anchors sit 2px outside the real node box, so any
+// intersection with the unexpanded endpoint interior is invalid.
+function polylineHitsEndpointInteriors(pts, edge){
+  for(const t of [edge.source, edge.target]){
+    const p=nodePos[t], s=nodeSize[t];
+    if(!p||!s) continue;
+    const box={x0:p.x-s.w/2, x1:p.x+s.w/2,
+               y0:p.y-s.h/2, y1:p.y+s.h/2};
+    for(let i=0;i<pts.length-1;i++){
+      const a=pts[i], b=pts[i+1];
+      if(segmentHitsBox(a.x,a.y,b.x,b.y,box)) return true;
+    }
+  }
+  return false;
+}
 // Min distance from polyline AABB-per-segment to any non-endpoint expanded
 // box (0 if hits). Cheap and deterministic — only used for tie-breaking.
 function polylineMinClearance(pts, edge){
@@ -3096,24 +3113,73 @@ function longestSegmentMid(pts){
   const a=pts[bestI], b=pts[bestI+1];
   return {x:(a.x+b.x)/2, y:(a.y+b.y)/2};
 }
-// Place through-label; nudge off table interiors when the natural mid sits inside one.
-function throughLabelPos(pts){
-  let mid=longestSegmentMid(pts);
-  for(const t of edgeObstacles){
-    const p=nodePos[t], s=nodeSize[t];
-    if(!p||!s) continue;
-    const x0=p.x-s.w/2, x1=p.x+s.w/2, y0=p.y-s.h/2, y1=p.y+s.h/2;
-    if(mid.x>x0&&mid.x<x1&&mid.y>y0&&mid.y<y1){
-      // push to nearest edge of that table + small pad
-      const dl=mid.x-x0, dr=x1-mid.x, dt=mid.y-y0, db=y1-mid.y;
-      const m=Math.min(dl,dr,dt,db);
-      if(m===dl) mid={x:x0-6, y:mid.y};
-      else if(m===dr) mid={x:x1+6, y:mid.y};
-      else if(m===dt) mid={x:mid.x, y:y0-6};
-      else mid={x:mid.x, y:y1+6};
+// Axis-aligned rectangle overlap (closed).
+function rectsOverlap(ax0,ay0,ax1,ay1, bx0,by0,bx1,by1){
+  return ax0<bx1 && ax1>bx0 && ay0<by1 && ay1>by0;
+}
+// Place a through-label of size (lw × lh) whose *center* starts at `seed`.
+// Nudges the full label rectangle off every displayed table box (including
+// edge endpoints) — not just the center point — so the background pill
+// cannot overlap a node. Used for both orthogonal routes and the Bézier
+// fallback (drawEdge always calls this with the real thr string width).
+function throughLabelPos(seed, lw, lh){
+  const halfW=Math.max(1, lw/2), halfH=Math.max(1, (lh||14)/2);
+  const pad=4;
+  let cx=seed.x, cy=seed.y;
+  function labelHitsAny(x,y){
+    const lx0=x-halfW, lx1=x+halfW, ly0=y-halfH, ly1=y+halfH;
+    for(const t of edgeObstacles){
+      const p=nodePos[t], s=nodeSize[t];
+      if(!p||!s) continue;
+      const x0=p.x-s.w/2, x1=p.x+s.w/2, y0=p.y-s.h/2, y1=p.y+s.h/2;
+      if(rectsOverlap(lx0,ly0,lx1,ly1, x0,y0,x1,y1)) return {x0,y0,x1,y1};
+    }
+    return null;
+  }
+  // Bounded least-travel pushes against each overlapping table. Prefer a
+  // candidate that clears *all* tables; fall back to clearing just the hit.
+  for(let iter=0; iter<24; iter++){
+    const hit=labelHitsAny(cx,cy);
+    if(!hit) break;
+    const opts=[
+      {x:hit.x0-halfW-pad, y:cy},
+      {x:hit.x1+halfW+pad, y:cy},
+      {x:cx, y:hit.y0-halfH-pad},
+      {x:cx, y:hit.y1+halfH+pad},
+      {x:hit.x0-halfW-pad, y:hit.y0-halfH-pad},
+      {x:hit.x1+halfW+pad, y:hit.y0-halfH-pad},
+      {x:hit.x0-halfW-pad, y:hit.y1+halfH+pad},
+      {x:hit.x1+halfW+pad, y:hit.y1+halfH+pad},
+    ];
+    let bestAll=null, bestAllD=Infinity, bestOne=null, bestOneD=Infinity;
+    for(const o of opts){
+      const d=Math.hypot(o.x-cx, o.y-cy);
+      const hitsHit=rectsOverlap(o.x-halfW,o.y-halfH,o.x+halfW,o.y+halfH,
+                                  hit.x0,hit.y0,hit.x1,hit.y1);
+      if(hitsHit) continue;
+      if(d<bestOneD){ bestOneD=d; bestOne=o; }
+      if(!labelHitsAny(o.x,o.y) && d<bestAllD){ bestAllD=d; bestAll=o; }
+    }
+    const pick=bestAll||bestOne;
+    if(pick){ cx=pick.x; cy=pick.y; }
+    else { cx=hit.x0-halfW-pad; cy=hit.y0-halfH-pad; } // corner last resort
+  }
+  // Dense/nested layouts can consume the bounded local-search budget.  Never
+  // return an overlapping pill: deterministically park it beyond the global
+  // right edge while retaining the seed Y.  This is intentionally a visual
+  // last resort; the common path remains close to the routed edge.
+  if(labelHitsAny(cx,cy)){
+    let right=-Infinity;
+    for(const t of edgeObstacles){
+      const p=nodePos[t], s=nodeSize[t];
+      if(p&&s) right=Math.max(right, p.x+s.w/2);
+    }
+    if(Number.isFinite(right)){
+      cx=right+halfW+pad;
+      cy=seed.y;
     }
   }
-  return mid;
+  return {x:cx, y:cy};
 }
 
 // Build a fixed small candidate set for a non-self edge, then pick the best.
@@ -3125,7 +3191,8 @@ function routeEdge(edge){
   function add(pts, kind, ord){
     const cleaned=cleanWaypoints(pts);
     if(cleaned.length<2||!firstLastLegsOk(cleaned)) return;
-    const blocked=polylineHitsObstacles(cleaned, edge);
+    const blocked=polylineHitsObstacles(cleaned, edge)
+      || polylineHitsEndpointInteriors(cleaned, edge);
     cands.push({
       pts:cleaned, kind, ord, blocked,
       bends:routeBends(cleaned),
@@ -3157,51 +3224,58 @@ function routeEdge(edge){
     add([a0,{x:a0.x,y:a2.y},a2], 'ortho1-vh', 2);
   }
 
-  // 3. two-bend doglegs: H-first / V-first with a small fixed set of lanes
+  // 3. two-bend doglegs: H-first / V-first with a small fixed set of lanes.
+  // Exit/enter sides face the *lane*. Lanes must sit outside both endpoint
+  // boxes (not merely outside mid-obstacles), otherwise the elbow lands
+  // inside a source/target and the first leg tunnels through it.
   {
-    const signX=tp.x>=sp.x?1:-1;
-    const a0=sidePt(sp.x,sp.y,ss.w,ss.h, signX>0?'R':'L');
-    const a3=sidePt(tp.x,tp.y,ts.w,ts.h, signX>0?'L':'R');
-    const midXs=[(a0.x+a3.x)/2];
-    // lanes just outside intervening expanded boxes
+    const epL=Math.min(sp.x-ss.w/2, tp.x-ts.w/2)-EDGE_LANE;
+    const epR=Math.max(sp.x+ss.w/2, tp.x+ts.w/2)+EDGE_LANE;
+    const midXs=[epL, epR, (sp.x+tp.x)/2];
     for(const t of edgeObstacles){
       if(t===edge.source||t===edge.target) continue;
       const box=edgeExpandedBox(t);
       if(!box) continue;
-      // only consider obstacles roughly between the endpoints on X
-      const lo=Math.min(a0.x,a3.x), hi=Math.max(a0.x,a3.x);
+      const lo=Math.min(sp.x,tp.x), hi=Math.max(sp.x,tp.x);
       if(box.x1<lo-EDGE_LANE||box.x0>hi+EDGE_LANE) continue;
       midXs.push(box.x0-EDGE_LANE, box.x1+EDGE_LANE);
     }
-    // unique ~px
     const seen=new Set();
     midXs.forEach((mx,i)=>{
+      // reject lanes that sit inside either endpoint's horizontal span
+      if(mx>sp.x-ss.w/2-EDGE_MIN_LEG && mx<sp.x+ss.w/2+EDGE_MIN_LEG) return;
+      if(mx>tp.x-ts.w/2-EDGE_MIN_LEG && mx<tp.x+ts.w/2+EDGE_MIN_LEG) return;
       const k=Math.round(mx);
       if(seen.has(k)) return;
       seen.add(k);
-      if(seen.size>6) return; // hard cap on candidate fan-out
+      if(seen.size>8) return;
+      const a0=sidePt(sp.x,sp.y,ss.w,ss.h, mx>=sp.x?'R':'L');
+      const a3=sidePt(tp.x,tp.y,ts.w,ts.h, mx>=tp.x?'R':'L');
       add([a0,{x:mx,y:a0.y},{x:mx,y:a3.y},a3], 'ortho2-h', 10+i);
     });
   }
   {
-    const signY=tp.y>=sp.y?1:-1;
-    const a0=sidePt(sp.x,sp.y,ss.w,ss.h, signY>0?'B':'T');
-    const a3=sidePt(tp.x,tp.y,ts.w,ts.h, signY>0?'T':'B');
-    const midYs=[(a0.y+a3.y)/2];
+    const epT=Math.min(sp.y-ss.h/2, tp.y-ts.h/2)-EDGE_LANE;
+    const epB=Math.max(sp.y+ss.h/2, tp.y+ts.h/2)+EDGE_LANE;
+    const midYs=[epT, epB, (sp.y+tp.y)/2];
     for(const t of edgeObstacles){
       if(t===edge.source||t===edge.target) continue;
       const box=edgeExpandedBox(t);
       if(!box) continue;
-      const lo=Math.min(a0.y,a3.y), hi=Math.max(a0.y,a3.y);
+      const lo=Math.min(sp.y,tp.y), hi=Math.max(sp.y,tp.y);
       if(box.y1<lo-EDGE_LANE||box.y0>hi+EDGE_LANE) continue;
       midYs.push(box.y0-EDGE_LANE, box.y1+EDGE_LANE);
     }
     const seen=new Set();
     midYs.forEach((my,i)=>{
+      if(my>sp.y-ss.h/2-EDGE_MIN_LEG && my<sp.y+ss.h/2+EDGE_MIN_LEG) return;
+      if(my>tp.y-ts.h/2-EDGE_MIN_LEG && my<tp.y+ts.h/2+EDGE_MIN_LEG) return;
       const k=Math.round(my);
       if(seen.has(k)) return;
       seen.add(k);
-      if(seen.size>6) return;
+      if(seen.size>8) return;
+      const a0=sidePt(sp.x,sp.y,ss.w,ss.h, my>=sp.y?'B':'T');
+      const a3=sidePt(tp.x,tp.y,ts.w,ts.h, my>=tp.y?'B':'T');
       add([a0,{x:a0.x,y:my},{x:a3.x,y:my},a3], 'ortho2-v', 20+i);
     });
   }
@@ -3229,7 +3303,8 @@ function routeEdge(edge){
     d: pathDFromPts(best.pts),
     pts: best.pts,
     kind: best.kind,
-    thrAt: throughLabelPos(best.pts),
+    // seed only — drawEdge runs throughLabelPos with the real label size
+    thrSeed: longestSegmentMid(best.pts),
   };
 }
 
@@ -3272,12 +3347,13 @@ function routeEdgeBezierFallback(edge, sp, ss, tp, ts){
   if(bestN>0) bend=best;
   const cx1=src.x+dx*CURVE_T+nx*bend, cy1=src.y+dy*CURVE_T+ny*bend;
   const cx2=tgt.x-dx*CURVE_T+nx*bend, cy2=tgt.y-dy*CURVE_T+ny*bend;
-  const thrAt={x:(src.x+tgt.x)/2+nx*bend*.5, y:(src.y+tgt.y)/2+ny*bend*.5};
+  // Curve midpoint seed only — evacuation needs the real thr pill size in drawEdge
+  const thrSeed={x:(src.x+tgt.x)/2+nx*bend*.5, y:(src.y+tgt.y)/2+ny*bend*.5};
   return {
     d:`M ${src.x} ${src.y} C ${cx1} ${cy1},${cx2} ${cy2},${tgt.x} ${tgt.y}`,
     pts:[src,tgt],
     kind:'fallback-curve',
-    thrAt,
+    thrSeed,
   };
 }
 
@@ -3316,9 +3392,12 @@ function drawEdge(parent, edge) {
   const thrAll=[...new Set(edge.assocs.filter(x=>x.through).map(x=>`⇢${x.through}`))];
   const thr=(thrAll.length>2?thrAll.slice(0,2).concat(`+${thrAll.length-2}`):thrAll).join(' ');
   if(thr){
-    const mid=route.thrAt||longestSegmentMid(route.pts);
-    const lw=thr.length*6+6;
-    g.appendChild(svgEl('rect',{x:mid.x-lw/2,y:mid.y-8,width:lw,height:14,rx:3,class:'e-lbg'}));
+    const lw=thr.length*6+6, lh=14;
+    // Always evacuate with the real pill size — including fallback-curve seeds
+    // that would otherwise skip throughLabelPos via a pre-baked thrAt center.
+    const seed=route.thrSeed||longestSegmentMid(route.pts);
+    const mid=throughLabelPos(seed, lw, lh);
+    g.appendChild(svgEl('rect',{x:mid.x-lw/2,y:mid.y-lh/2,width:lw,height:lh,rx:3,class:'e-lbg'}));
     const lt=svgEl('text',{x:mid.x,y:mid.y+1,'text-anchor':'middle','dominant-baseline':'middle',class:'e-ltxt'});
     lt.textContent=thr; g.appendChild(lt);
   }

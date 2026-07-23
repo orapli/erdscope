@@ -5497,28 +5497,70 @@ class TestEdgeRouting(unittest.TestCase):
             page.close()
 
     def test_h_and_v_first_doglegs_are_exercised(self):
+        """Force placements where a 2-bend dogleg wins, and require both
+        horizontal-first (ortho2-h*) and vertical-first (ortho2-v*) winners."""
         page = self._open(self.route_path)
         try:
-            kinds = page.evaluate('''() => {
-                // place so straight is blocked; collect candidate kinds that clear
-                nodePos.left_t = {x: 0, y: 0};
-                nodePos.mid_t = {x: 200, y: 0};
-                nodePos.right_t = {x: 400, y: 40};
-                nodePos.top_t = {x: 200, y: -200};
-                nodePos.bot_t = {x: 200, y: 200};
-                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
-                edgeObstacles = getDisplayTables();
-                const e = {source:'left_t', target:'right_t',
-                           assocs:[{from:'left_t', type:'has_many', target:'right_t'}]};
-                // re-run internal candidate collection by inspecting route kinds
-                // via two placements that favor H-first vs V-first
-                const r1 = routeEdge(e);
-                nodePos.right_t = {x: 40, y: 400};
-                const r2 = routeEdge(e);
-                return [r1.kind, r2.kind];
+            result = page.evaluate('''() => {
+                // Give endpoints real calcSize, mid a fat box that blocks the
+                // corridor, and plenty of spacing so dogleg lanes clear.
+                function placeHorizontal() {
+                    nodePos.left_t = {x: 0, y: 0};
+                    nodePos.right_t = {x: 600, y: 0};
+                    nodePos.mid_t = {x: 300, y: 0};
+                    nodePos.top_t = {x: 1200, y: 1200};
+                    nodePos.bot_t = {x: 1300, y: 1300};
+                    for (const t of ['left_t','right_t','top_t','bot_t'])
+                        nodeSize[t] = calcSize(t);
+                    nodeSize.mid_t = {w: 100, h: 100};
+                    edgeObstacles = ['left_t','right_t','mid_t','top_t','bot_t'];
+                    return {source:'left_t', target:'right_t',
+                            assocs:[{from:'left_t', type:'has_many', target:'right_t'}]};
+                }
+                function placeVertical() {
+                    nodePos.top_t = {x: 0, y: 0};
+                    nodePos.bot_t = {x: 0, y: 600};
+                    nodePos.mid_t = {x: 0, y: 300};
+                    nodePos.left_t = {x: 1200, y: 1200};
+                    nodePos.right_t = {x: 1300, y: 1300};
+                    for (const t of ['top_t','bot_t','left_t','right_t'])
+                        nodeSize[t] = calcSize(t);
+                    nodeSize.mid_t = {w: 100, h: 100};
+                    edgeObstacles = ['left_t','right_t','mid_t','top_t','bot_t'];
+                    return {source:'top_t', target:'bot_t',
+                            assocs:[{from:'top_t', type:'has_many', target:'bot_t'}]};
+                }
+                const eH = placeHorizontal();
+                const rH = routeEdge(eH);
+                const hBlocked = polylineHitsObstacles(rH.pts, eH);
+                const hEndpointTunnel = polylineHitsEndpointInteriors(rH.pts, eH);
+                const eV = placeVertical();
+                const rV = routeEdge(eV);
+                return {
+                    hKind: rH.kind, vKind: rV.kind,
+                    hBlocked,
+                    vBlocked: polylineHitsObstacles(rV.pts, eV),
+                    hEndpointTunnel,
+                    vEndpointTunnel: polylineHitsEndpointInteriors(rV.pts, eV),
+                    hBends: routeBends(rH.pts), vBends: routeBends(rV.pts),
+                    hPts: rH.pts, vPts: rV.pts,
+                };
             }''')
-            self.assertTrue(any(k.startswith('ortho') for k in kinds),
-                            f'expected ortho routes, got {kinds}')
+            self.assertTrue(result['hKind'].startswith('ortho2-v'),
+                            f'horizontal pair + mid blocker should win with '
+                            f'V-first dogleg (ortho2-v*), got {result}')
+            self.assertTrue(result['vKind'].startswith('ortho2-h'),
+                            f'vertical pair + mid blocker should win with '
+                            f'H-first dogleg (ortho2-h*), got {result}')
+            self.assertFalse(result['hBlocked'], f'H-pair route hits obstacle: {result}')
+            self.assertFalse(result['vBlocked'], f'V-pair route hits obstacle: {result}')
+            self.assertFalse(result['hEndpointTunnel'],
+                             f'H-pair route tunnels through an endpoint: {result}')
+            self.assertFalse(result['vEndpointTunnel'],
+                             f'V-pair route tunnels through an endpoint: {result}')
+            self.assertGreaterEqual(result['hBends'], 2,
+                                    'dogleg must actually bend (≥2), not collapse to L/straight')
+            self.assertGreaterEqual(result['vBends'], 2)
         finally:
             page.close()
 
@@ -5657,6 +5699,185 @@ class TestEdgeRouting(unittest.TestCase):
             self.assertGreater(info['n'], 0)
             self.assertTrue(info['hasPath'])
             self.assertTrue(info['hasMarker'])
+        finally:
+            page.close()
+
+    def test_through_label_rect_clears_all_tables_including_endpoints(self):
+        """throughLabelPos must evacuate the full label pill (not just its
+        center), and drawEdge must apply it to an orthogonal route."""
+        page = self._open(self.route_path)
+        try:
+            result = page.evaluate('''() => {
+                // Seed deliberately inside left_t; large pill would still overlap
+                // if only the center were nudged 6px past the edge.
+                nodePos.left_t = {x: 0, y: 0};
+                nodePos.right_t = {x: 400, y: 0};
+                nodePos.mid_t = {x: 200, y: 300};
+                nodePos.top_t = {x: 600, y: 0};
+                nodePos.bot_t = {x: 600, y: 300};
+                for (const t of Object.keys(nodePos)) nodeSize[t] = calcSize(t);
+                edgeObstacles = getDisplayTables();
+                const lw = 80, lh = 14;
+                const seed = {x: nodePos.left_t.x, y: nodePos.left_t.y}; // center of left_t
+                const mid = throughLabelPos(seed, lw, lh);
+                const lx0 = mid.x - lw/2, lx1 = mid.x + lw/2;
+                const ly0 = mid.y - lh/2, ly1 = mid.y + lh/2;
+                const hits = [];
+                for (const t of edgeObstacles) {
+                    const p = nodePos[t], s = nodeSize[t];
+                    const x0 = p.x - s.w/2, x1 = p.x + s.w/2;
+                    const y0 = p.y - s.h/2, y1 = p.y + s.h/2;
+                    if (lx0 < x1 && lx1 > x0 && ly0 < y1 && ly1 > y0) hits.push(t);
+                }
+                // Fallback seed path: raw curve mid inside mid_t, then evacuate
+                const fallbackSeed = {x: nodePos.mid_t.x, y: nodePos.mid_t.y};
+                const mid2 = throughLabelPos(fallbackSeed, lw, lh);
+                const hits2 = [];
+                {
+                    const a0 = mid2.x - lw/2, a1 = mid2.x + lw/2;
+                    const b0 = mid2.y - lh/2, b1 = mid2.y + lh/2;
+                    for (const t of edgeObstacles) {
+                        const p = nodePos[t], s = nodeSize[t];
+                        const x0 = p.x - s.w/2, x1 = p.x + s.w/2;
+                        const y0 = p.y - s.h/2, y1 = p.y + s.h/2;
+                        if (a0 < x1 && a1 > x0 && b0 < y1 && b1 > y0) hits2.push(t);
+                    }
+                }
+                // Exercise the real drawEdge path. Wrap routeEdge so its seed is
+                // deliberately inside the endpoint; do not reproduce its label code.
+                const e = {source:'left_t', target:'right_t',
+                           assocs:[{from:'left_t', type:'has_many', target:'right_t',
+                                    through:'join_table'}]};
+                const originalRouteEdge = routeEdge;
+                routeEdge = edge => {
+                    const r = originalRouteEdge(edge);
+                    r.thrSeed = {x: nodePos.left_t.x, y: nodePos.left_t.y};
+                    return r;
+                };
+                const layer = svgEl('g');
+                drawEdge(layer, e);
+                routeEdge = originalRouteEdge;
+                const pill = layer.querySelector('.e-lbg');
+                const thrMid = {x:+pill.getAttribute('x') + +pill.getAttribute('width')/2,
+                                y:+pill.getAttribute('y') + +pill.getAttribute('height')/2};
+                const thrLw = +pill.getAttribute('width'), thrLh = +pill.getAttribute('height');
+                const thrHits = [];
+                {
+                    const a0 = thrMid.x - thrLw/2, a1 = thrMid.x + thrLw/2;
+                    const b0 = thrMid.y - thrLh/2, b1 = thrMid.y + thrLh/2;
+                    for (const t of edgeObstacles) {
+                        const p = nodePos[t], s = nodeSize[t];
+                        const x0 = p.x - s.w/2, x1 = p.x + s.w/2;
+                        const y0 = p.y - s.h/2, y1 = p.y + s.h/2;
+                        if (a0 < x1 && a1 > x0 && b0 < y1 && b1 > y0) thrHits.push(t);
+                    }
+                }
+                return {hits, hits2, thrHits, mid, mid2, thrMid};
+            }''')
+            self.assertEqual(result['hits'], [],
+                             f'label rect still overlaps tables after evacuate: {result}')
+            self.assertEqual(result['hits2'], [],
+                             f'fallback-style seed still overlaps: {result}')
+            self.assertEqual(result['thrHits'], [],
+                             f'drawEdge thrSeed path still overlaps endpoints: {result}')
+        finally:
+            page.close()
+
+    def test_fallback_curve_seed_uses_through_label_evacuate(self):
+        """routeEdgeBezierFallback thrSeed must go through throughLabelPos in drawEdge."""
+        page = self._open(self.route_path)
+        try:
+            result = page.evaluate('''() => {
+                nodePos.left_t = {x: 0, y: 0};
+                nodePos.right_t = {x: 400, y: 0};
+                nodePos.mid_t = {x: 200, y: 0};
+                nodePos.top_t = {x: 800, y: -100};
+                nodePos.bot_t = {x: 800, y: 100};
+                nodeSize.left_t = {w: 100, h: 100};
+                nodeSize.right_t = {w: 100, h: 100};
+                nodeSize.mid_t = {w: 90, h: 90};
+                nodeSize.top_t = {w: 140, h: 80};
+                nodeSize.bot_t = {w: 140, h: 80};
+                edgeObstacles = getDisplayTables();
+                const e = {source:'left_t', target:'right_t',
+                           assocs:[{from:'left_t', type:'has_many', target:'right_t',
+                                    through:'payments_join'}]};
+                // Force drawEdge down its real fallback result and place the
+                // fallback seed in mid_t, where the full pill must be evacuated.
+                const originalRouteEdge = routeEdge;
+                routeEdge = edge => {
+                    const r = routeEdgeBezierFallback(
+                        edge, nodePos.left_t, nodeSize.left_t,
+                        nodePos.right_t, nodeSize.right_t);
+                    r.thrSeed = {x: nodePos.mid_t.x, y: nodePos.mid_t.y};
+                    return r;
+                };
+                const layer = svgEl('g');
+                drawEdge(layer, e);
+                routeEdge = originalRouteEdge;
+                const path = layer.querySelector('path');
+                const pill = layer.querySelector('.e-lbg');
+                const lw = +pill.getAttribute('width'), lh = +pill.getAttribute('height');
+                const mid = {x:+pill.getAttribute('x')+lw/2,
+                             y:+pill.getAttribute('y')+lh/2};
+                const hits = [];
+                const a0 = mid.x - lw/2, a1 = mid.x + lw/2;
+                const b0 = mid.y - lh/2, b1 = mid.y + lh/2;
+                for (const t of edgeObstacles) {
+                    const p = nodePos[t], s = nodeSize[t];
+                    const x0 = p.x - s.w/2, x1 = p.x + s.w/2;
+                    const y0 = p.y - s.h/2, y1 = p.y + s.h/2;
+                    if (a0 < x1 && a1 > x0 && b0 < y1 && b1 > y0) hits.push(t);
+                }
+                return {isCurve: path.getAttribute('d').includes(' C '), hits, mid};
+            }''')
+            self.assertTrue(result['isCurve'], f'expected actual fallback curve: {result}')
+            self.assertEqual(result['hits'], [],
+                             f'through label rect must clear all tables: {result}')
+        finally:
+            page.close()
+
+    def test_through_label_dense_nested_boxes_has_bounded_clear_fallback(self):
+        """Exhaust the 24-step local evacuation and require the deterministic
+        global-bbox fallback to return a fully clear pill."""
+        page = self._open(self.route_path)
+        try:
+            result = page.evaluate('''() => {
+                const savedObstacles = edgeObstacles;
+                const nestedNames = [];
+                edgeObstacles = [];
+                // Increasing nested boxes ensure that escaping one box still
+                // lands inside the next, consuming the local-search budget.
+                for (let i=0; i<30; i++) {
+                    const name = `nested_${i}`;
+                    nestedNames.push(name);
+                    nodePos[name] = {x:0, y:0};
+                    nodeSize[name] = {w:100+i*20, h:100+i*20};
+                    edgeObstacles.push(name);
+                }
+                const lw=80, lh=14, seed={x:0,y:0};
+                const mid=throughLabelPos(seed,lw,lh);
+                const hits=edgeObstacles.filter(t => {
+                    const p=nodePos[t], s=nodeSize[t];
+                    return rectsOverlap(mid.x-lw/2,mid.y-lh/2,
+                                        mid.x+lw/2,mid.y+lh/2,
+                                        p.x-s.w/2,p.y-s.h/2,
+                                        p.x+s.w/2,p.y+s.h/2);
+                });
+                const globalRight=Math.max(...edgeObstacles.map(
+                    t => nodePos[t].x+nodeSize[t].w/2));
+                const out={mid,hits,globalRight,
+                           usedFallback:mid.x===globalRight+lw/2+4};
+                for (const name of nestedNames) {
+                    delete nodePos[name];
+                    delete nodeSize[name];
+                }
+                edgeObstacles=savedObstacles;
+                return out;
+            }''')
+            self.assertEqual(result['hits'], [], result)
+            self.assertTrue(result['usedFallback'], result)
+            self.assertEqual(result['mid']['y'], 0, result)
         finally:
             page.close()
 
