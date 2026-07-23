@@ -4589,6 +4589,159 @@ def _build_html_star_spokes(n_spokes=6, with_depth2=False):
     return out
 
 
+def _build_html_uneven_branches():
+    """Four spokes from hub; branch_00 carries a deep heavy subtree so load
+    partition should still stay deterministic and overlap-free (heavy side
+    should not absorb every light branch)."""
+    table_rows = [('hub', '')]
+    col_rows = [_col('hub', 'id', key='PRI')]
+    fk_rows = []
+    for i in range(4):
+        sp = f'branch_{i:02d}'
+        table_rows.append((sp, ''))
+        col_rows += [_col(sp, 'id', key='PRI'), _col(sp, 'hub_id', key='MUL')]
+        fk_rows.append((sp, 'hub_id', 'hub'))
+    # heavy subtree under branch_00 only
+    prev = 'branch_00'
+    for j in range(5):
+        t = f'heavy_{j:02d}'
+        table_rows.append((t, ''))
+        col_rows += [_col(t, 'id', key='PRI'), _col(t, 'parent_id', key='MUL')]
+        fk_rows.append((t, 'parent_id', prev))
+        prev = t
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [('hub', 'PRIMARY', 0, 1, 'id')])
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'uneven.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_horiz_uneven')
+    return out
+
+
+def _build_html_cross_branch_cycle():
+    """Hub with two spokes that also reference each other and a diamond
+    grandchild (both spokes FK to shared child) so BFS tree ownership is
+    forced to pick one parent deterministically."""
+    table_rows = [('hub', ''), ('branch_a', ''), ('branch_b', ''), ('shared_child', '')]
+    col_rows = [
+        _col('hub', 'id', key='PRI'),
+        _col('branch_a', 'id', key='PRI'), _col('branch_a', 'hub_id', key='MUL'),
+        _col('branch_a', 'peer_id', key='MUL'),
+        _col('branch_b', 'id', key='PRI'), _col('branch_b', 'hub_id', key='MUL'),
+        _col('branch_b', 'peer_id', key='MUL'),
+        _col('shared_child', 'id', key='PRI'),
+        _col('shared_child', 'a_id', key='MUL'),
+        _col('shared_child', 'b_id', key='MUL'),
+    ]
+    fk_rows = [
+        ('branch_a', 'hub_id', 'hub'),
+        ('branch_b', 'hub_id', 'hub'),
+        ('branch_a', 'peer_id', 'branch_b'),
+        ('branch_b', 'peer_id', 'branch_a'),
+        ('shared_child', 'a_id', 'branch_a'),
+        ('shared_child', 'b_id', 'branch_b'),
+    ]
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [('hub', 'PRIMARY', 0, 1, 'id')])
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'cycle.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_horiz_cycle')
+    return out
+
+
+def _build_html_multi_comp_and_isolates():
+    """Two separate stars plus two isolated tables — shelf packing must keep
+    isolates out of a single unbounded column and stay overlap-free."""
+    table_rows = [
+        ('hub_a', ''), ('a1', ''), ('a2', ''),
+        ('hub_b', ''), ('b1', ''), ('b2', ''),
+        ('iso_x', ''), ('iso_y', ''),
+    ]
+    col_rows = [
+        _col('hub_a', 'id', key='PRI'),
+        _col('a1', 'id', key='PRI'), _col('a1', 'hub_id', key='MUL'),
+        _col('a2', 'id', key='PRI'), _col('a2', 'hub_id', key='MUL'),
+        _col('hub_b', 'id', key='PRI'),
+        _col('b1', 'id', key='PRI'), _col('b1', 'hub_id', key='MUL'),
+        _col('b2', 'id', key='PRI'), _col('b2', 'hub_id', key='MUL'),
+        _col('iso_x', 'id', key='PRI'), _col('iso_y', 'id', key='PRI'),
+    ]
+    fk_rows = [
+        ('a1', 'hub_id', 'hub_a'), ('a2', 'hub_id', 'hub_a'),
+        ('b1', 'hub_id', 'hub_b'), ('b2', 'hub_id', 'hub_b'),
+    ]
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [('hub_a', 'PRIMARY', 0, 1, 'id')])
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'multi.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_horiz_multi')
+    return out
+
+
+def _build_html_mixed_node_sizes():
+    """Hub star where one spoke has a very long physical name (wide node)
+    and another has many columns (tall node under a high max-rows)."""
+    wide = 'wide_branch_with_a_very_long_physical_name_xx'
+    tall = 'tall_branch'
+    table_rows = [('hub', ''), (wide, ''), (tall, ''),
+                  ('normal_a', ''), ('normal_b', '')]
+    col_rows = [
+        _col('hub', 'id', key='PRI'),
+        _col(wide, 'id', key='PRI'),
+        _col(wide, 'hub_id', key='MUL'),
+        _col(tall, 'id', key='PRI'),
+        _col(tall, 'hub_id', key='MUL'),
+    ]
+    for i in range(12):
+        col_rows.append(_col(tall, f'col_{i:02d}', dtype='varchar', ctype='varchar(40)'))
+    col_rows += [
+        _col('normal_a', 'id', key='PRI'), _col('normal_a', 'hub_id', key='MUL'),
+        _col('normal_b', 'id', key='PRI'), _col('normal_b', 'hub_id', key='MUL'),
+    ]
+    fk_rows = [
+        (wide, 'hub_id', 'hub'),
+        (tall, 'hub_id', 'hub'),
+        ('normal_a', 'hub_id', 'hub'),
+        ('normal_b', 'hub_id', 'hub'),
+    ]
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [('hub', 'PRIMARY', 0, 1, 'id')])
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=30,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'sizes.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_horiz_sizes')
+    return out
+
+
+def _build_html_horizontal_groups():
+    """Star of spokes with two of them in a group frame — used to exercise
+    Horizontal group-obstacle clearance."""
+    table_rows = [('hub', '')]
+    col_rows = [_col('hub', 'id', key='PRI')]
+    fk_rows = []
+    for name in ('g_a', 'g_b', 'out_c', 'out_d', 'out_e'):
+        table_rows.append((name, ''))
+        col_rows += [_col(name, 'id', key='PRI'), _col(name, 'hub_id', key='MUL')]
+        fk_rows.append((name, 'hub_id', 'hub'))
+    tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [('hub', 'PRIMARY', 0, 1, 'id')])
+    groups_cfg = [
+        {'id': 'pair', 'title': 'Paired', 'tables': ['g_a', 'g_b'], 'color': '#0d9488'},
+    ]
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'hgroups.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'e2e_horiz_groups', groups=groups_cfg, groups_label='test')
+    return out
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestHorizontalLayout(unittest.TestCase):
     """Geometric invariants for the Horizontal overview placement engine."""
@@ -4596,7 +4749,15 @@ class TestHorizontalLayout(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.star_path = _build_html_star_spokes(6, with_depth2=False)
+        cls.star1 = _build_html_star_spokes(1, with_depth2=False)
+        cls.star2 = _build_html_star_spokes(2, with_depth2=False)
+        cls.star5 = _build_html_star_spokes(5, with_depth2=False)
         cls.depth_path = _build_html_star_spokes(4, with_depth2=True)
+        cls.uneven_path = _build_html_uneven_branches()
+        cls.cycle_path = _build_html_cross_branch_cycle()
+        cls.multi_path = _build_html_multi_comp_and_isolates()
+        cls.sizes_path = _build_html_mixed_node_sizes()
+        cls.groups_path = _build_html_horizontal_groups()
         cls.pw = sync_playwright().start()
         try:
             cls.browser = cls.pw.chromium.launch()
@@ -4638,27 +4799,169 @@ class TestHorizontalLayout(unittest.TestCase):
                              a['y1'] <= b['y0'] or b['y1'] <= a['y0'])
                 self.assertTrue(separated, f'{names[i]} overlaps {names[j]}: {a} vs {b}')
 
-    def test_six_same_role_branches_split_approximately_half(self):
+    def _branch_side_counts(self, page, hub='hub', prefix='branch_'):
+        return page.evaluate('''(cfg) => {
+            const h = nodePos[cfg.hub];
+            let nL = 0, nR = 0;
+            for (const t of getDisplayTables()) {
+                if (!t.startsWith(cfg.prefix)) continue;
+                if (nodePos[t].x < h.x) nL++; else nR++;
+            }
+            return {nL, nR};
+        }''', {'hub': hub, 'prefix': prefix})
+
+    def test_six_same_role_branches_split_three_three(self):
         page = self._open_horizontal(self.star_path)
         try:
-            sides = page.evaluate('''() => {
-                const hub = nodePos.hub;
-                const left = [], right = [];
-                for (const t of getDisplayTables()) {
-                    if (t === 'hub') continue;
-                    if (nodePos[t].x < hub.x) left.push(t);
-                    else right.push(t);
-                }
-                return {left: left.sort(), right: right.sort(),
-                        hubX: hub.x, nL: left.length, nR: right.length};
-            }''')
+            sides = self._branch_side_counts(page)
             self.assertEqual(sides['nL'] + sides['nR'], 6)
-            # comparable six-branch fan ≈ 3/3 (allow 2/4 only if something
-            # pathological; target is within one of half)
-            self.assertLessEqual(abs(sides['nL'] - sides['nR']), 2,
-                                 f'six same-role branches should split ~half: {sides}')
-            self.assertGreaterEqual(sides['nL'], 2)
-            self.assertGreaterEqual(sides['nR'], 2)
+            # equal-load fixture: partition must be exactly 3/3
+            self.assertEqual(sides['nL'], 3, f'expected 3/3 split, got {sides}')
+            self.assertEqual(sides['nR'], 3, f'expected 3/3 split, got {sides}')
+            self._assert_no_overlap(page)
+        finally:
+            page.close()
+
+    def test_one_two_five_branch_counts_are_deterministic_and_clean(self):
+        for path, n in ((self.star1, 1), (self.star2, 2), (self.star5, 5)):
+            page = self._open_horizontal(path)
+            try:
+                sides = self._branch_side_counts(page)
+                self.assertEqual(sides['nL'] + sides['nR'], n, f'n={n}: {sides}')
+                # odd counts may land 2/3 or 3/2 etc.; just require both sides
+                # used when n>=2 and no overlap
+                if n >= 2:
+                    self.assertGreaterEqual(sides['nL'], 1, f'n={n}: {sides}')
+                    self.assertGreaterEqual(sides['nR'], 0)  # 2 may be 1/1
+                if n == 2:
+                    self.assertEqual(sorted([sides['nL'], sides['nR']]), [1, 1])
+                if n == 5:
+                    self.assertLessEqual(abs(sides['nL'] - sides['nR']), 1,
+                                         f'five equal branches should be 2/3 or 3/2: {sides}')
+                self._assert_no_overlap(page)
+                # determinism: second ↺ matches
+                a = page.evaluate('JSON.parse(JSON.stringify(nodePos))')
+                page.click('#btn-reset')
+                page.wait_for_timeout(80)
+                b = page.evaluate('JSON.parse(JSON.stringify(nodePos))')
+                for name in a:
+                    self.assertAlmostEqual(a[name]['x'], b[name]['x'], places=3, msg=f'n={n} {name}')
+                    self.assertAlmostEqual(a[name]['y'], b[name]['y'], places=3, msg=f'n={n} {name}')
+            finally:
+                page.close()
+
+    def test_uneven_subtree_load_stays_clean_and_uses_both_sides(self):
+        page = self._open_horizontal(self.uneven_path)
+        try:
+            sides = self._branch_side_counts(page)
+            self.assertEqual(sides['nL'] + sides['nR'], 4)
+            self.assertGreaterEqual(sides['nL'], 1)
+            self.assertGreaterEqual(sides['nR'], 1)
+            # heavy chain stays entirely on the same side as branch_00
+            chain = page.evaluate('''() => {
+                const hub = nodePos.hub;
+                const side = t => nodePos[t].x < hub.x ? 'L' : 'R';
+                const root = side('branch_00');
+                const kids = ['heavy_00','heavy_01','heavy_02','heavy_03','heavy_04'];
+                return {root, kids: kids.map(side), same: kids.every(t => side(t) === root)};
+            }''')
+            self.assertTrue(chain['same'],
+                            f'heavy subtree must stay on branch_00 side: {chain}')
+            self._assert_no_overlap(page)
+        finally:
+            page.close()
+
+    def test_cross_branch_cycle_picks_one_owner_deterministically(self):
+        page = self._open_horizontal(self.cycle_path)
+        try:
+            info = page.evaluate('''() => {
+                const hub = nodePos.hub;
+                const side = t => nodePos[t].x < hub.x ? 'L' : 'R';
+                return {
+                    a: side('branch_a'), b: side('branch_b'),
+                    child: side('shared_child'),
+                    childX: nodePos.shared_child.x,
+                    aX: nodePos.branch_a.x, bX: nodePos.branch_b.x,
+                };
+            }''')
+            # shared_child is owned by exactly one BFS tree parent — same side
+            # as that owner (not stranded on the opposite side of hub alone)
+            self.assertIn(info['child'], (info['a'], info['b']),
+                          f'shared_child must sit on an owner branch side: {info}')
+            self._assert_no_overlap(page)
+            a = page.evaluate('JSON.parse(JSON.stringify(nodePos))')
+            page.click('#btn-reset')
+            page.wait_for_timeout(80)
+            b = page.evaluate('JSON.parse(JSON.stringify(nodePos))')
+            for name in a:
+                self.assertAlmostEqual(a[name]['x'], b[name]['x'], places=3, msg=name)
+                self.assertAlmostEqual(a[name]['y'], b[name]['y'], places=3, msg=name)
+        finally:
+            page.close()
+
+    def test_multi_component_and_isolates_shelf_clean(self):
+        page = self._open_horizontal(self.multi_path)
+        try:
+            self._assert_no_overlap(page)
+            info = page.evaluate('''() => {
+                const xs = ['iso_x','iso_y'].map(t => nodePos[t].x);
+                const compXs = ['hub_a','hub_b','a1','a2','b1','b2'].map(t => nodePos[t].x);
+                const maxComp = Math.max(...compXs);
+                return {xs, maxComp, rightOf: xs.every(x => x > maxComp - 1)};
+            }''')
+            # isolates shelf to the right of connected components (same contract
+            # as Vertical placeSingles)
+            self.assertTrue(info['rightOf'],
+                            f'isolates should shelf right of components: {info}')
+        finally:
+            page.close()
+
+    def test_mixed_node_sizes_no_overlap(self):
+        page = self._open_horizontal(self.sizes_path)
+        try:
+            sizes = page.evaluate('''() => {
+                const wideName = Object.keys(nodeSize).find(t => t.startsWith('wide_branch'));
+                return {
+                    wide: nodeSize[wideName],
+                    tall: nodeSize.tall_branch,
+                    normal: nodeSize.normal_a,
+                    wideName,
+                };
+            }''')
+            self.assertGreater(sizes['wide']['w'], sizes['normal']['w'],
+                               f'fixture must widen {sizes["wideName"]}')
+            self.assertGreater(sizes['tall']['h'], sizes['normal']['h'],
+                               'fixture must actually heighten tall_branch')
+            self._assert_no_overlap(page)
+        finally:
+            page.close()
+
+    def test_group_obstacle_clearance_under_horizontal(self):
+        page = self._open_horizontal(self.groups_path)
+        try:
+            # after real Horizontal layout + resolveGroupObstacles, no
+            # non-member may sit inside the group frame
+            intrusion = page.evaluate('''() => {
+                if (!showGroups || !GROUPS.length) return {skipped: true};
+                const displayed = new Set(getDisplayTables());
+                const g = GROUPS[0];
+                const bbox = groupFrameBBox(g.tables, displayed);
+                if (!bbox) return {noFrame: true};
+                const members = new Set(g.tables);
+                const offenders = [];
+                for (const t of getDisplayTables()) {
+                    if (members.has(t)) continue;
+                    const p = nodePos[t], s = nodeSize[t];
+                    const x0 = p.x - s.w/2, y0 = p.y - s.h/2, x1 = p.x + s.w/2, y1 = p.y + s.h/2;
+                    if (x0 < bbox.x1 && x1 > bbox.x0 && y0 < bbox.y1 && y1 > bbox.y0)
+                        offenders.push(t);
+                }
+                return {offenders, bbox};
+            }''')
+            self.assertFalse(intrusion.get('skipped'))
+            self.assertFalse(intrusion.get('noFrame'), 'group frame should exist')
+            self.assertEqual(intrusion.get('offenders'), [],
+                             f'non-members inside group frame under Horizontal: {intrusion}')
             self._assert_no_overlap(page)
         finally:
             page.close()
