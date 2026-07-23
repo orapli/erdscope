@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,7 +71,8 @@ def build_db(path):
 
 def db_signature(path):
     """Cross-version semantic signature; SQLite file bytes are not portable."""
-    with sqlite3.connect(path) as conn:
+    conn = sqlite3.connect(path)
+    try:
         tables = [row[0] for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
@@ -89,6 +91,8 @@ def db_signature(path):
                 'foreign_keys': foreign_keys,
                 'indexes': sorted(indexes),
             }
+    finally:
+        conn.close()
     return json.dumps(signature, sort_keys=True, separators=(',', ':'))
 
 
@@ -114,14 +118,24 @@ def files_below(path):
     return sorted(p.relative_to(path) for p in path.rglob('*') if p.is_file())
 
 
+def files_equal(expected, actual, relative):
+    """Byte compare except XLSX, whose Deflate stream varies by zlib/OS."""
+    if relative.suffix.lower() != '.xlsx':
+        return filecmp.cmp(expected / relative, actual / relative, shallow=False)
+    with zipfile.ZipFile(expected / relative) as left, \
+            zipfile.ZipFile(actual / relative) as right:
+        left_names, right_names = sorted(left.namelist()), sorted(right.namelist())
+        return (left_names == right_names
+                and all(left.read(name) == right.read(name) for name in left_names))
+
+
 def check_tree(expected, actual):
     expected_files, actual_files = files_below(expected), files_below(actual)
     if expected_files != actual_files:
         missing = sorted(set(expected_files) - set(actual_files))
         extra = sorted(set(actual_files) - set(expected_files))
         raise SystemExit(f'showcase drift: missing={missing}, extra={extra}')
-    changed = [p for p in expected_files
-               if not filecmp.cmp(expected / p, actual / p, shallow=False)]
+    changed = [p for p in expected_files if not files_equal(expected, actual, p)]
     if changed:
         raise SystemExit('showcase drift: regenerate with '
                          '`python3 examples/showcase/generate.py`; changed: '
