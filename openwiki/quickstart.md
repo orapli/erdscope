@@ -2,7 +2,7 @@
 
 erdscope is a Python 3.9+ CLI that produces a self-contained interactive ER-diagram HTML file and optional Excel, JSON/config/digest/DBML/Mermaid/PlantUML schema exports. A schema can come from any combination of a live MySQL/PostgreSQL/SQLite database, Rails/Prisma/Django/SQLAlchemy/Laravel model code, typed DBML or Mermaid `erDiagram` input, and declarative JSON/YAML config. The repository’s defining constraint is that development is split into readable source fragments, while distribution remains one zero-required-dependency `erd.py` file.
 
-This wiki documents local HEAD `d028df2` / release `0.9.1` (2026-07-21). The package version is exposed by `erdscope --version` / `-V` and kept aligned with `pyproject.toml` by `tests/test_version.py`.
+This wiki documents local HEAD `018ace6` / release `0.11.3` (2026-07-24). The package version is exposed by `erdscope --version` / `-V` and kept aligned with `pyproject.toml` by `tests/test_version.py`.
 
 ## Start here
 
@@ -19,6 +19,7 @@ python3 -m unittest discover -s tests -v
 
 # verify the committed single-file artifact
 python3 tools/build_single_file.py --check
+python3 examples/showcase/generate.py --check
 ```
 
 Installed usage is equivalent (`pip install erdscope`, then `erdscope demo`). Optional MySQL/PostgreSQL drivers, YAML parsing, Excel round-trip tests, and browser E2E each have separate dependencies; the core CLI, SQLite, HTML, and Excel writer use the standard library.
@@ -55,7 +56,7 @@ At least one database, model path, or non-empty config `tables:` map is required
 - [Source map](architecture/source-map.md) — concern-to-file/test routing for engineers.
 - [Schema and merge model](domain/schema-merge.md) — IR, authority ladders, config operations, association identity/provenance, reconciliation, inference, and validation.
 - [Engineering workflows](workflows/engineering.md) — changing engines, overlays, viewer, Excel, demos/docs, and releases.
-- [Operations and testing](operations-and-testing.md) — setup, test matrix, CI, integration variables, benchmark guidance, security, failure triage, and release checks.
+- [Operations and testing](operations-and-testing.md) — setup, test matrix, CI, committed showcase checks, integration variables, benchmark guidance, security, failure triage, and release checks.
 
 Recent capabilities covered by the engineering pages include typed `dbml` and `mermaid.er` inputs, scriptable `--emit-*` schema formats, Excel notes/groups sheets, and viewer controls for alignment, retained `KEPT` tables when Auto-expand is turned off, ROOT/AUTO/KEPT list tags, auto-expanded-table promotion, and group-aware auto-layout. For exhaustive end-user CLI/viewer behavior, use `README.md`, `docs/manual.html`, and `docs/manual.ja.html`; this wiki is the engineering synthesis layer rather than a duplicate manual.
 
@@ -79,7 +80,8 @@ Recent capabilities covered by the engineering pages include typed `dbml` and `m
 - `cli.py::_run_pipeline()` loads config/plugins, collects provider layers, merges and validates.
 - `merge.py::merge_ir()` is the central pure merge; it reconciles duplicate DB-FK edges and computes derived state.
 - `cli.py::_finish()` applies optional inference/filtering, converts internal provenance to viewer flags, then writes HTML/Excel.
-- Registries in `db/base.py` and `frameworks/base.py` provide built-in and runtime plugin seams.
+- `ir.py` validates ProviderResult/table shapes at provider boundaries; DB adapters must return complete tables, while framework overlays may return sparse association-only tables.
+- Registries in `db/base.py` and `frameworks/base.py` provide built-in and runtime plugin seams, with same-name overlay registrations replacing earlier entries.
 
 Recent history explains the shape: the pipeline was refactored into layered IR to enable DB-less sources; source was split without abandoning single-file distribution; registries enabled pluggability; SQLite and a truly installed-safe demo followed; real DB CI and large-schema benchmarks then hardened parity and practical limits (`CHANGELOG.md` and targeted recent commits).
 
@@ -95,6 +97,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/build_single_file.py --check
 python3 docs/gen_demo.py
 git diff --exit-code docs/index.html
+python3 examples/showcase/generate.py --check
 ```
 
 Real DB tests use `ERDSCOPE_IT_MYSQL_URL` and `ERDSCOPE_IT_POSTGRES_URL`. Credentials must not be stored in config; use read-only accounts and standard environment/client authentication. Performance is browser-bound: the documented conservative interactive ceiling is roughly 900 tables, after which generation-time `--only`/`--exclude` is recommended.

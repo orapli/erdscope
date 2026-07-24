@@ -15,9 +15,11 @@ python3 -m unittest tests.test_build -v              # amalgamation determinism
 python3 -m unittest tests.test_sqlalchemy_provider -v # SQLAlchemy AST provider
 python3 -m unittest tests.test_erd -v                # Laravel parser/provider behavior
 python3 -m unittest tests.test_provider_contract -v   # typed provider contracts
+python3 -m unittest tests.test_showcase -v            # committed review outputs
+python3 -m unittest tests.test_version -v             # --version and -V parity
 ```
 
-Parser and exporter behavior is concentrated in `tests/test_erd.py`; typed DBML/Mermaid input has dedicated `tests/test_dbml_input.py` and `tests/test_mermaid_input.py`; projection/diff contracts are in `tests/test_emit_*.py` and `tests/test_diff.py`; golden compatibility is in `tests/test_characterization.py`.
+Parser and exporter behavior is concentrated in `tests/test_erd.py`; typed DBML/Mermaid input has dedicated `tests/test_dbml_input.py` and `tests/test_mermaid_input.py`; projection/diff contracts are in `tests/test_emit_*.py` and `tests/test_diff.py`; golden compatibility is in `tests/test_characterization.py`. `tests/test_showcase.py` protects the committed multi-provider review outputs, while `tests/test_provider_contract.py` protects extension-boundary validation.
 
 ### Full dependency-free pass
 
@@ -62,8 +64,9 @@ The main `test` job performs:
 2. Optional dependency and Chromium installation.
 3. Full unittest/browser pass, including E2E coverage for alignment, retained `KEPT` tables across Auto-expand transitions, ROOT/AUTO/KEPT promotion and removal feedback, reload/view persistence and compatibility, viewport refit after reappearance, and group obstacle layout.
 4. `python3 tools/build_single_file.py --check`.
-5. Deterministic `docs/index.html` regeneration and diff check.
-6. Screenshot generator smoke test.
+5. `python3 examples/showcase/generate.py --check` for committed review inputs/outputs.
+6. Deterministic `docs/index.html` regeneration and diff check.
+7. Screenshot generator smoke test.
 
 Two additional zero-dependency jobs protect the supported runtime boundary: `test-oldest-python` runs the suite on Python 3.9, and `windows-smoke` runs the suite plus `python erd.py demo -o out.html --no-open` on Windows. The Windows job sets `PYTHONUTF8=1` for test-harness text-file defaults; full Playwright/browser E2E and MySQL/PostgreSQL integration remain Ubuntu-only.
 
@@ -137,7 +140,7 @@ Before pushing a `v*` tag:
 - Full dependency-free and optional/browser suites pass.
 - Real DB integration passes for DB-layer changes.
 - `erd.py --check`, demo regeneration diff, and screenshot smoke test pass.
-- `pyproject.toml`, `CHANGELOG.md`, and tag version agree; `tests/test_version.py` also keeps the standalone runtime version aligned with package metadata.
+- `pyproject.toml`, `CHANGELOG.md`, and tag version agree; `tests/test_version.py` keeps the standalone runtime version aligned with package metadata and verifies both `--version` and `-V`.
 - `python -m build` succeeds and package contents are inspected.
 - The release workflow's `verify` job passes: tag/version and CHANGELOG checks succeed, and the built wheel installs and passes `erdscope --version` plus the demo smoke test before `publish` can run.
 

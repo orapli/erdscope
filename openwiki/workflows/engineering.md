@@ -56,6 +56,7 @@ For an external runtime integration, a trusted plugin can import `DBAdapter`/`re
 Subclass `FrameworkOverlay`, assign a unique `name` and detection `priority`, implement `detect(root)` and `build(root, table_map)`, then decorate with `@register_overlay` (`src/erdscope/frameworks/base.py`).
 
 - Detection is first-match by `(priority, name)`; marker-based overlays (Rails/Django/Prisma/Laravel) use shallow root-level checks, while content-based overlays such as SQLAlchemy must recurse as deeply as `build()`.
+- Registration is a contract boundary: names, priorities, accepted-input descriptions, and required methods are validated, and same-name registrations replace earlier classes. `build()` results are validated as `ProviderResult`s at both typed and untyped dispatch; framework output may be sparse, unlike the complete table contract required from DB adapters.
 - Framework fragments have lower physical authority than DB but higher logical authority. SQLAlchemy contributes declarative columns and relationships; its empty 2.0 declarative-base subclasses are not models. Laravel is association-only so DB columns survive the merge, and a project-root path is narrowed to `app/Models` before parsing; Laravel’s priority keeps Rails’ weak directory marker from claiming that root on case-insensitive filesystems.
 - Multiple `--models` sources merge in order.
 - Explicit typed sources are dispatched through `src/erdscope/sources.py`, including `<overlay>.models` registrations such as `sqlalchemy.models` and `laravel.models`; `dbml` contributes a schema layer, while `mermaid.er` contributes a lowest-authority sketch layer.
@@ -83,7 +84,7 @@ The CLI can write additive projections alongside HTML: `--emit-json` (canonical 
 
 ### Viewer
 
-Edit `src/erdscope/viewer.html`, not the inlined copy in `erd.py` or generated `docs/index.html`.
+Edit `src/erdscope/viewer.html`, not the inlined copy in `erd.py` or generated `docs/index.html`. The current overview supports persisted Vertical, Horizontal, and viewport-scored Auto orientation (Focus remains Vertical), and relation routing is straight-first with bounded orthogonal obstacle avoidance before Bézier fallback. E2E changes should cover orientation persistence/selection, layout scoring or routing behavior, and the existing generated-artifact checks.
 
 ```bash
 python3 -m unittest tests.test_e2e -v
@@ -99,6 +100,16 @@ Then verify `python3 tools/build_single_file.py --check` and inspect `git diff`.
 Edit `src/erdscope/exporters.py`. Keep stdlib-only generation and the five-cell style-template contract used by `excel-template.xlsx`. When notes/groups are configured, the exporter appends sorted Notes/Groups sheets and adds a Group column to the overview; with neither configured, those additions remain omitted for compatibility. Run Excel tests, including `tests/test_excel_notes_groups.py`, with optional `openpyxl` installed for round-trip validation.
 
 ## Change the demo and examples
+
+`examples/showcase/` is a committed review fixture in addition to the zero-setup demo. It runs equivalent SQLite, config-only, and SQLAlchemy-model inputs through the CLI and commits HTML, XLSX, JSON, Digest, DBML, Mermaid, and PlantUML outputs. After provider, exporter, or output behavior changes, rebuild the single-file artifact and regenerate it:
+
+```bash
+python3 tools/build_single_file.py
+python3 examples/showcase/generate.py
+python3 examples/showcase/generate.py --check
+```
+
+`--check` compares text/binary outputs byte-for-byte, XLSX by ZIP entry names and uncompressed XML, and the SQLite input by semantic schema signature. `tests/test_showcase.py` and CI enforce this review surface.
 
 `erdscope demo` uses embedded SQL from `src/erdscope/demo.py`, creates a temp SQLite database, disables config discovery, and runs the normal pipeline. This exists because pip packages only `erd.py`; installed code cannot rely on `examples/demo_shop.db` being present.
 

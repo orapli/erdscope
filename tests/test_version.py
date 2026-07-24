@@ -25,10 +25,11 @@ class TestVersion(unittest.TestCase):
     def test_version_flag_prints_version(self):
         import subprocess
         import sys
-        r = subprocess.run([sys.executable, str(ROOT / 'erd.py'), '--version'],
-                           capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0)
-        self.assertIn(erd.__version__, r.stdout)
+        for flag in ('--version', '-V'):
+            r = subprocess.run([sys.executable, str(ROOT / 'erd.py'), flag],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0)
+            self.assertIn(erd.__version__, r.stdout)
 
 
 if __name__ == '__main__':
