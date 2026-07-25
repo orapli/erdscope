@@ -689,6 +689,11 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
             <button class="diag-btn" id="btn-export-puml" title="Covers displayed tables; paste into PlantUML renderers">Copy</button>
             <button class="diag-btn" id="btn-export-puml-download">Download</button>
           </div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">DBML</span>
+            <button class="diag-btn" id="btn-export-dbml" title="Covers displayed tables; paste into dbdiagram.io">Copy</button>
+            <button class="diag-btn" id="btn-export-dbml-download">Download</button>
+          </div>
         </div>
       </div>
       <div class="tb-sep"></div>
@@ -4390,6 +4395,100 @@ function downloadPlantUMLFile(){
   downloadTextFile(text, 'erd.puml', 'text/plain', 'Downloaded erd.puml ✓');
 }
 
+// DBML markup (paste straight into dbdiagram.io)
+function buildDBMLText(){
+  const tables=getDisplayTables();
+  if(!tables.length){showToast('No tables are displayed');return null;}
+  const lines=[];
+  function dbmlIdent(name){
+    if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return name;
+    return '"' + name.replace(/"/g, '\\"') + '"';
+  }
+  function dbmlSq(s){
+    return "'" + s.replace(/'/g, "\\'") + "'";
+  }
+  tables.forEach(t=>{
+    const tbl=DATA.tables[t]||{};
+    const cols=tbl.columns||[];
+    const primaryCols=cols.filter(c=>c.primary).map(c=>c.name);
+    const solePkName=primaryCols.length===1 ? primaryCols[0] : null;
+
+    lines.push(`Table ${dbmlIdent(t)} {`);
+    cols.forEach(c=>{
+      const ctype = c.sql_type || c.type || 'string';
+      const opts=[];
+      if(solePkName && c.name===solePkName) opts.push('pk');
+      if(c.extra && c.extra.toLowerCase().includes('auto_increment')) opts.push('increment');
+      if(!c.nullable) opts.push('not null');
+      if(c.default!==undefined && c.default!==null && c.default!==''){
+        const defStr=String(c.default);
+        if(/^-?\d+(\.\d+)?$/.test(defStr)) opts.push(`default: ${defStr}`);
+        else opts.push(`default: ${dbmlSq(defStr.replace(/\n/g, ' '))}`);
+      }
+      const optStr=opts.length ? ` [${opts.join(', ')}]` : '';
+      lines.push(`  ${dbmlIdent(c.name)} ${ctype}${optStr}`);
+    });
+
+    const indexes = tbl.indexes||[];
+    if(primaryCols.length>=2 || indexes.length){
+      lines.push('');
+      lines.push('  indexes {');
+      if(primaryCols.length>=2){
+        lines.push(`    (${primaryCols.map(dbmlIdent).join(', ')}) [pk]`);
+      }
+      indexes.forEach(ix=>{
+        const ixCols=(ix.columns||[]).map(dbmlIdent).join(', ');
+        const ixOpts=[];
+        if(ix.unique) ixOpts.push('unique');
+        if(ix.name) ixOpts.push(`name: ${dbmlSq(ix.name)}`);
+        const ixOptStr=ixOpts.length ? ` [${ixOpts.join(', ')}]` : '';
+        lines.push(`    (${ixCols})${ixOptStr}`);
+      });
+      lines.push('  }');
+    }
+
+    const comment = tbl.comment || logicalName(t);
+    if(comment){
+      lines.push('');
+      if(comment.includes('\n')){
+        lines.push(`  Note: '''${comment}'''`);
+      } else {
+        lines.push(`  Note: ${dbmlSq(comment)}`);
+      }
+    }
+    lines.push('}', '');
+  });
+
+  tables.forEach(t=>{
+    (DATA.tables[t]?.associations||[]).forEach(a=>{
+      if(a.type==='belongs_to' && a.foreign_key && !a.polymorphic){
+        const sourceCol=Array.isArray(a.foreign_key)?a.foreign_key[0]:a.foreign_key;
+        const targetTable=a.target;
+        if(tables.includes(targetTable)){
+          const targetCols=DATA.tables[targetTable]?.columns||[];
+          const targetPkCols=targetCols.filter(c=>c.primary);
+          if(targetPkCols.length===1){
+            lines.push(`Ref: ${dbmlIdent(t)}.${dbmlIdent(sourceCol)} > ${dbmlIdent(targetTable)}.${dbmlIdent(targetPkCols[0].name)}`);
+          }
+        }
+      }
+    });
+  });
+  return lines.join('\n');
+}
+function exportToDBML(){
+  const text=buildDBMLText();
+  if(text==null) return;
+  copyTextToClipboard(text, `Copied DBML markup ✓ (${getDisplayTables().length} tables)`,
+    ()=>downloadTextFile(text, 'schema.dbml', 'text/plain', 'Downloaded schema.dbml ✓'));
+}
+function downloadDBMLFile(){
+  const text=buildDBMLText();
+  if(text==null) return;
+  downloadTextFile(text, 'schema.dbml', 'text/plain', 'Downloaded schema.dbml ✓');
+}
+
+
 // Rasterizes the current diagram to a PNG Blob (or null on failure, having
 // already shown the relevant toast) — shared by the clipboard-copy and
 // explicit-download export actions below.
@@ -4798,6 +4897,8 @@ document.getElementById('btn-export-mmd').addEventListener('click', ()=>{ export
 document.getElementById('btn-export-mmd-download').addEventListener('click', ()=>{ downloadMermaidFile(); closeExportMenu(); });
 document.getElementById('btn-export-puml').addEventListener('click', ()=>{ exportToPlantUML(); closeExportMenu(); });
 document.getElementById('btn-export-puml-download').addEventListener('click', ()=>{ downloadPlantUMLFile(); closeExportMenu(); });
+document.getElementById('btn-export-dbml').addEventListener('click', ()=>{ exportToDBML(); closeExportMenu(); });
+document.getElementById('btn-export-dbml-download').addEventListener('click', ()=>{ downloadDBMLFile(); closeExportMenu(); });
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);

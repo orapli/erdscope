@@ -22,6 +22,9 @@ def main():
     # built-in default" (attribute absent) — see the merge loop below.
     p.add_argument('-o', '--output', default=argparse.SUPPRESS,
                    help='Output HTML file (default: erd.html)')
+    p.add_argument('--no-html', action='store_true', default=argparse.SUPPRESS,
+                   help='Skip generating the HTML diagram file (useful when only generating '
+                        '--emit-* files or --excel in CI)')
     p.add_argument('--models', metavar='PATH', action='append', default=argparse.SUPPRESS,
                    help='Merge association semantics parsed from application code '
                         '(Rails project/app/models dir, schema.prisma, a Django project, '
@@ -124,6 +127,9 @@ def main():
                         'relevant to `erdscope demo` (which opens one by default); '
                         'accepted but has no effect on a normal run')
     args = p.parse_args()
+
+    if getattr(args, 'no_html', False) and hasattr(args, 'output'):
+        sys.exit('Error: --no-html cannot be combined with -o/--output')
 
     if args.database == 'demo':
         run_demo(args)
@@ -505,12 +511,20 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
             sys.exit(0)
         sys.exit(0 if getattr(args, 'diff_exit_zero', False) else 1)
 
+    # Guard: --no-html must be accompanied by at least one other output format.
+    no_html = getattr(args, 'no_html', False)
+    if no_html and not any(getattr(args, flag, None) is not None for flag in (
+            'emit_json', 'emit_config', 'emit_digest', 'emit_dbml',
+            'emit_mermaid', 'emit_plantuml', 'excel')):
+        sys.exit('Error: --no-html specified but no other output format was requested '
+                 '(use at least one of --emit-* or --excel)')
+
     # Guard: two file outputs must not resolve to the same path, or the second
     # write silently clobbers the first — `-o x.json --emit-json x.json` would
     # overwrite the HTML with the JSON, and `--emit-json y.xlsx --excel y.xlsx`
     # would overwrite the JSON with the workbook. stdout ('-') never collides.
     _seen_out = {}
-    for _flag, _val in (('-o/--output', getattr(args, 'output', None)),
+    for _flag, _val in (('-o/--output', None if no_html else getattr(args, 'output', None)),
                         ('--emit-json', getattr(args, 'emit_json', None)),
                         ('--emit-config', getattr(args, 'emit_config', None)),
                         ('--emit-digest', getattr(args, 'emit_digest', None)),
@@ -587,26 +601,28 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     # fields they do today. This is the single point where provenance is undone.
     tables = serialize_for_viewer(tables)
 
-    # Substitute the other placeholders BEFORE inserting DATA_JSON, and
-    # escape `</` in the JSON — otherwise a table/column comment containing
-    # a literal "__TITLE__"/"__MAX_ROWS__" would get rewritten by the later
-    # .replace() calls, and one containing "</script>" would prematurely
-    # close the script tag and blank the whole page. Both are realistic:
-    # comments are free-text and come straight from the database.
-    payload = {'tables': tables}
-    if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
-        payload['notes'] = notes_data
-    if groups_data:  # same byte-equality guarantee as notes
-        payload['groups'] = groups_data
-    data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
-    html = (HTML_TEMPLATE
-            .replace('__MAX_ROWS__', str(args.max_rows))
-            .replace('__TITLE__', f'{title_name} — ERD')
-            .replace('__DATA_JSON__', data_json))
+    if not no_html:
+        # Substitute the other placeholders BEFORE inserting DATA_JSON, and
+        # escape `</` in the JSON — otherwise a table/column comment containing
+        # a literal "__TITLE__"/"__MAX_ROWS__" would get rewritten by the later
+        # .replace() calls, and one containing "</script>" would prematurely
+        # close the script tag and blank the whole page. Both are realistic:
+        # comments are free-text and come straight from the database.
+        payload = {'tables': tables}
+        if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
+            payload['notes'] = notes_data
+        if groups_data:  # same byte-equality guarantee as notes
+            payload['groups'] = groups_data
+        data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
+        html = (HTML_TEMPLATE
+                .replace('__MAX_ROWS__', str(args.max_rows))
+                .replace('__TITLE__', f'{title_name} — ERD')
+                .replace('__DATA_JSON__', data_json))
 
-    out = Path(args.output)
-    out.write_text(html, encoding='utf-8')
-    print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
+        out_path = getattr(args, 'output', 'erd.html')
+        out = Path(out_path)
+        out.write_text(html, encoding='utf-8')
+        print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
 
     if emit_json_doc is not None:
         if args.emit_json == '-':

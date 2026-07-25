@@ -5086,6 +5086,11 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
             <button class="diag-btn" id="btn-export-puml" title="Covers displayed tables; paste into PlantUML renderers">Copy</button>
             <button class="diag-btn" id="btn-export-puml-download">Download</button>
           </div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">DBML</span>
+            <button class="diag-btn" id="btn-export-dbml" title="Covers displayed tables; paste into dbdiagram.io">Copy</button>
+            <button class="diag-btn" id="btn-export-dbml-download">Download</button>
+          </div>
         </div>
       </div>
       <div class="tb-sep"></div>
@@ -8787,6 +8792,100 @@ function downloadPlantUMLFile(){
   downloadTextFile(text, 'erd.puml', 'text/plain', 'Downloaded erd.puml ✓');
 }
 
+// DBML markup (paste straight into dbdiagram.io)
+function buildDBMLText(){
+  const tables=getDisplayTables();
+  if(!tables.length){showToast('No tables are displayed');return null;}
+  const lines=[];
+  function dbmlIdent(name){
+    if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return name;
+    return '"' + name.replace(/"/g, '\\"') + '"';
+  }
+  function dbmlSq(s){
+    return "'" + s.replace(/'/g, "\\'") + "'";
+  }
+  tables.forEach(t=>{
+    const tbl=DATA.tables[t]||{};
+    const cols=tbl.columns||[];
+    const primaryCols=cols.filter(c=>c.primary).map(c=>c.name);
+    const solePkName=primaryCols.length===1 ? primaryCols[0] : null;
+
+    lines.push(`Table ${dbmlIdent(t)} {`);
+    cols.forEach(c=>{
+      const ctype = c.sql_type || c.type || 'string';
+      const opts=[];
+      if(solePkName && c.name===solePkName) opts.push('pk');
+      if(c.extra && c.extra.toLowerCase().includes('auto_increment')) opts.push('increment');
+      if(!c.nullable) opts.push('not null');
+      if(c.default!==undefined && c.default!==null && c.default!==''){
+        const defStr=String(c.default);
+        if(/^-?\d+(\.\d+)?$/.test(defStr)) opts.push(`default: ${defStr}`);
+        else opts.push(`default: ${dbmlSq(defStr.replace(/\n/g, ' '))}`);
+      }
+      const optStr=opts.length ? ` [${opts.join(', ')}]` : '';
+      lines.push(`  ${dbmlIdent(c.name)} ${ctype}${optStr}`);
+    });
+
+    const indexes = tbl.indexes||[];
+    if(primaryCols.length>=2 || indexes.length){
+      lines.push('');
+      lines.push('  indexes {');
+      if(primaryCols.length>=2){
+        lines.push(`    (${primaryCols.map(dbmlIdent).join(', ')}) [pk]`);
+      }
+      indexes.forEach(ix=>{
+        const ixCols=(ix.columns||[]).map(dbmlIdent).join(', ');
+        const ixOpts=[];
+        if(ix.unique) ixOpts.push('unique');
+        if(ix.name) ixOpts.push(`name: ${dbmlSq(ix.name)}`);
+        const ixOptStr=ixOpts.length ? ` [${ixOpts.join(', ')}]` : '';
+        lines.push(`    (${ixCols})${ixOptStr}`);
+      });
+      lines.push('  }');
+    }
+
+    const comment = tbl.comment || logicalName(t);
+    if(comment){
+      lines.push('');
+      if(comment.includes('\n')){
+        lines.push(`  Note: '''${comment}'''`);
+      } else {
+        lines.push(`  Note: ${dbmlSq(comment)}`);
+      }
+    }
+    lines.push('}', '');
+  });
+
+  tables.forEach(t=>{
+    (DATA.tables[t]?.associations||[]).forEach(a=>{
+      if(a.type==='belongs_to' && a.foreign_key && !a.polymorphic){
+        const sourceCol=Array.isArray(a.foreign_key)?a.foreign_key[0]:a.foreign_key;
+        const targetTable=a.target;
+        if(tables.includes(targetTable)){
+          const targetCols=DATA.tables[targetTable]?.columns||[];
+          const targetPkCols=targetCols.filter(c=>c.primary);
+          if(targetPkCols.length===1){
+            lines.push(`Ref: ${dbmlIdent(t)}.${dbmlIdent(sourceCol)} > ${dbmlIdent(targetTable)}.${dbmlIdent(targetPkCols[0].name)}`);
+          }
+        }
+      }
+    });
+  });
+  return lines.join('\n');
+}
+function exportToDBML(){
+  const text=buildDBMLText();
+  if(text==null) return;
+  copyTextToClipboard(text, `Copied DBML markup ✓ (${getDisplayTables().length} tables)`,
+    ()=>downloadTextFile(text, 'schema.dbml', 'text/plain', 'Downloaded schema.dbml ✓'));
+}
+function downloadDBMLFile(){
+  const text=buildDBMLText();
+  if(text==null) return;
+  downloadTextFile(text, 'schema.dbml', 'text/plain', 'Downloaded schema.dbml ✓');
+}
+
+
 // Rasterizes the current diagram to a PNG Blob (or null on failure, having
 // already shown the relevant toast) — shared by the clipboard-copy and
 // explicit-download export actions below.
@@ -9195,6 +9294,8 @@ document.getElementById('btn-export-mmd').addEventListener('click', ()=>{ export
 document.getElementById('btn-export-mmd-download').addEventListener('click', ()=>{ downloadMermaidFile(); closeExportMenu(); });
 document.getElementById('btn-export-puml').addEventListener('click', ()=>{ exportToPlantUML(); closeExportMenu(); });
 document.getElementById('btn-export-puml-download').addEventListener('click', ()=>{ downloadPlantUMLFile(); closeExportMenu(); });
+document.getElementById('btn-export-dbml').addEventListener('click', ()=>{ exportToDBML(); closeExportMenu(); });
+document.getElementById('btn-export-dbml-download').addEventListener('click', ()=>{ downloadDBMLFile(); closeExportMenu(); });
 document.getElementById('btn-dark').addEventListener('click',()=>{
   const on=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark', on);
@@ -13401,6 +13502,9 @@ def main():
     # built-in default" (attribute absent) — see the merge loop below.
     p.add_argument('-o', '--output', default=argparse.SUPPRESS,
                    help='Output HTML file (default: erd.html)')
+    p.add_argument('--no-html', action='store_true', default=argparse.SUPPRESS,
+                   help='Skip generating the HTML diagram file (useful when only generating '
+                        '--emit-* files or --excel in CI)')
     p.add_argument('--models', metavar='PATH', action='append', default=argparse.SUPPRESS,
                    help='Merge association semantics parsed from application code '
                         '(Rails project/app/models dir, schema.prisma, a Django project, '
@@ -13503,6 +13607,9 @@ def main():
                         'relevant to `erdscope demo` (which opens one by default); '
                         'accepted but has no effect on a normal run')
     args = p.parse_args()
+
+    if getattr(args, 'no_html', False) and hasattr(args, 'output'):
+        sys.exit('Error: --no-html cannot be combined with -o/--output')
 
     if args.database == 'demo':
         run_demo(args)
@@ -13884,12 +13991,20 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
             sys.exit(0)
         sys.exit(0 if getattr(args, 'diff_exit_zero', False) else 1)
 
+    # Guard: --no-html must be accompanied by at least one other output format.
+    no_html = getattr(args, 'no_html', False)
+    if no_html and not any(getattr(args, flag, None) is not None for flag in (
+            'emit_json', 'emit_config', 'emit_digest', 'emit_dbml',
+            'emit_mermaid', 'emit_plantuml', 'excel')):
+        sys.exit('Error: --no-html specified but no other output format was requested '
+                 '(use at least one of --emit-* or --excel)')
+
     # Guard: two file outputs must not resolve to the same path, or the second
     # write silently clobbers the first — `-o x.json --emit-json x.json` would
     # overwrite the HTML with the JSON, and `--emit-json y.xlsx --excel y.xlsx`
     # would overwrite the JSON with the workbook. stdout ('-') never collides.
     _seen_out = {}
-    for _flag, _val in (('-o/--output', getattr(args, 'output', None)),
+    for _flag, _val in (('-o/--output', None if no_html else getattr(args, 'output', None)),
                         ('--emit-json', getattr(args, 'emit_json', None)),
                         ('--emit-config', getattr(args, 'emit_config', None)),
                         ('--emit-digest', getattr(args, 'emit_digest', None)),
@@ -13966,26 +14081,28 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
     # fields they do today. This is the single point where provenance is undone.
     tables = serialize_for_viewer(tables)
 
-    # Substitute the other placeholders BEFORE inserting DATA_JSON, and
-    # escape `</` in the JSON — otherwise a table/column comment containing
-    # a literal "__TITLE__"/"__MAX_ROWS__" would get rewritten by the later
-    # .replace() calls, and one containing "</script>" would prematurely
-    # close the script tag and blank the whole page. Both are realistic:
-    # comments are free-text and come straight from the database.
-    payload = {'tables': tables}
-    if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
-        payload['notes'] = notes_data
-    if groups_data:  # same byte-equality guarantee as notes
-        payload['groups'] = groups_data
-    data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
-    html = (HTML_TEMPLATE
-            .replace('__MAX_ROWS__', str(args.max_rows))
-            .replace('__TITLE__', f'{title_name} — ERD')
-            .replace('__DATA_JSON__', data_json))
+    if not no_html:
+        # Substitute the other placeholders BEFORE inserting DATA_JSON, and
+        # escape `</` in the JSON — otherwise a table/column comment containing
+        # a literal "__TITLE__"/"__MAX_ROWS__" would get rewritten by the later
+        # .replace() calls, and one containing "</script>" would prematurely
+        # close the script tag and blank the whole page. Both are realistic:
+        # comments are free-text and come straight from the database.
+        payload = {'tables': tables}
+        if notes_data:  # omit the key entirely when empty/None — demo byte-equality (§10.1)
+            payload['notes'] = notes_data
+        if groups_data:  # same byte-equality guarantee as notes
+            payload['groups'] = groups_data
+        data_json = json.dumps(payload, ensure_ascii=False).replace('</', '<\\/')
+        html = (HTML_TEMPLATE
+                .replace('__MAX_ROWS__', str(args.max_rows))
+                .replace('__TITLE__', f'{title_name} — ERD')
+                .replace('__DATA_JSON__', data_json))
 
-    out = Path(args.output)
-    out.write_text(html, encoding='utf-8')
-    print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
+        out_path = getattr(args, 'output', 'erd.html')
+        out = Path(out_path)
+        out.write_text(html, encoding='utf-8')
+        print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
 
     if emit_json_doc is not None:
         if args.emit_json == '-':

@@ -2818,6 +2818,68 @@ class TestExportOptionsAndPlantUML(unittest.TestCase):
         finally:
             page.close()
 
+    def test_dbml_export_ui_buttons_and_menu_closure(self):
+        # Open export popup menu and verify DBML Copy & Download buttons exist
+        self.page.click('#btn-export-toggle')
+        self.assertTrue(self.page.is_visible('#btn-export-dbml'))
+        self.assertTrue(self.page.is_visible('#btn-export-dbml-download'))
+        # Click DBML Copy button and verify menu closes
+        self.page.evaluate('''() => {
+            window.__clip = null;
+            navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); };
+        }''')
+        self.page.click('#btn-export-dbml')
+        self.page.wait_for_timeout(100)
+        self.assertFalse(self.page.evaluate("document.getElementById('export-menu').classList.contains('open')"))
+        clip_text = self.page.evaluate('window.__clip')
+        self.assertIsNotNone(clip_text)
+        self.assertIn('Table users {', clip_text)
+        self.assertIn('Ref: posts.user_id > users.id', clip_text)
+
+        # Open export menu again and verify Download button closes menu
+        self.page.click('#btn-export-toggle')
+        self.assertTrue(self.page.evaluate("document.getElementById('export-menu').classList.contains('open')"))
+        self.page.click('#btn-export-dbml-download')
+        self.page.wait_for_timeout(100)
+        self.assertFalse(self.page.evaluate("document.getElementById('export-menu').classList.contains('open')"))
+
+    def test_dbml_export_special_names_sql_type_composite_pk_multiline_notes(self):
+        # Create a synthetic diagram state with hyphenated column, varchar(255) sql_type, composite PK, and multiline note
+        page = self.browser.new_page()
+        try:
+            page.goto(self.html_path.as_uri())
+            page.wait_for_function('typeof nodePos.users !== "undefined"')
+            page.evaluate('''() => {
+                DATA.tables.complex_table = {
+                    comment: "Line 1\\nLine 2",
+                    columns: [
+                        { name: "first-name", type: "varchar", sql_type: "varchar(255)", primary: true, nullable: false },
+                        { name: "last name", type: "varchar", sql_type: "varchar(255)", primary: true, nullable: false },
+                        { name: "special@col", type: "integer", sql_type: "int(11) unsigned", primary: false, nullable: true }
+                    ],
+                    indexes: []
+                };
+                displayTables = ["complex_table"];
+                window.__clip = null;
+                navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); };
+            }''')
+            page.evaluate('exportToDBML()')
+            page.wait_for_timeout(100)
+            text = page.evaluate('window.__clip')
+            self.assertIsNotNone(text)
+            self.assertIn('Table complex_table {', text)
+            # Hyphenated & space column names must be quoted, sql_type unquoted
+            self.assertIn('  "first-name" varchar(255) [not null]', text)
+            self.assertIn('  "last name" varchar(255) [not null]', text)
+            self.assertIn('  "special@col" int(11) unsigned', text)
+            # Composite PK (2 primary columns) must go in indexes block, not per-column pk attr
+            self.assertIn('indexes {', text)
+            self.assertIn('("first-name", "last name") [pk]', text)
+            # Multiline comment uses triple-quote Note
+            self.assertIn("Note: '''Line 1\nLine 2'''", text)
+        finally:
+            page.close()
+
     def test_plantuml_sanitizes_a_non_word_table_name_and_reuses_it_consistently(self):
         # regression: a table name failing /^\w+$/ (backtick-quoted in
         # real SQL, e.g. a schema-qualified "shared.users") used to alias
