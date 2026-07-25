@@ -33,7 +33,7 @@ def _parse(text):
     mermaid_er_provider, returning (tables, warnings)."""
     tmp = tempfile.TemporaryDirectory()
     path = Path(tmp.name) / 'schema.mmd'
-    path.write_text(text)
+    path.write_text(text, encoding='utf-8')
     result = erd.mermaid_er_provider(path, given='schema.mmd')
     tmp.cleanup()
     return result['tables'], result['warnings']
@@ -238,7 +238,7 @@ class TestSourceShape(unittest.TestCase):
     def test_provider_result_kind_and_provider(self):
         tmp = tempfile.TemporaryDirectory()
         path = Path(tmp.name) / 'schema.mmd'
-        path.write_text('t {\n  integer id PK\n}\n')
+        path.write_text('t {\n  integer id PK\n}\n', encoding='utf-8')
         result = erd.mermaid_er_provider(path, given='schema.mmd')
         tmp.cleanup()
         self.assertEqual(result['source']['kind'], 'sketch')
@@ -277,7 +277,7 @@ class TestRoundTrip(unittest.TestCase):
         mmd_text = erd.render_mermaid(self._schema())
         tmp = tempfile.TemporaryDirectory()
         path = Path(tmp.name) / 'schema.mmd'
-        path.write_text(mmd_text)
+        path.write_text(mmd_text, encoding='utf-8')
         result = erd.mermaid_er_provider(path, given='schema.mmd')
         tmp.cleanup()
         self.assertEqual(result['warnings'], [])
@@ -309,11 +309,11 @@ class TestCLIWiring(unittest.TestCase):
                   integer user_id
                 }
                 users ||--o{ posts : "user"
-            ''')
+            ''', encoding='utf-8')
             cfg_path = tmp / 'c.json'
             cfg_path.write_text(
                 '{"sources": [{"id": "s", "type": "mermaid.er", "path": "%s"}]}'
-                % str(mmd_path).replace('\\', '\\\\'))
+                % str(mmd_path).replace('\\', '\\\\'), encoding='utf-8')
             out = tmp / 'out.html'
             import sys
             argv = sys.argv
@@ -323,7 +323,7 @@ class TestCLIWiring(unittest.TestCase):
                     erd.main()
             finally:
                 sys.argv = argv
-            html = out.read_text()
+            html = out.read_text(encoding='utf-8')
             self.assertIn('"users"', html)
             self.assertIn('"posts"', html)
 

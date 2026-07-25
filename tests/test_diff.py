@@ -518,20 +518,20 @@ class TestCLIExitCodes(_DiffDriver):
 
     def test_different_snapshot_exits_one(self):
         snap = self._snapshot()
-        doc = json.loads(snap.read_text())
+        doc = json.loads(snap.read_text(encoding='utf-8'))
         doc['schema']['tables']['users']['comment'] = 'CHANGED'
         doc['fingerprint'] = 'sha256:' + '0' * 64  # force a fingerprint mismatch
-        snap.write_text(json.dumps(doc))
+        snap.write_text(json.dumps(doc), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', str(snap))
         self.assertEqual(cm.exception.code, 1)
 
     def test_diff_exit_zero_overrides_difference_exit_code(self):
         snap = self._snapshot()
-        doc = json.loads(snap.read_text())
+        doc = json.loads(snap.read_text(encoding='utf-8'))
         doc['schema']['tables']['users']['comment'] = 'CHANGED'
         doc['fingerprint'] = 'sha256:' + '0' * 64
-        snap.write_text(json.dumps(doc))
+        snap.write_text(json.dumps(doc), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', str(snap), '--diff-exit-zero')
         self.assertEqual(cm.exception.code, 0)
@@ -542,7 +542,7 @@ class TestCLIExitCodes(_DiffDriver):
         self.assertEqual(cm.exception.code, 2)
 
     def test_invalid_json_exits_two(self):
-        Path(self.tmp.name, 'bad.json').write_text('not json')
+        Path(self.tmp.name, 'bad.json').write_text('not json', encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', 'bad.json')
         self.assertEqual(cm.exception.code, 2)
@@ -552,14 +552,14 @@ class TestCLIExitCodes(_DiffDriver):
         # top-level format/schema — must be rejected, not silently
         # misread as a canonical schema.
         Path(self.tmp.name, 'config.json').write_text(
-            json.dumps({'version': 1, 'tables': {'users': {}}}))
+            json.dumps({'version': 1, 'tables': {'users': {}}}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', 'config.json')
         self.assertEqual(cm.exception.code, 2)
 
     def test_wrong_format_number_exits_two(self):
         Path(self.tmp.name, 'v2.json').write_text(
-            json.dumps({'format': 2, 'schema': {'tables': {}}}))
+            json.dumps({'format': 2, 'schema': {'tables': {}}}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', 'v2.json')
         self.assertEqual(cm.exception.code, 2)
@@ -570,10 +570,10 @@ class TestCLIExitCodes(_DiffDriver):
         # must exit 2 ("the comparison couldn't run"), never surface as a
         # traceback→exit 1, which a CI gate would misread as "drift found".
         snap = self._snapshot()
-        doc = json.loads(snap.read_text())
+        doc = json.loads(snap.read_text(encoding='utf-8'))
         tname = next(iter(doc['schema']['tables']))
         doc['schema']['tables'][tname]['associations'] = [{}]  # no 'type'
-        snap.write_text(json.dumps(doc))
+        snap.write_text(json.dumps(doc), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', str(snap))
         self.assertEqual(cm.exception.code, 2)
@@ -584,12 +584,12 @@ class TestCLIExitCodes(_DiffDriver):
         # updating `fingerprint` must still be detected as different (else a
         # CI gate silently passes on a genuinely drifted snapshot).
         snap = self._snapshot()
-        doc = json.loads(snap.read_text())
+        doc = json.loads(snap.read_text(encoding='utf-8'))
         stale_fp = doc['fingerprint']  # keep the ORIGINAL fp on purpose
         tname = next(iter(doc['schema']['tables']))
         doc['schema']['tables'][tname]['comment'] = 'HAND-EDITED'
         doc['fingerprint'] = stale_fp
-        snap.write_text(json.dumps(doc))
+        snap.write_text(json.dumps(doc), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', str(snap))
         self.assertEqual(cm.exception.code, 1)
@@ -600,11 +600,11 @@ class TestCLIExitCodes(_DiffDriver):
         # snapshot's byte content so the fingerprint fast path is skipped, and
         # the order-agnostic deep compare then finds no difference: exit 0.
         snap = self._snapshot()
-        doc = json.loads(snap.read_text())
+        doc = json.loads(snap.read_text(encoding='utf-8'))
         tname = next(t for t, td in doc['schema']['tables'].items()
                      if len(td.get('columns', [])) >= 2)
         doc['schema']['tables'][tname]['columns'].reverse()
-        snap.write_text(json.dumps(doc))
+        snap.write_text(json.dumps(doc), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('-o', 'out.html', '--diff', str(snap))
         self.assertEqual(cm.exception.code, 0)
@@ -645,10 +645,10 @@ class TestCLINoOutputGenerated(_DiffDriver):
 class TestCLIFormatAndOutput(_DiffDriver):
     def test_diff_format_json_is_deterministic_and_parses(self):
         snap = self._snapshot()
-        doc = json.loads(snap.read_text())
+        doc = json.loads(snap.read_text(encoding='utf-8'))
         doc['schema']['tables']['users']['comment'] = 'CHANGED'
         doc['fingerprint'] = 'sha256:' + '0' * 64
-        snap.write_text(json.dumps(doc))
+        snap.write_text(json.dumps(doc), encoding='utf-8')
 
         out1 = self._capture_stdout('-o', 'a.html', '--diff', str(snap), '--diff-format', 'json')
         out2 = self._capture_stdout('-o', 'b.html', '--diff', str(snap), '--diff-format', 'json')
@@ -668,7 +668,7 @@ class TestCLIFormatAndOutput(_DiffDriver):
 
     def test_direction_added_is_current_only_removed_is_snapshot_only(self):
         snap = self._snapshot()
-        doc = json.loads(snap.read_text())
+        doc = json.loads(snap.read_text(encoding='utf-8'))
         # snapshot ('right'/base) has an extra table the current run lacks,
         # and lacks a table the current run has — verifies BOTH directions
         # in one document.
@@ -677,7 +677,7 @@ class TestCLIFormatAndOutput(_DiffDriver):
                                                'indexes': [], 'associations': []}
         del doc['schema']['tables']['posts']
         doc['fingerprint'] = 'sha256:' + '0' * 64
-        snap.write_text(json.dumps(doc))
+        snap.write_text(json.dumps(doc), encoding='utf-8')
         out = self._capture_stdout('-o', 'a.html', '--diff', str(snap), '--diff-format', 'json')
         parsed = json.loads(out)
         self.assertEqual(parsed['tables']['added'], ['posts'])

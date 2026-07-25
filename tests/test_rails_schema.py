@@ -33,7 +33,7 @@ class _ParserTestCase(unittest.TestCase):
     def _parse(self, text):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'schema.rb'
-            p.write_text(text)
+            p.write_text(text, encoding='utf-8')
             return erd.rails_schema_provider(p)
 
     def _warnings_text(self, result):
@@ -668,14 +668,14 @@ class _NoDBDriver(unittest.TestCase):
 
     def _data(self, path):
         return json.loads(re.search(r'const DATA = (\{.*?\});\s*\n',
-                                    Path(path).read_text()).group(1))
+                                    Path(path).read_text(encoding='utf-8')).group(1))
 
 
 class TestRailsSchemaEndToEnd(_NoDBDriver):
     def test_config_sources_rails_schema_produces_columns_and_badge(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'schema', 'type': 'rails.schema', 'path': str(FIXTURE_SCHEMA)}]}))
+            {'id': 'schema', 'type': 'rails.schema', 'path': str(FIXTURE_SCHEMA)}]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         data = self._data(out)['tables']
@@ -685,13 +685,13 @@ class TestRailsSchemaEndToEnd(_NoDBDriver):
         self.assertIn('user_id', col_names)
         assoc = next(a for a in data['posts']['associations'] if a['target'] == 'users')
         self.assertTrue(assoc.get('schema_fk'))
-        html = Path(out).read_text()
+        html = Path(out).read_text(encoding='utf-8')
         self.assertIn('badge-schemafk', html)
 
     def test_rails_schema_path_must_be_a_file(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'schema', 'type': 'rails.schema', 'path': str(FIXTURE_RAILS)}]}))
+            {'id': 'schema', 'type': 'rails.schema', 'path': str(FIXTURE_RAILS)}]}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg, '-o', self._p('out.html'))
         msg = str(cm.exception)
@@ -710,7 +710,7 @@ class TestRailsSchemaEndToEnd(_NoDBDriver):
     def test_excel_via_column_contains_schema_fk(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'schema', 'type': 'rails.schema', 'path': str(FIXTURE_SCHEMA)}]}))
+            {'id': 'schema', 'type': 'rails.schema', 'path': str(FIXTURE_SCHEMA)}]}), encoding='utf-8')
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', cfg, '-o', out, '--excel', xlsx)
         with zipfile.ZipFile(xlsx) as z:
@@ -747,7 +747,7 @@ class TestRailsProjectMacro(unittest.TestCase):
             root = Path(d)
             (root / 'db').mkdir()
             (root / 'db' / 'schema.rb').write_text(
-                'create_table "widgets", force: :cascade do |t|\nend\n')
+                'create_table "widgets", force: :cascade do |t|\nend\n', encoding='utf-8')
             err = io.StringIO()
             with redirect_stderr(err):
                 specs = erd.normalize_input_specs(
@@ -761,7 +761,7 @@ class TestRailsProjectMacro(unittest.TestCase):
             root = Path(d)
             (root / 'app' / 'models').mkdir(parents=True)
             (root / 'app' / 'models' / 'widget.rb').write_text(
-                'class Widget < ApplicationRecord\nend\n')
+                'class Widget < ApplicationRecord\nend\n', encoding='utf-8')
             err = io.StringIO()
             with redirect_stderr(err):
                 specs = erd.normalize_input_specs(
@@ -791,7 +791,7 @@ class TestRailsProjectMacro(unittest.TestCase):
             root = Path(d)
             (root / 'db').mkdir()
             (root / 'db' / 'schema.rb').write_text(
-                'create_table "widgets", force: :cascade do |t|\nend\n')
+                'create_table "widgets", force: :cascade do |t|\nend\n', encoding='utf-8')
             (root / 'app' / 'models').mkdir(parents=True)
             old_cwd = os.getcwd()
             try:
@@ -811,7 +811,7 @@ class TestRailsProjectMacroEndToEnd(_NoDBDriver):
     def test_project_macro_merges_schema_and_model_layers(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'app', 'type': 'rails.project', 'path': str(FIXTURE_RAILS)}]}))
+            {'id': 'app', 'type': 'rails.project', 'path': str(FIXTURE_RAILS)}]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         data = self._data(out)['tables']
@@ -832,10 +832,10 @@ class TestGivenPathInMessages(_NoDBDriver):
     def test_relative_config_source_path_shown_verbatim_in_progress_line(self):
         (Path(self.tmp.name) / 'db').mkdir()
         (Path(self.tmp.name) / 'db' / 'schema.rb').write_text(
-            'create_table "widgets", force: :cascade do |t|\nend\n')
+            'create_table "widgets", force: :cascade do |t|\nend\n', encoding='utf-8')
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'schema', 'type': 'rails.schema', 'path': 'db/schema.rb'}]}))
+            {'id': 'schema', 'type': 'rails.schema', 'path': 'db/schema.rb'}]}), encoding='utf-8')
         out = self._p('out.html')
         err = io.StringIO()
         with redirect_stderr(err):
@@ -846,10 +846,10 @@ class TestGivenPathInMessages(_NoDBDriver):
     def test_relative_config_source_path_shown_in_parser_warnings(self):
         (Path(self.tmp.name) / 'db').mkdir()
         (Path(self.tmp.name) / 'db' / 'schema.rb').write_text(
-            'create_table "widgets", force: :cascade do |t|\n  t.geometry "loc"\nend\n')
+            'create_table "widgets", force: :cascade do |t|\n  t.geometry "loc"\nend\n', encoding='utf-8')
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'schema', 'type': 'rails.schema', 'path': 'db/schema.rb'}]}))
+            {'id': 'schema', 'type': 'rails.schema', 'path': 'db/schema.rb'}]}), encoding='utf-8')
         out = self._p('out.html')
         err = io.StringIO()
         with redirect_stderr(err):
@@ -859,7 +859,7 @@ class TestGivenPathInMessages(_NoDBDriver):
     def test_relative_untyped_models_path_shown_verbatim(self):
         (Path(self.tmp.name) / 'app' / 'models').mkdir(parents=True)
         (Path(self.tmp.name) / 'app' / 'models' / 'widget.rb').write_text(
-            'class Widget < ApplicationRecord\nend\n')
+            'class Widget < ApplicationRecord\nend\n', encoding='utf-8')
         out = self._p('out.html')
         err = io.StringIO()
         with redirect_stderr(err):
@@ -870,7 +870,7 @@ class TestGivenPathInMessages(_NoDBDriver):
     def test_relative_schema_rb_auto_detect_note_shown_verbatim(self):
         (Path(self.tmp.name) / 'db').mkdir()
         (Path(self.tmp.name) / 'db' / 'schema.rb').write_text(
-            'create_table "widgets", force: :cascade do |t|\nend\n')
+            'create_table "widgets", force: :cascade do |t|\nend\n', encoding='utf-8')
         out = self._p('out.html')
         err = io.StringIO()
         with redirect_stderr(err):
@@ -880,7 +880,7 @@ class TestGivenPathInMessages(_NoDBDriver):
     def test_rails_schema_path_error_shows_given_path(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'schema', 'type': 'rails.schema', 'path': 'app'}]}))
+            {'id': 'schema', 'type': 'rails.schema', 'path': 'app'}]}), encoding='utf-8')
         (Path(self.tmp.name) / 'app').mkdir()
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg, '-o', self._p('out.html'))
@@ -891,7 +891,7 @@ class TestGivenPathInMessages(_NoDBDriver):
     def test_rails_schema_location_field_uses_given_path(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'schema.rb'
-            p.write_text('create_table "widgets", force: :cascade do |t|\nend\n')
+            p.write_text('create_table "widgets", force: :cascade do |t|\nend\n', encoding='utf-8')
             result = erd.rails_schema_provider(p, given='db/schema.rb')
         self.assertEqual(result['source']['location'], 'db/schema.rb')
 

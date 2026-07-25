@@ -88,7 +88,7 @@ class _ProviderContract:
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / 'c.json'
             cfg.write_text(json.dumps({'sources': [
-                {'id': 'src', 'type': self.TYPE, 'path': str(self.PATH)}]}))
+                {'id': 'src', 'type': self.TYPE, 'path': str(self.PATH)}]}), encoding='utf-8')
             out, xlsx = Path(tmp) / 'out.html', Path(tmp) / 'defs.xlsx'
             argv = sys.argv
             try:
@@ -98,7 +98,7 @@ class _ProviderContract:
                     erd.main()
             finally:
                 sys.argv = argv
-            html = out.read_text()
+            html = out.read_text(encoding='utf-8')
             for table in ('users', 'posts'):
                 self.assertIn(f'"{table}"', html)
             self.assertTrue(zipfile.is_zipfile(xlsx))
@@ -181,7 +181,7 @@ class TestPrismaContract(_ProviderContract, unittest.TestCase):
 
     def _write_empty_variant(self, tmp):
         (tmp / 'schema.prisma').write_text(
-            'generator client {\n  provider = "prisma-client-js"\n}\n')
+            'generator client {\n  provider = "prisma-client-js"\n}\n', encoding='utf-8')
         return tmp
 
     def test_directory_without_schema_is_a_clean_error(self):
@@ -201,7 +201,7 @@ class TestDjangoContract(_ProviderContract, unittest.TestCase):
     PATH = CONTRACT / 'django'
 
     def _write_empty_variant(self, tmp):
-        (tmp / 'manage.py').write_text('#!/usr/bin/env python\n')
+        (tmp / 'manage.py').write_text('#!/usr/bin/env python\n', encoding='utf-8')
         return tmp
 
 
@@ -213,7 +213,7 @@ class TestRailsSchemaContract(_ProviderContract, unittest.TestCase):
 
     def _write_empty_variant(self, tmp):
         f = tmp / 'schema.rb'
-        f.write_text('# empty schema, no create_table\n')
+        f.write_text('# empty schema, no create_table\n', encoding='utf-8')
         return f
 
 
@@ -225,7 +225,7 @@ class TestDbmlContract(_ProviderContract, unittest.TestCase):
 
     def _write_empty_variant(self, tmp):
         f = tmp / 'schema.dbml'
-        f.write_text('// empty, no Table blocks\n')
+        f.write_text('// empty, no Table blocks\n', encoding='utf-8')
         return f
 
 
@@ -237,7 +237,7 @@ class TestMermaidErContract(_ProviderContract, unittest.TestCase):
 
     def _write_empty_variant(self, tmp):
         f = tmp / 'schema.mmd'
-        f.write_text('%% empty, no entities or relationships\nerDiagram\n')
+        f.write_text('%% empty, no entities or relationships\nerDiagram\n', encoding='utf-8')
         return f
 
 
@@ -249,7 +249,7 @@ class TestSQLAlchemyContract(_ProviderContract, unittest.TestCase):
 
     def _write_empty_variant(self, tmp):
         f = tmp / 'models.py'
-        f.write_text('# no SQLAlchemy models here\n')
+        f.write_text('# no SQLAlchemy models here\n', encoding='utf-8')
         return f
 
 

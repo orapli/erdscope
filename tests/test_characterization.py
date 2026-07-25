@@ -530,13 +530,13 @@ class TestMergeOverlaySnapshot(unittest.TestCase):
         models = Path(cls.tmp.name) / 'app' / 'models'
         models.mkdir(parents=True)
         (models / 'company.rb').write_text(
-            'class Company < ApplicationRecord\n  has_many :users\nend\n')
+            'class Company < ApplicationRecord\n  has_many :users\nend\n', encoding='utf-8')
         (models / 'user.rb').write_text(
-            'class User < ApplicationRecord\n  belongs_to :company\nend\n')
+            'class User < ApplicationRecord\n  belongs_to :company\nend\n', encoding='utf-8')
         (models / 'post.rb').write_text(
-            'class Post < ApplicationRecord\n  belongs_to :user\nend\n')
+            'class Post < ApplicationRecord\n  belongs_to :user\nend\n', encoding='utf-8')
         (models / 'profile.rb').write_text(
-            'class Profile < ApplicationRecord\n  belongs_to :user\nend\n')
+            'class Profile < ApplicationRecord\n  belongs_to :user\nend\n', encoding='utf-8')
         cls.kind = erd.detect_code_source(Path(cls.tmp.name))
         # DB + Rails framework + config relations, folded low->high by merge_ir.
         cls.tables = erd.merge_ir([
@@ -927,11 +927,11 @@ class TestRailsProvider(unittest.TestCase):
         models = Path(tmp) / 'app' / 'models'
         models.mkdir(parents=True)
         (models / 'company.rb').write_text(
-            'class Company < ApplicationRecord\n  has_many :users\nend\n')
+            'class Company < ApplicationRecord\n  has_many :users\nend\n', encoding='utf-8')
         (models / 'user.rb').write_text(
-            'class User < ApplicationRecord\n  belongs_to :company\n  has_one :profile\nend\n')
+            'class User < ApplicationRecord\n  belongs_to :company\n  has_one :profile\nend\n', encoding='utf-8')
         (models / 'profile.rb').write_text(
-            'class Profile < ApplicationRecord\n  belongs_to :user\nend\n')
+            'class Profile < ApplicationRecord\n  belongs_to :user\nend\n', encoding='utf-8')
         return models
 
     def test_provider_shape(self):

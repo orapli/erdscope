@@ -31,7 +31,7 @@ def _load(obj):
     --config path)."""
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / 'my.json'
-        path.write_text(json.dumps(obj))
+        path.write_text(json.dumps(obj), encoding='utf-8')
         return erd.load_config(SimpleNamespace(config=str(path), no_config=False))
 
 

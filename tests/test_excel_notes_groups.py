@@ -87,7 +87,7 @@ class _NoDBDriver(unittest.TestCase):
 
     def _write(self, schema):
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(schema))
+        Path(path).write_text(json.dumps(schema), encoding='utf-8')
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', path, '-o', out, '--excel', xlsx)
         return xlsx

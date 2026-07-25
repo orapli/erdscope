@@ -462,7 +462,7 @@ class TestCLIFileOutput(_EmitDbmlDriver):
     def test_emit_dbml_writes_alongside_html(self):
         self._run('--emit-dbml', 'schema.dbml')
         self.assertTrue((Path(self.tmp.name) / 'erd.html').exists())
-        text = (Path(self.tmp.name) / 'schema.dbml').read_text()
+        text = (Path(self.tmp.name) / 'schema.dbml').read_text(encoding='utf-8')
         self.assertIn('Table posts {', text)
         self.assertIn('Table users {', text)
         self.assertIn('Ref: posts.user_id > users.id', text)
@@ -507,7 +507,7 @@ class TestCLIStdout(_EmitDbmlDriver):
 class TestCLIFiltering(_EmitDbmlDriver):
     def test_only_reflected_including_dangling_association_pruning(self):
         self._run('--emit-dbml', 'schema.dbml', '--only', 'posts')
-        text = (Path(self.tmp.name) / 'schema.dbml').read_text()
+        text = (Path(self.tmp.name) / 'schema.dbml').read_text(encoding='utf-8')
         self.assertIn('Table posts {', text)
         self.assertNotIn('Table users', text)
         # 'users' filtered out -> posts' belongs_to :user must be pruned as
@@ -516,7 +516,7 @@ class TestCLIFiltering(_EmitDbmlDriver):
 
     def test_exclude_reflected(self):
         self._run('--emit-dbml', 'schema.dbml', '--exclude', 'posts')
-        text = (Path(self.tmp.name) / 'schema.dbml').read_text()
+        text = (Path(self.tmp.name) / 'schema.dbml').read_text(encoding='utf-8')
         self.assertIn('Table users', text)
         self.assertNotIn('Table posts', text)
 

@@ -77,7 +77,7 @@ class _MainDriver(unittest.TestCase):
         erd.main()
 
     def _data(self, filename='erd.html'):
-        html = (Path(self.tmp.name) / filename).read_text()
+        html = (Path(self.tmp.name) / filename).read_text(encoding='utf-8')
         return json.loads(re.search(r'const DATA = (\{.*?\});\s*\n', html).group(1))
 
 
@@ -203,13 +203,13 @@ class TestPipelineRelationsOverride(_MainDriver):
         Path('.erdscope.json').write_text(json.dumps({
             'relations': [{'table': 'posts', 'column': 'user_id',
                            'references': 'users', 'one_to_one': True, 'name': 'owner'}],
-        }))
+        }), encoding='utf-8')
         models = Path(self.tmp.name) / 'app' / 'models'
         models.mkdir(parents=True)
-        (models / 'user.rb').write_text('class User < ApplicationRecord\nend\n')
+        (models / 'user.rb').write_text('class User < ApplicationRecord\nend\n', encoding='utf-8')
         (models / 'post.rb').write_text(
             "class Post < ApplicationRecord\n  belongs_to :owner, class_name: 'User', "
-            "foreign_key: 'user_id'\nend\n")
+            "foreign_key: 'user_id'\nend\n", encoding='utf-8')
         err = self._run('--models', str(self.tmp.name), capture_stderr=True)
         data = self._data()
         posts = data['tables']['posts']
@@ -226,7 +226,7 @@ class TestPipelineRelationsOverride(_MainDriver):
         Path('.erdscope.json').write_text(json.dumps({
             'relations': [{'table': 'posts', 'column': 'user_id',
                            'references': 'users', 'name': 'author'}],
-        }))
+        }), encoding='utf-8')
         self._run()
         posts = self._data()['tables']['posts']
         owner = [a for a in posts['associations'] if a['foreign_key'] == 'user_id']
@@ -239,7 +239,7 @@ class TestPipelineRelationsOverride(_MainDriver):
         # relations_to_config_layer validates against the merged base
         Path('.erdscope.json').write_text(json.dumps({
             'relations': [{'table': 'posts', 'column': 'nope_id', 'references': 'users'}],
-        }))
+        }), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run()
         self.assertIn('nope_id', str(cm.exception))
@@ -251,7 +251,7 @@ class TestPipelineConfigTables(_MainDriver):
     references vs the final IR)."""
 
     def _write(self, cfg):
-        Path('.erdscope.json').write_text(json.dumps(cfg))
+        Path('.erdscope.json').write_text(json.dumps(cfg), encoding='utf-8')
 
     # ── add ──
     def test_config_adds_table_column_index_association(self):
@@ -440,7 +440,7 @@ class _NoDBDriver(unittest.TestCase):
 
     def _data(self, path):
         return json.loads(re.search(r'const DATA = (\{.*?\});\s*\n',
-                                    Path(path).read_text()).group(1))
+                                    Path(path).read_text(encoding='utf-8')).group(1))
 
 
 class TestPipelineFrameworkOnly(_NoDBDriver):
@@ -454,7 +454,7 @@ class TestPipelineFrameworkOnly(_NoDBDriver):
         self.assertTrue(data['users']['schema_missing'])
         self.assertEqual(data['users']['columns'], [])
         # title falls back to the framework project name (§10)
-        self.assertIn('<title>fixture_app — ERD</title>', Path(out).read_text())
+        self.assertIn('<title>fixture_app — ERD</title>', Path(out).read_text(encoding='utf-8'))
 
     def test_prisma_only_keeps_columns(self):
         out = self._p('out.html')
@@ -465,7 +465,7 @@ class TestPipelineFrameworkOnly(_NoDBDriver):
         self.assertNotIn('schema_missing', data['Post'])  # has columns
         self.assertEqual([c['name'] for c in data['Post']['columns']],
                          ['id', 'title', 'authorId'])
-        self.assertIn('<title>fixture_prisma — ERD</title>', Path(out).read_text())
+        self.assertIn('<title>fixture_prisma — ERD</title>', Path(out).read_text(encoding='utf-8'))
 
     def test_django_only_keeps_columns(self):
         out = self._p('out.html')
@@ -474,7 +474,7 @@ class TestPipelineFrameworkOnly(_NoDBDriver):
         data = self._data(out)['tables']
         self.assertIn('blog_entries', data)
         self.assertNotIn('schema_missing', data['blog_entries'])
-        self.assertIn('<title>fixture_django — ERD</title>', Path(out).read_text())
+        self.assertIn('<title>fixture_django — ERD</title>', Path(out).read_text(encoding='utf-8'))
 
     def test_framework_only_excel(self):
         import zipfile
@@ -489,11 +489,11 @@ class TestPipelineFrameworkOnly(_NoDBDriver):
 
     def test_config_title_wins_over_framework_name(self):
         cfg = self._p('c.json')
-        Path(cfg).write_text(json.dumps({'title': 'custom', 'models': str(FIXTURE_PRISMA)}))
+        Path(cfg).write_text(json.dumps({'title': 'custom', 'models': str(FIXTURE_PRISMA)}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         self.assertEqual(self.calls, [])
-        self.assertIn('<title>custom — ERD</title>', Path(out).read_text())
+        self.assertIn('<title>custom — ERD</title>', Path(out).read_text(encoding='utf-8'))
 
     def test_multiple_models_merge_both_frameworks(self):
         # P1-a (§10): two --models flags merge BOTH frameworks, rather than a
@@ -510,7 +510,7 @@ class TestPipelineFrameworkOnly(_NoDBDriver):
         # P1-a: config `models` accepts a list of framework paths.
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps(
-            {'models': [str(FIXTURE_RAILS), str(FIXTURE_PRISMA)]}))
+            {'models': [str(FIXTURE_RAILS), str(FIXTURE_PRISMA)]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         self.assertEqual(self.calls, [])
@@ -521,7 +521,7 @@ class TestPipelineFrameworkOnly(_NoDBDriver):
     def test_config_models_single_string_still_works(self):
         # P1-a: a single string stays valid (back-compat).
         cfg = self._p('c.json')
-        Path(cfg).write_text(json.dumps({'models': str(FIXTURE_PRISMA)}))
+        Path(cfg).write_text(json.dumps({'models': str(FIXTURE_PRISMA)}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         self.assertEqual(self.calls, [])
@@ -544,7 +544,7 @@ class TestPipelineConfigOnly(_NoDBDriver):
 
     def test_config_only_html_with_title(self):
         cfg = self._p('schema.json')
-        Path(cfg).write_text(json.dumps({'title': 'billing', **self._schema_config()}))
+        Path(cfg).write_text(json.dumps({'title': 'billing', **self._schema_config()}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         self.assertEqual(self.calls, [])  # no DB
@@ -552,12 +552,12 @@ class TestPipelineConfigOnly(_NoDBDriver):
         self.assertEqual(set(data), {'customers', 'invoices'})
         self.assertNotIn('schema_missing', data['customers'])
         self.assertEqual(data['invoices']['fk_columns'], ['customer_id'])
-        self.assertIn('<title>billing — ERD</title>', Path(out).read_text())
+        self.assertIn('<title>billing — ERD</title>', Path(out).read_text(encoding='utf-8'))
 
     def test_config_only_excel(self):
         import zipfile
         cfg = self._p('schema.json')
-        Path(cfg).write_text(json.dumps(self._schema_config()))
+        Path(cfg).write_text(json.dumps(self._schema_config()), encoding='utf-8')
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', cfg, '-o', out, '--excel', xlsx)
         self.assertTrue(Path(xlsx).exists())
@@ -569,10 +569,10 @@ class TestPipelineConfigOnly(_NoDBDriver):
     def test_config_only_no_title_falls_back_to_output_stem(self):
         cfg = self._p('schema.json')
         Path(cfg).write_text(json.dumps(
-            {'tables': {'t': {'columns': [{'name': 'id', 'type': 'bigint', 'primary': True}]}}}))
+            {'tables': {'t': {'columns': [{'name': 'id', 'type': 'bigint', 'primary': True}]}}}), encoding='utf-8')
         out = self._p('mybilling.html')
         self._run('--config', cfg, '-o', out)
-        self.assertIn('<title>mybilling — ERD</title>', Path(out).read_text())
+        self.assertIn('<title>mybilling — ERD</title>', Path(out).read_text(encoding='utf-8'))
 
 
 class TestPipelineNoSchemaSourceErrors(_NoDBDriver):
@@ -584,7 +584,7 @@ class TestPipelineNoSchemaSourceErrors(_NoDBDriver):
 
     def test_output_settings_only_config_errors(self):
         cfg = self._p('c.json')
-        Path(cfg).write_text(json.dumps({'output': 'x.html', 'max_rows': 20}))
+        Path(cfg).write_text(json.dumps({'output': 'x.html', 'max_rows': 20}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg)
         self.assertIn('no schema input', str(cm.exception))
@@ -593,7 +593,7 @@ class TestPipelineNoSchemaSourceErrors(_NoDBDriver):
     def test_relations_only_config_no_base_errors(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps(
-            {'relations': [{'table': 'a', 'column': 'b_id', 'references': 'b'}]}))
+            {'relations': [{'table': 'a', 'column': 'b_id', 'references': 'b'}]}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg)
         self.assertIn('no schema input', str(cm.exception))
@@ -714,7 +714,7 @@ class TestFrameworkOverlayRegistry(unittest.TestCase):
                 return erd.make_provider_result('framework', 'marker',
                     {'gizmos': {'associations': []}}, location=str(root))
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / '.marker').write_text('')
+            (Path(d) / '.marker').write_text('', encoding='utf-8')
             self.assertEqual(erd.detect_code_source(Path(d)), 'marker')
             result = erd.framework_provider(Path(d))
             self.assertEqual(result['source']['provider'], 'marker')
@@ -854,18 +854,18 @@ class TestAdapterPlugins(_NoDBDriver):
 
     def test_cli_adapter_registers_scheme_and_runs(self):
         plug, out = self._p('foo_adapter.py'), self._p('out.html')
-        Path(plug).write_text(self._PLUGIN)
+        Path(plug).write_text(self._PLUGIN, encoding='utf-8')
         self._run('foo://host/db', '--adapter', plug, '--no-config', '-o', out)
         self.assertEqual(self.calls, [])  # no built-in DB path touched
         data = self._data(out)['tables']
         self.assertIn('widgets', data)
-        self.assertIn('<title>db — ERD</title>', Path(out).read_text())
+        self.assertIn('<title>db — ERD</title>', Path(out).read_text(encoding='utf-8'))
 
     def test_config_adapters_registers_scheme(self):
         plug, cfg, out = self._p('foo_adapter.py'), self._p('c.json'), self._p('out.html')
-        Path(plug).write_text(self._PLUGIN)
+        Path(plug).write_text(self._PLUGIN, encoding='utf-8')
         Path(cfg).write_text(json.dumps({'adapters': plug, 'database': 'db',
-                                         'engine': 'mysql'}))
+                                         'engine': 'mysql'}), encoding='utf-8')
         # config supplies the adapter; the CLI URL uses its scheme
         self._run('foo://host/db', '--config', cfg, '-o', out)
         self.assertEqual(self.calls, [])
@@ -883,7 +883,7 @@ class TestAdapterPlugins(_NoDBDriver):
         plug, out = self._p('gadget_overlay.py'), self._p('out.html')
         proj = Path(self._p('gadget_project'))
         proj.mkdir()
-        (proj / '.gadget').write_text('')
+        (proj / '.gadget').write_text('', encoding='utf-8')
         Path(plug).write_text(
             "from erd import FrameworkOverlay, register_overlay, make_provider_result\n"
             "@register_overlay\n"
@@ -897,7 +897,7 @@ class TestAdapterPlugins(_NoDBDriver):
             "        return make_provider_result('framework', 'gadget',\n"
             "            {'gadgets': {'columns': [{'name': 'id', 'type': 'integer',\n"
             "             'nullable': False, 'primary': True}], 'associations': [],\n"
-            "             'primary_key': 'id'}}, location=str(root))\n")
+            "             'primary_key': 'id'}}, location=str(root))\n", encoding='utf-8')
         self._run('--adapter', plug, '--models', str(proj), '--no-config', '-o', out)
         self.assertEqual(self.calls, [])
         self.assertIn('gadgets', self._data(out)['tables'])
@@ -942,12 +942,12 @@ class TestSourceDispatch(_NoDBDriver):
         proj = Path(self._p('mixed_rails'))
         (proj / 'app' / 'models').mkdir(parents=True)
         (proj / 'app' / 'models' / 'widget.rb').write_text(
-            'class Widget < ApplicationRecord\n  belongs_to :gadget\nend\n')
+            'class Widget < ApplicationRecord\n  belongs_to :gadget\nend\n', encoding='utf-8')
         (proj / 'schema.prisma').write_text(
-            'model Post {\n  id Int @id\n  title String\n}\n')
+            'model Post {\n  id Int @id\n  title String\n}\n', encoding='utf-8')
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'x', 'type': 'rails.models', 'path': str(proj)}]}))
+            {'id': 'x', 'type': 'rails.models', 'path': str(proj)}]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         data = self._data(out)['tables']
@@ -960,7 +960,7 @@ class TestSourceDispatch(_NoDBDriver):
         # the layout the type expected, not a silently empty "success"
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'x', 'type': 'rails.models', 'path': str(FIXTURE_PRISMA)}]}))
+            {'id': 'x', 'type': 'rails.models', 'path': str(FIXTURE_PRISMA)}]}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg, '-o', self._p('out.html'))
         msg = str(cm.exception)
@@ -973,17 +973,17 @@ class TestSourceDispatch(_NoDBDriver):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
             {'id': 'x', 'type': 'rails.models', 'path': str(FIXTURE_PRISMA),
-             'allow_empty': True}]}))
+             'allow_empty': True}]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         self.assertEqual(self._data(out)['tables'], {})
 
     def test_empty_schema_rb_typed_source_is_an_error(self):
         empty = self._p('schema.rb')
-        Path(empty).write_text('# no create_table here\n')
+        Path(empty).write_text('# no create_table here\n', encoding='utf-8')
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 's', 'type': 'rails.schema', 'path': empty}]}))
+            {'id': 's', 'type': 'rails.schema', 'path': empty}]}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg, '-o', self._p('out.html'))
         msg = str(cm.exception)
@@ -1001,16 +1001,16 @@ class TestSourceDispatch(_NoDBDriver):
         (proj / 'db' / 'schema.rb').write_text(
             'ActiveRecord::Schema.define(version: 1) do\n'
             '  create_table "users" do |t|\n    t.string "name"\n  end\n'
-            'end\n')
+            'end\n', encoding='utf-8')
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'p', 'type': 'rails.project', 'path': str(proj)}]}))
+            {'id': 'p', 'type': 'rails.project', 'path': str(proj)}]}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg, '-o', self._p('out.html'))
         self.assertIn("source 'p:models'", str(cm.exception))
         Path(cfg).write_text(json.dumps({'sources': [
             {'id': 'p', 'type': 'rails.project', 'path': str(proj),
-             'allow_empty': True}]}))
+             'allow_empty': True}]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         self.assertIn('users', self._data(out)['tables'])
@@ -1022,12 +1022,12 @@ class TestSourceDispatch(_NoDBDriver):
         proj = Path(self._p('mixed'))
         (proj / 'app' / 'models').mkdir(parents=True)
         (proj / 'app' / 'models' / 'widget.rb').write_text(
-            'class Widget < ApplicationRecord\nend\n')
+            'class Widget < ApplicationRecord\nend\n', encoding='utf-8')
         (proj / 'schema.prisma').write_text(
-            'model Post {\n  id Int @id\n  title String\n}\n')
+            'model Post {\n  id Int @id\n  title String\n}\n', encoding='utf-8')
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'x', 'type': 'prisma.models', 'path': str(proj)}]}))
+            {'id': 'x', 'type': 'prisma.models', 'path': str(proj)}]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '-o', out)
         data = self._data(out)['tables']
@@ -1037,7 +1037,7 @@ class TestSourceDispatch(_NoDBDriver):
     def test_unknown_source_type_lists_known_types(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'x', 'type': 'nope', 'path': str(FIXTURE_RAILS)}]}))
+            {'id': 'x', 'type': 'nope', 'path': str(FIXTURE_RAILS)}]}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg, '-o', self._p('out.html'))
         msg = str(cm.exception)
@@ -1047,7 +1047,7 @@ class TestSourceDispatch(_NoDBDriver):
     def test_typed_source_path_must_exist(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'x', 'type': 'rails.models', 'path': self._p('nope')}]}))
+            {'id': 'x', 'type': 'rails.models', 'path': self._p('nope')}]}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', cfg, '-o', self._p('out.html'))
         self.assertIn('does not exist', str(cm.exception))
@@ -1055,7 +1055,7 @@ class TestSourceDispatch(_NoDBDriver):
     def test_sources_and_models_both_apply(self):
         cfg = self._p('c.json')
         Path(cfg).write_text(json.dumps({'sources': [
-            {'id': 'x', 'type': 'prisma.models', 'path': str(FIXTURE_PRISMA)}]}))
+            {'id': 'x', 'type': 'prisma.models', 'path': str(FIXTURE_PRISMA)}]}), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', cfg, '--models', str(FIXTURE_RAILS), '-o', out)
         data = self._data(out)['tables']
@@ -1070,8 +1070,8 @@ class TestSourceDispatch(_NoDBDriver):
         proj = Path(self._p('ambiguous'))
         (proj / 'app' / 'models').mkdir(parents=True)
         (proj / 'app' / 'models' / 'widget.rb').write_text(
-            'class Widget < ApplicationRecord\nend\n')
-        (proj / 'schema.prisma').write_text('model Post {\n  id Int @id\n}\n')
+            'class Widget < ApplicationRecord\nend\n', encoding='utf-8')
+        (proj / 'schema.prisma').write_text('model Post {\n  id Int @id\n}\n', encoding='utf-8')
         out = self._p('out.html')
         err = io.StringIO()
         with redirect_stderr(err):

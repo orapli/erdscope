@@ -440,7 +440,7 @@ def _load(cfg_dict):
     tmp = tempfile.TemporaryDirectory()
     try:
         path = Path(tmp.name) / 'c.json'
-        path.write_text(json.dumps(cfg_dict))
+        path.write_text(json.dumps(cfg_dict), encoding='utf-8')
         args = type('Args', (), {'config': str(path), 'no_config': False})()
         return erd.load_config(args)
     finally:
@@ -590,7 +590,7 @@ class _NoDBDriver(unittest.TestCase):
         out = self._p('out.html')
         snap = self._p('snap.json')
         self._run('--config', cfg_path, '-o', out, '--emit-json', snap)
-        return json.loads(Path(snap).read_text())['schema']
+        return json.loads(Path(snap).read_text(encoding='utf-8'))['schema']
 
 
 def _level1(schema):
@@ -670,7 +670,7 @@ class TestLevel1RoundTrip(_NoDBDriver):
         out = self._p('out2.html')
         snap = self._p('snap2.json')
         self._run('--config', yaml_path, '-o', out, '--emit-json', snap)
-        yaml_reimported = json.loads(Path(snap).read_text())['schema']
+        yaml_reimported = json.loads(Path(snap).read_text(encoding='utf-8'))['schema']
 
         self.assertEqual(_level1(json_reimported), _level1(yaml_reimported))
         self.assertEqual(json_reimported['notes'], yaml_reimported['notes'])
@@ -722,7 +722,7 @@ class _EmitConfigDriver(unittest.TestCase):
 class TestCLIExtensionDispatch(_EmitConfigDriver):
     def test_json_extension_writes_json(self):
         self._run('--emit-config', 'schema.json')
-        doc = json.loads((Path(self.tmp.name) / 'schema.json').read_text())
+        doc = json.loads((Path(self.tmp.name) / 'schema.json').read_text(encoding='utf-8'))
         self.assertEqual(doc['version'], 1)
 
     def test_dash_stdout_is_always_json(self):
@@ -743,14 +743,14 @@ class TestCLIExtensionDispatch(_EmitConfigDriver):
     def test_yml_extension_writes_yaml(self):
         self._run('--emit-config', 'schema.yml')
         import yaml
-        doc = yaml.safe_load((Path(self.tmp.name) / 'schema.yml').read_text())
+        doc = yaml.safe_load((Path(self.tmp.name) / 'schema.yml').read_text(encoding='utf-8'))
         self.assertEqual(doc['version'], 1)
 
     @unittest.skipUnless(HAS_YAML, 'PyYAML not installed')
     def test_yaml_extension_writes_yaml(self):
         self._run('--emit-config', 'schema.yaml')
         import yaml
-        doc = yaml.safe_load((Path(self.tmp.name) / 'schema.yaml').read_text())
+        doc = yaml.safe_load((Path(self.tmp.name) / 'schema.yaml').read_text(encoding='utf-8'))
         self.assertEqual(doc['version'], 1)
 
     def test_yml_without_pyyaml_errors_with_no_json_fallback(self):

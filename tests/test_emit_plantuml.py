@@ -413,7 +413,7 @@ class TestCLIFileOutput(_EmitPlantUMLDriver):
     def test_emit_plantuml_writes_alongside_html(self):
         self._run('--emit-plantuml', 'schema.puml')
         self.assertTrue((Path(self.tmp.name) / 'erd.html').exists())
-        text = (Path(self.tmp.name) / 'schema.puml').read_text()
+        text = (Path(self.tmp.name) / 'schema.puml').read_text(encoding='utf-8')
         self.assertIn('@startuml', text)
         self.assertIn('entity posts', text)
         self.assertIn('entity users', text)
@@ -457,14 +457,14 @@ class TestCLIStdout(_EmitPlantUMLDriver):
 class TestCLIFiltering(_EmitPlantUMLDriver):
     def test_only_reflected_including_dangling_association_pruning(self):
         self._run('--emit-plantuml', 'schema.puml', '--only', 'posts')
-        text = (Path(self.tmp.name) / 'schema.puml').read_text()
+        text = (Path(self.tmp.name) / 'schema.puml').read_text(encoding='utf-8')
         self.assertIn('entity posts', text)
         self.assertNotIn('entity users', text)
         self.assertNotIn('--o{', text)
 
     def test_exclude_reflected(self):
         self._run('--emit-plantuml', 'schema.puml', '--exclude', 'posts')
-        text = (Path(self.tmp.name) / 'schema.puml').read_text()
+        text = (Path(self.tmp.name) / 'schema.puml').read_text(encoding='utf-8')
         self.assertIn('entity users', text)
         self.assertNotIn('entity posts', text)
 

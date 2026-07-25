@@ -284,7 +284,7 @@ class TestSQLAlchemyDetection(unittest.TestCase):
     def _detect(self, text, name='models.py'):
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / name
-            f.write_text(text)
+            f.write_text(text, encoding='utf-8')
             return erd.SQLAlchemyOverlay().detect(f), erd.SQLAlchemyOverlay().detect(Path(tmp))
 
     def test_declarative_base_call_alone_is_enough(self):
@@ -318,7 +318,7 @@ class TestSQLAlchemyDetection(unittest.TestCase):
     def test_non_python_file_is_never_detected(self):
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / 'schema.rb'
-            f.write_text('declarative_base()')
+            f.write_text('declarative_base()', encoding='utf-8')
             self.assertFalse(erd.SQLAlchemyOverlay().detect(f))
 
     def test_priority_runs_after_rails_django_prisma(self):
@@ -407,7 +407,7 @@ class TestDeclarativeBaseSubclassIsABase(unittest.TestCase):
 
     def _parse(self, text):
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / 'models.py').write_text(text)
+            (Path(tmp) / 'models.py').write_text(text, encoding='utf-8')
             return erd.parse_sqlalchemy(Path(tmp))
 
     def test_no_phantom_base_table(self):

@@ -1101,11 +1101,11 @@ class TestLaravelProjectRoot(unittest.TestCase):
     def _project_root(self, tmp):
         models = Path(tmp) / 'app' / 'Models'
         models.mkdir(parents=True)
-        (models / 'Post.php').write_text(self.MODEL)
+        (models / 'Post.php').write_text(self.MODEL, encoding='utf-8')
         (models / 'User.php').write_text(
             '<?php\nnamespace App\\Models;\n'
             'use Illuminate\\Database\\Eloquent\\Model;\n'
-            'class User extends Model {}\n')
+            'class User extends Model {}\n', encoding='utf-8')
         return Path(tmp)
 
     def test_detects_project_root(self):
@@ -1354,7 +1354,7 @@ class TestExcel(unittest.TestCase):
         tables = db_tables()
         with tempfile.TemporaryDirectory() as tmp:
             fake = Path(tmp) / 'not_a_workbook.xlsx'
-            fake.write_text('this is plain text, not a zip')
+            fake.write_text('this is plain text, not a zip', encoding='utf-8')
             out = Path(tmp) / 'defs.xlsx'
             with self.assertRaises(SystemExit) as cm:
                 erd.write_excel(tables, out, 'testdb', template_path=str(fake))
@@ -1412,7 +1412,7 @@ class TestLoadConfig(unittest.TestCase):
     def test_explicit_config_loads_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
-            path.write_text('{"max_rows": 30, "only": ["a", "b"]}')
+            path.write_text('{"max_rows": 30, "only": ["a", "b"]}', encoding='utf-8')
             config = erd.load_config(self._args(config=str(path)))
         self.assertEqual(config, {'max_rows': 30, 'only': ['a', 'b']})
 
@@ -1428,7 +1428,7 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_no_config_skips_auto_discovery(self):
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 99}')
+            (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 99}', encoding='utf-8')
             orig = os.getcwd()
             os.chdir(tmp)
             try:
@@ -1438,7 +1438,7 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_auto_discovers_erdscope_json_in_cwd(self):
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 42}')
+            (Path(tmp) / '.erdscope.json').write_text('{"max_rows": 42}', encoding='utf-8')
             orig = os.getcwd()
             os.chdir(tmp)
             try:
@@ -1450,7 +1450,7 @@ class TestLoadConfig(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
             path.write_text('{"host": "127.0.0.1", "port": 3307, '
-                            '"user": "readonly", "database": "myapp_production"}')
+                            '"user": "readonly", "database": "myapp_production"}', encoding='utf-8')
             config = erd.load_config(self._args(config=str(path)))
         self.assertEqual(config['host'], '127.0.0.1')
         self.assertEqual(config['database'], 'myapp_production')
@@ -1459,7 +1459,7 @@ class TestLoadConfig(unittest.TestCase):
         for key in ('password', 'passwd', 'pwd', 'url', 'database_url'):
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / 'my.json'
-                path.write_text(json.dumps({key: 'whatever'}))
+                path.write_text(json.dumps({key: 'whatever'}), encoding='utf-8')
                 with self.assertRaises(SystemExit) as cm:
                     erd.load_config(self._args(config=str(path)))
             self.assertIn(key, str(cm.exception))
@@ -1467,7 +1467,7 @@ class TestLoadConfig(unittest.TestCase):
     def test_unknown_key_exits(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
-            path.write_text('{"totally_bogus": 1}')
+            path.write_text('{"totally_bogus": 1}', encoding='utf-8')
             with self.assertRaises(SystemExit) as cm:
                 erd.load_config(self._args(config=str(path)))
         self.assertIn('totally_bogus', str(cm.exception))
@@ -1475,14 +1475,14 @@ class TestLoadConfig(unittest.TestCase):
     def test_relations_key_allowed_though_not_in_config_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
-            path.write_text('{"relations": []}')
+            path.write_text('{"relations": []}', encoding='utf-8')
             config = erd.load_config(self._args(config=str(path)))
         self.assertEqual(config, {'relations': []})
 
     def test_invalid_json_exits_with_clear_message(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
-            path.write_text('{not valid json')
+            path.write_text('{not valid json', encoding='utf-8')
             with self.assertRaises(SystemExit) as cm:
                 erd.load_config(self._args(config=str(path)))
         self.assertIn('JSON', str(cm.exception))
@@ -1490,7 +1490,7 @@ class TestLoadConfig(unittest.TestCase):
     def test_top_level_must_be_object(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
-            path.write_text('[1, 2, 3]')
+            path.write_text('[1, 2, 3]', encoding='utf-8')
             with self.assertRaises(SystemExit) as cm:
                 erd.load_config(self._args(config=str(path)))
         self.assertIn('object', str(cm.exception))
@@ -1502,7 +1502,7 @@ class TestLoadConfig(unittest.TestCase):
             self.skipTest('PyYAML not installed')
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.yml'
-            path.write_text('max_rows: 25\nonly:\n  - a\n  - b\n')
+            path.write_text('max_rows: 25\nonly:\n  - a\n  - b\n', encoding='utf-8')
             config = erd.load_config(self._args(config=str(path)))
         self.assertEqual(config, {'max_rows': 25, 'only': ['a', 'b']})
 
@@ -1516,7 +1516,7 @@ class TestConfigTypeValidation(unittest.TestCase):
     def _load(self, obj):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'my.json'
-            path.write_text(json.dumps(obj))
+            path.write_text(json.dumps(obj), encoding='utf-8')
             return erd.load_config(SimpleNamespace(config=str(path), no_config=False))
 
     def test_max_rows_as_string_rejected(self):
@@ -1605,7 +1605,7 @@ class TestMainConfigIntegration(unittest.TestCase):
         erd.main()
 
     def _load_output(self, filename='erd.html'):
-        html = (Path(self.tmp.name) / filename).read_text()
+        html = (Path(self.tmp.name) / filename).read_text(encoding='utf-8')
         m = re.search(r'const DATA = (\{.*?\});\s*\n', html)
         return json.loads(m.group(1))
 
@@ -1614,7 +1614,7 @@ class TestMainConfigIntegration(unittest.TestCase):
             'only': ['posts', 'comments'],
             'relations': [{'table': 'comments', 'column': 'post_id',
                           'references': 'posts', 'name': 'thread'}],
-        }))
+        }), encoding='utf-8')
         self._run()
         data = self._load_output()
         self.assertEqual(set(data['tables']), {'posts', 'comments'})
@@ -1622,30 +1622,30 @@ class TestMainConfigIntegration(unittest.TestCase):
         self.assertIn('thread', names)
 
     def test_relations_entry_that_is_not_an_object_exits_cleanly(self):
-        Path('.erdscope.json').write_text(json.dumps({'relations': ['oops']}))
+        Path('.erdscope.json').write_text(json.dumps({'relations': ['oops']}), encoding='utf-8')
         with self.assertRaises(SystemExit) as cm:
             self._run()
         self.assertIn('relations', str(cm.exception))
 
     def test_cli_only_fully_replaces_config_only_not_merged(self):
-        Path('.erdscope.json').write_text(json.dumps({'only': ['posts', 'comments', 'users']}))
+        Path('.erdscope.json').write_text(json.dumps({'only': ['posts', 'comments', 'users']}), encoding='utf-8')
         self._run('--only', 'tags')
         data = self._load_output()
         self.assertEqual(set(data['tables']), {'tags'})
 
     def test_cli_output_flag_overrides_config(self):
-        Path('.erdscope.json').write_text(json.dumps({'output': 'from_config.html'}))
+        Path('.erdscope.json').write_text(json.dumps({'output': 'from_config.html'}), encoding='utf-8')
         self._run('-o', 'from_cli.html')
         self.assertTrue((Path(self.tmp.name) / 'from_cli.html').exists())
         self.assertFalse((Path(self.tmp.name) / 'from_config.html').exists())
 
     def test_config_output_used_when_cli_omits_it(self):
-        Path('.erdscope.json').write_text(json.dumps({'output': 'from_config.html'}))
+        Path('.erdscope.json').write_text(json.dumps({'output': 'from_config.html'}), encoding='utf-8')
         self._run()
         self.assertTrue((Path(self.tmp.name) / 'from_config.html').exists())
 
     def test_no_config_flag_ignores_discovered_file(self):
-        Path('.erdscope.json').write_text(json.dumps({'only': ['tags']}))
+        Path('.erdscope.json').write_text(json.dumps({'only': ['tags']}), encoding='utf-8')
         self._run('--no-config')
         data = self._load_output()
         self.assertGreater(len(data['tables']), 1)  # unfiltered
@@ -1654,7 +1654,7 @@ class TestMainConfigIntegration(unittest.TestCase):
         # the framework overlay only runs with --models; here we just check
         # the config's table_map dict shape survives the merge loop without
         # needing the CLI "Class=table" string-splitting path
-        Path('.erdscope.json').write_text(json.dumps({'table_map': {'Widget': 'crm_widgets'}}))
+        Path('.erdscope.json').write_text(json.dumps({'table_map': {'Widget': 'crm_widgets'}}), encoding='utf-8')
         self._run('--models', str(FIXTURE))
         data = self._load_output()
         self.assertIn('crm_widgets', data['tables'])
@@ -1665,7 +1665,7 @@ class TestMainConfigIntegration(unittest.TestCase):
         erd.parse_mysql = lambda url: (seen.append(url) or db_tables())
         Path('.erdscope.json').write_text(json.dumps({
             'host': '127.0.0.1', 'port': 3307, 'user': 'readonly', 'database': 'myapp_production',
-        }))
+        }), encoding='utf-8')
         sys.argv = ['erd.py']  # no CLI positional at all — config supplies the connection
         erd.main()
         self.assertEqual(seen, ['mysql://readonly@127.0.0.1:3307/myapp_production'])
@@ -1675,7 +1675,7 @@ class TestMainConfigIntegration(unittest.TestCase):
         erd.parse_mysql = lambda url: (seen.append(url) or db_tables())
         Path('.erdscope.json').write_text(json.dumps({
             'host': 'from-config', 'database': 'from_config_db',
-        }))
+        }), encoding='utf-8')
         sys.argv = ['erd.py', 'mysql://cli-wins@example/db']
         erd.main()
         self.assertEqual(seen, ['mysql://cli-wins@example/db'])
@@ -1696,7 +1696,7 @@ class TestMainConfigIntegration(unittest.TestCase):
         conn.close()
         Path('.erdscope.json').write_text(json.dumps({
             'engine': 'sqlite', 'database': dbpath,
-        }))
+        }), encoding='utf-8')
         sys.argv = ['erd.py']
         erd.main()
         data = self._load_output()
@@ -1718,7 +1718,7 @@ class TestMainConfigIntegration(unittest.TestCase):
             self.skipTest('PyYAML not installed')
         seen = []
         erd.parse_mysql = lambda url: (seen.append(url) or db_tables())
-        Path('.erdscope.yml').write_text('host: dbhost\nuser: readonly\ndatabase: shop\n')
+        Path('.erdscope.yml').write_text('host: dbhost\nuser: readonly\ndatabase: shop\n', encoding='utf-8')
         sys.argv = ['erd.py']
         erd.main()
         self.assertEqual(seen, ['mysql://readonly@dbhost:3306/shop'])

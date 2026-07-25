@@ -261,7 +261,7 @@ class _NoDBDriver(unittest.TestCase):
 
     def _data(self, path):
         return json.loads(re.search(r'const DATA = (\{.*?\});\s*\n',
-                                    Path(path).read_text()).group(1))
+                                    Path(path).read_text(encoding='utf-8')).group(1))
 
 
 class TestNotesTwoStageValidation(_NoDBDriver):
@@ -276,7 +276,7 @@ class TestNotesTwoStageValidation(_NoDBDriver):
                'notes': [{'id': 'n1', 'target': {'type': 'table', 'table': 'settings'},
                          'text': 'hi'}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -294,7 +294,7 @@ class TestNotesTwoStageValidation(_NoDBDriver):
                              'target_table': 'users', 'foreign_key': 'user_id'},
                          'text': 'hi'}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -309,7 +309,7 @@ class TestNotesTwoStageValidation(_NoDBDriver):
                'notes': [{'id': 'n1', 'target': {'type': 'table', 'table': 'webhooks'},
                          'text': 'hi'}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', path, '-o', out)
@@ -325,7 +325,7 @@ class TestNotesTwoStageValidation(_NoDBDriver):
                'notes': [{'id': 'n1', 'target': {'type': 'table', 'table': 'users'},
                          'text': 'hi'}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -360,7 +360,7 @@ class TestNotesOnlyExcludeFiltering(_NoDBDriver):
 
     def test_exclude_drops_table_and_relation_notes_for_the_excluded_table(self):
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._cfg()))
+        Path(path).write_text(json.dumps(self._cfg()), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out, '--exclude', 'secret', '--exclude', 'orders')
         data = self._data(out)
@@ -373,7 +373,7 @@ class TestNotesOnlyExcludeFiltering(_NoDBDriver):
 
     def test_only_keeps_notes_for_surviving_tables_alone(self):
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._cfg()))
+        Path(path).write_text(json.dumps(self._cfg()), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out, '--only', 'users')
         data = self._data(out)
@@ -388,7 +388,7 @@ class TestNotesOnlyExcludeFiltering(_NoDBDriver):
         # `target: users` would otherwise leak into a users-less HTML — must
         # be dropped too. (Filtering on source_table alone used to keep it.)
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._cfg()))
+        Path(path).write_text(json.dumps(self._cfg()), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out, '--only', 'orders')
         data = self._data(out)
@@ -404,7 +404,7 @@ class TestNotesOnlyExcludeFiltering(_NoDBDriver):
                         {'id': 't1', 'target': {'type': 'table', 'table': 'secret'},
                          'text': 'bye'}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out, '--exclude', 'secret')
         data = self._data(out)
@@ -413,7 +413,7 @@ class TestNotesOnlyExcludeFiltering(_NoDBDriver):
     def test_no_filtering_flags_keeps_every_note(self):
         # sanity/no-op guard: without --only/--exclude, nothing is dropped
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._cfg()))
+        Path(path).write_text(json.dumps(self._cfg()), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -440,7 +440,7 @@ class TestNotesInferFkTargeting(_NoDBDriver):
 
     def test_note_on_an_infer_fk_relation_resolves_with_infer_fk_on(self):
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._cfg()))
+        Path(path).write_text(json.dumps(self._cfg()), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out, '--infer-fk')
         data = self._data(out)
@@ -452,7 +452,7 @@ class TestNotesInferFkTargeting(_NoDBDriver):
         # sanity: without --infer-fk the relation genuinely doesn't exist, so
         # this must still be a "no relation" error, not silently pass
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._cfg()))
+        Path(path).write_text(json.dumps(self._cfg()), encoding='utf-8')
         out = self._p('out.html')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', path, '-o', out)
@@ -469,7 +469,7 @@ class TestNotesSerializeAndDemoParity(_NoDBDriver):
         # the demo-byte-equality guardrail (§10.1): a config with no `notes`
         # at all must produce EXACTLY today's DATA_JSON shape
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._schema()))
+        Path(path).write_text(json.dumps(self._schema()), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         self.assertNotIn('notes', self._data(out))
@@ -478,7 +478,7 @@ class TestNotesSerializeAndDemoParity(_NoDBDriver):
         cfg = self._schema()
         cfg['notes'] = []
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         self.assertNotIn('notes', self._data(out))
@@ -487,7 +487,7 @@ class TestNotesSerializeAndDemoParity(_NoDBDriver):
         cfg = self._schema()
         cfg['notes'] = [{'id': 'n1', 'target': {'type': 'global'}, 'text': 'hi'}]
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         self.assertEqual(self._data(out)['notes'],
@@ -498,10 +498,10 @@ class TestNotesSerializeAndDemoParity(_NoDBDriver):
         cfg['notes'] = [{'id': 'n1', 'target': {'type': 'global'},
                          'text': 'boom </script><script>alert(1)</script>'}]
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
-        html = Path(out).read_text()
+        html = Path(out).read_text(encoding='utf-8')
         self.assertNotIn('</script><script>alert', html)
         self.assertIn('<\\/script>', html)  # same existing DATA_JSON `</` -> `<\/` guard
         # escaping is presentation-only: the JSON payload round-trips to the
@@ -519,7 +519,7 @@ class TestNotesSerializeAndDemoParity(_NoDBDriver):
         payload_text = '<b>bold</b> "onx=alert(1)"'
         cfg['notes'] = [{'id': 'n1', 'target': {'type': 'global'}, 'text': payload_text}]
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         self.assertEqual(self._data(out)['notes'][0]['text'], payload_text)
@@ -543,7 +543,7 @@ class TestNotesBackwardCompatRegression(_NoDBDriver):
         cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}},
                'notes': [{'id': 'n1', 'target': {'type': 'global'}, 'text': 'hi'}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', path, '-o', out, '--excel', xlsx)
         self.assertTrue(Path(xlsx).exists())
@@ -560,7 +560,7 @@ class TestNotesBackwardCompatRegression(_NoDBDriver):
         import zipfile
         cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}}}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', path, '-o', out, '--excel', xlsx)
         with zipfile.ZipFile(xlsx) as z:

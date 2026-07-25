@@ -373,7 +373,7 @@ class TestCLIFileOutput(_EmitMermaidDriver):
     def test_emit_mermaid_writes_alongside_html(self):
         self._run('--emit-mermaid', 'schema.mmd')
         self.assertTrue((Path(self.tmp.name) / 'erd.html').exists())
-        text = (Path(self.tmp.name) / 'schema.mmd').read_text()
+        text = (Path(self.tmp.name) / 'schema.mmd').read_text(encoding='utf-8')
         self.assertIn('erDiagram', text)
         self.assertIn('posts {', text)
         self.assertIn('users {', text)
@@ -416,14 +416,14 @@ class TestCLIStdout(_EmitMermaidDriver):
 class TestCLIFiltering(_EmitMermaidDriver):
     def test_only_reflected_including_dangling_association_pruning(self):
         self._run('--emit-mermaid', 'schema.mmd', '--only', 'posts')
-        text = (Path(self.tmp.name) / 'schema.mmd').read_text()
+        text = (Path(self.tmp.name) / 'schema.mmd').read_text(encoding='utf-8')
         self.assertIn('posts {', text)
         self.assertNotIn('users {', text)
         self.assertNotIn('--', text.split('erDiagram')[1].split('posts {')[0])
 
     def test_exclude_reflected(self):
         self._run('--emit-mermaid', 'schema.mmd', '--exclude', 'posts')
-        text = (Path(self.tmp.name) / 'schema.mmd').read_text()
+        text = (Path(self.tmp.name) / 'schema.mmd').read_text(encoding='utf-8')
         self.assertIn('users {', text)
         self.assertNotIn('posts {', text)
 

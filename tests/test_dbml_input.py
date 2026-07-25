@@ -34,7 +34,7 @@ def _parse(text):
     run_input_specs does that, for the real CLI path)."""
     tmp = tempfile.TemporaryDirectory()
     path = Path(tmp.name) / 'schema.dbml'
-    path.write_text(text)
+    path.write_text(text, encoding='utf-8')
     result = erd.dbml_provider(path, given='schema.dbml')
     tmp.cleanup()
     return result['tables'], result['warnings']
@@ -424,7 +424,7 @@ class TestSourceShape(unittest.TestCase):
     def test_provider_result_kind_and_provider(self):
         tmp = tempfile.TemporaryDirectory()
         path = Path(tmp.name) / 'schema.dbml'
-        path.write_text('Table t {\n  id integer [pk]\n}\n')
+        path.write_text('Table t {\n  id integer [pk]\n}\n', encoding='utf-8')
         result = erd.dbml_provider(path, given='schema.dbml')
         tmp.cleanup()
         self.assertEqual(result['source']['kind'], 'schema')
@@ -452,11 +452,11 @@ class TestCLIWiring(unittest.TestCase):
                   user_id integer
                 }
                 Ref: posts.user_id > users.id
-            ''')
+            ''', encoding='utf-8')
             cfg_path = tmp / 'c.json'
             cfg_path.write_text(
                 '{"sources": [{"id": "s", "type": "dbml", "path": "%s"}]}'
-                % str(dbml_path).replace('\\', '\\\\'))
+                % str(dbml_path).replace('\\', '\\\\'), encoding='utf-8')
             out = tmp / 'out.html'
             import sys
             argv = sys.argv
@@ -466,7 +466,7 @@ class TestCLIWiring(unittest.TestCase):
                     erd.main()
             finally:
                 sys.argv = argv
-            html = out.read_text()
+            html = out.read_text(encoding='utf-8')
             self.assertIn('"users"', html)
             self.assertIn('"posts"', html)
 

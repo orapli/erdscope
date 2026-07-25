@@ -315,7 +315,7 @@ class TestCLIFileOutput(_EmitDigestDriver):
     def test_emit_digest_writes_alongside_html(self):
         self._run('--emit-digest', 'digest.md')
         self.assertTrue((Path(self.tmp.name) / 'erd.html').exists())
-        text = (Path(self.tmp.name) / 'digest.md').read_text()
+        text = (Path(self.tmp.name) / 'digest.md').read_text(encoding='utf-8')
         self.assertTrue(text.startswith('# testdb — schema digest'))
         self.assertIn('### posts', text)
         self.assertIn('### users', text)
@@ -356,7 +356,7 @@ class TestCLIStdout(_EmitDigestDriver):
 class TestCLIFiltering(_EmitDigestDriver):
     def test_only_reflected_including_dangling_association_pruning(self):
         self._run('--emit-digest', 'digest.md', '--only', 'posts')
-        text = (Path(self.tmp.name) / 'digest.md').read_text()
+        text = (Path(self.tmp.name) / 'digest.md').read_text(encoding='utf-8')
         self.assertIn('### posts', text)
         self.assertNotIn('### users', text)
         # 'users' filtered out -> posts' belongs_to :user must be pruned as
@@ -365,7 +365,7 @@ class TestCLIFiltering(_EmitDigestDriver):
 
     def test_exclude_reflected(self):
         self._run('--emit-digest', 'digest.md', '--exclude', 'posts')
-        text = (Path(self.tmp.name) / 'digest.md').read_text()
+        text = (Path(self.tmp.name) / 'digest.md').read_text(encoding='utf-8')
         self.assertIn('### users', text)
         self.assertNotIn('### posts', text)
 

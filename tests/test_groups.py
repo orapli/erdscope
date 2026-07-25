@@ -128,7 +128,7 @@ class _NoDBDriver(unittest.TestCase):
 
     def _data(self, path):
         return json.loads(re.search(r'const DATA = (\{.*?\});\s*\n',
-                                    Path(path).read_text()).group(1))
+                                    Path(path).read_text(encoding='utf-8')).group(1))
 
 
 class TestGroupsTwoStageValidation(_NoDBDriver):
@@ -142,7 +142,7 @@ class TestGroupsTwoStageValidation(_NoDBDriver):
         cfg = {'tables': {'settings': {'columns': [{'name': 'id', 'primary': True}]}},
                'groups': [{'id': 'g1', 'tables': ['settings']}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -156,7 +156,7 @@ class TestGroupsTwoStageValidation(_NoDBDriver):
                'tables': {'webhooks': {'drop': True}},
                'groups': [{'id': 'g1', 'tables': ['webhooks']}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         with self.assertRaises(SystemExit) as cm:
             self._run('--config', path, '-o', out)
@@ -171,7 +171,7 @@ class TestGroupsTwoStageValidation(_NoDBDriver):
                'tables': {'webhooks': {'drop': True}},
                'groups': [{'id': 'g1', 'tables': ['users']}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -193,7 +193,7 @@ class TestGroupsOnlyExcludeFiltering(_NoDBDriver):
                'groups': [{'id': 'people', 'tables': ['users']},
                          {'id': 'secret-domain', 'tables': ['secret']}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out, '--exclude', 'secret')
         data = self._data(out)
@@ -208,7 +208,7 @@ class TestGroupsOnlyExcludeFiltering(_NoDBDriver):
                    'users': {'columns': [{'name': 'id', 'primary': True}]}},
                'groups': [{'id': 'commerce', 'tables': ['orders', 'payments']}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out, '--only', 'orders', '--only', 'users')
         data = self._data(out)
@@ -223,7 +223,7 @@ class TestGroupsOnlyExcludeFiltering(_NoDBDriver):
                    'orders': {'columns': [{'name': 'id', 'primary': True}]}},
                'groups': [{'id': 'g1', 'tables': ['users', 'orders']}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -238,7 +238,7 @@ class TestGroupsSerializeAndDemoParity(_NoDBDriver):
         # the demo-byte-equality guardrail: a config with no `groups` at all
         # must produce EXACTLY today's (pre-groups-feature) DATA_JSON shape
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(self._schema()))
+        Path(path).write_text(json.dumps(self._schema()), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         self.assertNotIn('groups', self._data(out))
@@ -247,7 +247,7 @@ class TestGroupsSerializeAndDemoParity(_NoDBDriver):
         cfg = self._schema()
         cfg['groups'] = []
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         self.assertNotIn('groups', self._data(out))
@@ -257,7 +257,7 @@ class TestGroupsSerializeAndDemoParity(_NoDBDriver):
         cfg['groups'] = [{'id': 'g1', 'tables': ['t'], 'title': 'Everything',
                           'color': '#0d9488'}]
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         self.assertEqual(self._data(out)['groups'],
@@ -269,10 +269,10 @@ class TestGroupsSerializeAndDemoParity(_NoDBDriver):
         cfg['groups'] = [{'id': 'g1', 'tables': ['t'],
                           'title': 'boom </script><script>alert(1)</script>'}]
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
-        html = Path(out).read_text()
+        html = Path(out).read_text(encoding='utf-8')
         self.assertNotIn('</script><script>alert', html)
         self.assertIn('<\\/script>', html)  # same existing DATA_JSON `</` -> `<\/` guard
         self.assertEqual(self._data(out)['groups'][0]['title'],
@@ -294,7 +294,7 @@ class TestGroupsBackwardCompatRegression(_NoDBDriver):
     def test_notes_and_groups_coexist_independently(self):
         cfg = self._schema_with_notes_and_groups()
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out = self._p('out.html')
         self._run('--config', path, '-o', out)
         data = self._data(out)
@@ -313,7 +313,7 @@ class TestGroupsBackwardCompatRegression(_NoDBDriver):
         cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}},
                'groups': [{'id': 'g1', 'title': 'Core', 'tables': ['t']}]}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', path, '-o', out, '--excel', xlsx)
         self.assertTrue(Path(xlsx).exists())
@@ -331,7 +331,7 @@ class TestGroupsBackwardCompatRegression(_NoDBDriver):
         import zipfile
         cfg = {'tables': {'t': {'columns': [{'name': 'id', 'primary': True}]}}}
         path = self._p('c.json')
-        Path(path).write_text(json.dumps(cfg))
+        Path(path).write_text(json.dumps(cfg), encoding='utf-8')
         out, xlsx = self._p('out.html'), self._p('defs.xlsx')
         self._run('--config', path, '-o', out, '--excel', xlsx)
         with zipfile.ZipFile(xlsx) as z:

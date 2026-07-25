@@ -462,7 +462,7 @@ class TestCLIFileOutput(_EmitJsonDriver):
     def test_emit_json_writes_alongside_html(self):
         self._run('--emit-json', 'snap.json')
         self.assertTrue((Path(self.tmp.name) / 'erd.html').exists())
-        snap = json.loads((Path(self.tmp.name) / 'snap.json').read_text())
+        snap = json.loads((Path(self.tmp.name) / 'snap.json').read_text(encoding='utf-8'))
         self.assertEqual(snap['format'], 1)
         self.assertTrue(snap['fingerprint'].startswith('sha256:'))
         self.assertEqual(set(snap['schema']['tables']), {'users', 'posts'})
@@ -508,7 +508,7 @@ class TestCLIStdout(_EmitJsonDriver):
 class TestCLIFiltering(_EmitJsonDriver):
     def test_only_reflected_including_dangling_association_pruning(self):
         self._run('--emit-json', 'snap.json', '--only', 'posts')
-        snap = json.loads((Path(self.tmp.name) / 'snap.json').read_text())
+        snap = json.loads((Path(self.tmp.name) / 'snap.json').read_text(encoding='utf-8'))
         self.assertEqual(set(snap['schema']['tables']), {'posts'})
         # 'users' is filtered out -> posts' belongs_to :user (target 'users')
         # must be pruned as dangling, not just left referencing a ghost table
@@ -516,7 +516,7 @@ class TestCLIFiltering(_EmitJsonDriver):
 
     def test_exclude_reflected(self):
         self._run('--emit-json', 'snap.json', '--exclude', 'posts')
-        snap = json.loads((Path(self.tmp.name) / 'snap.json').read_text())
+        snap = json.loads((Path(self.tmp.name) / 'snap.json').read_text(encoding='utf-8'))
         self.assertEqual(set(snap['schema']['tables']), {'users'})
 
 
