@@ -231,6 +231,53 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         self.assertEqual(res['restoredTableLogical'], '</script><script>alert(1)</script>')
         self.assertFalse(res['restoredDirtyState'], "Newly opened exported HTML should be in a clean state (isConfigDirty = false)")
 
+    def test_startup_does_not_write_empty_persisted_config(self):
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(str(self.out_path))}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+        
+        const storageMap = {{}};
+        global.localStorage = {{
+          getItem: k => storageMap[k] || null,
+          setItem: (k, v) => storageMap[k] = String(v),
+          removeItem: k => delete storageMap[k]
+        }};
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.requestAnimationFrame = cb => cb();
+        global.clearTimeout = () => {{}};
+        global.setTimeout = () => {{}};
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), removeChild: () => ({{}}), click: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}), getBBox: () => ({{ width: 100, height: 20, x: 0, y: 0 }}) }};
+        let docTitle = 'proposed_test';
+        global.document = {{
+          get title() {{ return docTitle; }},
+          set title(v) {{ docTitle = v; }},
+          body: dummyElem,
+          documentElement: {{ outerHTML: html }},
+          getElementById: () => dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        const toasts = [];
+        global.showToast = msg => toasts.push(msg);
+        
+        // Startup test: Run script content without modifying anything
+        const ctx = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console, showToast: global.showToast, toasts }});
+        vm.runInContext(scriptContent, ctx);
+        
+        const hasPersistedConfig = 'erd:proposed_test:persisted_config' in storageMap;
+        console.log(JSON.stringify({{ hasPersistedConfig, keys: Object.keys(storageMap) }}));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+        res = json.loads(proc.stdout.strip())
+        self.assertFalse(res['hasPersistedConfig'], "Unmodified startup should not write empty persisted_config to LocalStorage")
+
 
 if __name__ == '__main__':
     unittest.main()

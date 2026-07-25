@@ -12120,7 +12120,8 @@ if(location.hash.startsWith('#v=')){
   }catch(e){ console.warn('Failed to load the shared view:', e); }
 }
 restorePersistedConfigOnLoad();
-markConfigClean();
+isConfigDirty = false;
+updateConfigDirtyUI();
 renderGlobalNotes();
 renderTableList();
 renderDiagram();
