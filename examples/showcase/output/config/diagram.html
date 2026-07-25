@@ -1016,9 +1016,17 @@ body.dark .grid-key-detail {
         <label style="font-size:12px;font-weight:600">Table Name</label>
         <input type="text" id="note-edit-table" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="e.g. users" />
       </div>
-      <div style="display:flex;flex-direction:column;gap:4px" id="note-target-rel-group">
-        <label style="font-size:12px;font-weight:600">Foreign Key / Target Table</label>
-        <input type="text" id="note-edit-target" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="e.g. posts or user_id" />
+      <div style="display:flex;flex-direction:column;gap:4px" id="note-target-source-group">
+        <label style="font-size:12px;font-weight:600">Source Table</label>
+        <input type="text" id="note-edit-source-table" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="e.g. posts" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px" id="note-target-rel-table-group">
+        <label style="font-size:12px;font-weight:600">Target Table</label>
+        <input type="text" id="note-edit-target-table" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="e.g. users" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px" id="note-target-fk-group">
+        <label style="font-size:12px;font-weight:600">Foreign Key Column (Optional)</label>
+        <input type="text" id="note-edit-foreign-key" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="e.g. user_id" />
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
         <label style="font-size:12px;font-weight:600">Title (Optional)</label>
@@ -4349,6 +4357,21 @@ function renderGlobalNotes(){
   if(!gs.length){ box.innerHTML=''; box.style.display='none'; return; }
   box.style.display='';
   box.innerHTML='<div class="lgn-title">Design notes</div>'+gs.map(noteBlockHtml).join('');
+  box.querySelectorAll('[data-note-edit]').forEach(a=>{
+    a.addEventListener('click', e=>{
+      e.stopPropagation();
+      const nid=a.getAttribute('data-note-edit');
+      const n=NOTES.find(item=>ensureNoteId(item)===nid);
+      if(n) openNoteModal(n);
+    });
+  });
+  box.querySelectorAll('[data-note-delete]').forEach(a=>{
+    a.addEventListener('click', e=>{
+      e.stopPropagation();
+      const nid=a.getAttribute('data-note-delete');
+      deleteNote(nid);
+    });
+  });
 }
 
 // ── Multi-select: align / distribute panel ─────────────────────────────────
@@ -6329,15 +6352,35 @@ document.getElementById('btn-grid-csv')?.addEventListener('click', () => {
 });
 
 function exportConfigJSON() {
-  const cleanNotes = NOTES.map(n => {
-    const copy = { ...n };
-    delete copy.id;
-    return copy;
+  const configNotes = NOTES.map((n, idx) => {
+    const entry = { id: n.id || ('note_' + (idx + 1)) };
+    if (n.scope === 'table') {
+      entry.target = { type: 'table', table: n.table || n.source_table || '' };
+    } else if (n.scope === 'relation') {
+      const tgt = {
+        type: 'relation',
+        source_table: n.source_table || n.table || '',
+        target_table: n.target_table || n.target || ''
+      };
+      if (n.foreign_key) tgt.foreign_key = n.foreign_key;
+      if (n.name) tgt.name = n.name;
+      if (n.assoc_type || n.type) tgt.assoc_type = n.assoc_type || n.type;
+      if (n.through) tgt.through = n.through;
+      if (typeof n.polymorphic === 'boolean') tgt.polymorphic = n.polymorphic;
+      entry.target = tgt;
+    } else {
+      entry.target = { type: 'global' };
+    }
+    if (n.title) entry.title = n.title;
+    if (n.text) entry.text = n.text;
+    if (n.links && n.links.length) entry.links = n.links;
+    return entry;
   });
+
   const configObj = {
     version: '1',
     title: document.title,
-    notes: cleanNotes,
+    notes: configNotes,
     groups: GROUPS
   };
   return JSON.stringify(configObj, null, 2);
@@ -6365,16 +6408,48 @@ document.getElementById('btn-export-config-download')?.addEventListener('click',
   showToast('Downloaded config JSON ✓');
 });
 
+function updateNoteFormFields() {
+  const scope = document.getElementById('note-edit-scope')?.value || 'table';
+  const grpTable = document.getElementById('note-target-table-group');
+  const grpSrc = document.getElementById('note-target-source-group');
+  const grpRelTgt = document.getElementById('note-target-rel-table-group');
+  const grpFk = document.getElementById('note-target-fk-group');
+
+  if (scope === 'table') {
+    if (grpTable) grpTable.style.display = '';
+    if (grpSrc) grpSrc.style.display = 'none';
+    if (grpRelTgt) grpRelTgt.style.display = 'none';
+    if (grpFk) grpFk.style.display = 'none';
+  } else if (scope === 'relation') {
+    if (grpTable) grpTable.style.display = 'none';
+    if (grpSrc) grpSrc.style.display = '';
+    if (grpRelTgt) grpRelTgt.style.display = '';
+    if (grpFk) grpFk.style.display = '';
+  } else {
+    if (grpTable) grpTable.style.display = 'none';
+    if (grpSrc) grpSrc.style.display = 'none';
+    if (grpRelTgt) grpRelTgt.style.display = 'none';
+    if (grpFk) grpFk.style.display = 'none';
+  }
+}
+
+document.getElementById('note-edit-scope')?.addEventListener('change', updateNoteFormFields);
+
 function openNoteModal(n = {}) {
   const modal = document.getElementById('note-edit-modal');
   if (!modal) return;
   modal.classList.remove('hidden');
   document.getElementById('note-edit-id').value = ensureNoteId(n);
   document.getElementById('note-edit-scope').value = n.scope || 'table';
-  document.getElementById('note-edit-table').value = n.table || n.source_table || '';
-  document.getElementById('note-edit-target').value = n.target || n.foreign_key || '';
+
+  document.getElementById('note-edit-table').value = n.table || '';
+  document.getElementById('note-edit-source-table').value = n.source_table || n.table || '';
+  document.getElementById('note-edit-target-table').value = n.target_table || n.target || '';
+  document.getElementById('note-edit-foreign-key').value = n.foreign_key || '';
+
   document.getElementById('note-edit-title-val').value = n.title || '';
   document.getElementById('note-edit-text-val').value = n.text || '';
+  updateNoteFormFields();
 }
 
 function closeNoteModal() {
@@ -6386,7 +6461,10 @@ function saveNoteFromModal() {
   const nid = document.getElementById('note-edit-id').value;
   const scope = document.getElementById('note-edit-scope').value;
   const tableVal = document.getElementById('note-edit-table').value.trim();
-  const targetVal = document.getElementById('note-edit-target').value.trim();
+  const sourceTableVal = document.getElementById('note-edit-source-table').value.trim();
+  const targetTableVal = document.getElementById('note-edit-target-table').value.trim();
+  const fkVal = document.getElementById('note-edit-foreign-key').value.trim();
+
   const titleVal = document.getElementById('note-edit-title-val').value.trim();
   const textVal = document.getElementById('note-edit-text-val').value.trim();
 
@@ -6406,16 +6484,19 @@ function saveNoteFromModal() {
     note.table = tableVal;
     delete note.source_table;
     delete note.target;
+    delete note.target_table;
     delete note.foreign_key;
   } else if (scope === 'relation') {
-    note.source_table = tableVal;
-    note.target = targetVal;
-    note.foreign_key = targetVal;
+    note.source_table = sourceTableVal;
+    note.target = targetTableVal;
+    note.target_table = targetTableVal;
+    if (fkVal) note.foreign_key = fkVal; else delete note.foreign_key;
     delete note.table;
   } else {
     delete note.table;
     delete note.source_table;
     delete note.target;
+    delete note.target_table;
     delete note.foreign_key;
   }
 

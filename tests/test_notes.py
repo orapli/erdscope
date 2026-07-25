@@ -577,14 +577,14 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
             ('posts', 'user_id', 'int', 'int', 'NO', 'MUL', '', '', ''),
         ]
         fk_rows = [('posts', 'user_id', 'users')]
-        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
+        self.tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
         notes = [{'id': 'n1', 'target': {'type': 'table', 'table': 'users'}, 'text': 'Original note'}]
 
         tmp = tempfile.mkdtemp()
-        out = Path(tmp) / 'out.html'
-        args = type('Args', (), {'output': str(out), 'models': None, 'excel': None, 'max_rows': 15, 'only': None, 'exclude': None, 'infer_fk': False})()
-        erd._finish(tables, args, 'note_edit_test', notes=notes)
-        with open(out, 'r', encoding='utf-8') as f:
+        self.out_path = Path(tmp) / 'out.html'
+        args = type('Args', (), {'output': str(self.out_path), 'models': None, 'excel': None, 'max_rows': 15, 'only': None, 'exclude': None, 'infer_fk': False})()
+        erd._finish(self.tables, args, 'note_edit_test', notes=notes)
+        with open(self.out_path, 'r', encoding='utf-8') as f:
             self.html = f.read()
 
     def test_note_edit_modal_elements_exist(self):
@@ -604,6 +604,50 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         self.assertIn('exportConfigJSON', self.html)
         self.assertIn('saveNoteFromModal', self.html)
         self.assertIn('deleteNote', self.html)
+        self.assertIn('note-target-source-group', self.html)
+        self.assertIn('note-target-rel-table-group', self.html)
+        self.assertIn('note-target-fk-group', self.html)
+
+    def test_config_export_roundtrip_validates_against_python_config_validator(self):
+        import subprocess
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(str(self.out_path))}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}) }};
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.localStorage = {{ getItem: () => null, setItem: () => {{}}, removeItem: () => {{}} }};
+        global.requestAnimationFrame = cb => cb();
+        global.document = {{
+          title: 'Test Title',
+          body: dummyElem,
+          getElementById: () => dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        const context = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, console }});
+        vm.runInContext(scriptContent, context);
+        console.log(vm.runInContext('exportConfigJSON()', context));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+
+        exported_json = proc.stdout.strip()
+        cfg = json.loads(exported_json)
+
+        # 1. Validate against Python's strict config note syntax validator (_check_config_notes)
+        erd._check_config_notes(cfg['notes'], 'exported_config.json')
+
+        # 2. Resolve notes against merged IR to verify 100% roundtrip validity
+        resolved = erd.resolve_and_validate_notes(cfg['notes'], self.tables, 'exported_config.json')
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0]['scope'], 'table')
+        self.assertEqual(resolved[0]['table'], 'users')
 
 
 if __name__ == '__main__':

@@ -6271,10 +6271,35 @@ class TestSchemaGridModal(unittest.TestCase):
         details_text = self.page.inner_text('#table-details')
         self.assertIn('Newly added test note content', details_text)
 
-        # Test Config JSON export evaluation
+        # Test Relation Note addition with separated inputs
+        self.page.click('#btn-add-table-note')
+        self.page.select_option('#note-edit-scope', 'relation')
+        self.page.fill('#note-edit-source-table', 'posts')
+        self.page.fill('#note-edit-target-table', 'users')
+        self.page.fill('#note-edit-foreign-key', 'user_id')
+        self.page.fill('#note-edit-text-val', 'Relation note for posts to users')
+        self.page.click('#btn-note-save')
+
+        # Test Config JSON export evaluation and roundtrip contract
         config_json = self.page.evaluate('exportConfigJSON()')
-        self.assertIn('Newly added test note content', config_json)
-        self.assertIn('"version": "1"', config_json)
+        import json
+        cfg = json.loads(config_json)
+        self.assertEqual(cfg['version'], '1')
+        self.assertIsInstance(cfg['notes'], list)
+        
+        # Verify valid config target structure: target = { "type": "table", "table": "users" }
+        table_note_cfg = next(n for n in cfg['notes'] if n.get('text') == 'Newly added test note content')
+        self.assertIn('id', table_note_cfg)
+        self.assertEqual(table_note_cfg['target'], {'type': 'table', 'table': 'users'})
+
+        rel_note_cfg = next(n for n in cfg['notes'] if n.get('text') == 'Relation note for posts to users')
+        self.assertIn('id', rel_note_cfg)
+        self.assertEqual(rel_note_cfg['target'], {
+            'type': 'relation',
+            'source_table': 'posts',
+            'target_table': 'users',
+            'foreign_key': 'user_id'
+        })
 
 
 if __name__ == '__main__':
