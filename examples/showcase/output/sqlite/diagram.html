@@ -6744,20 +6744,98 @@ document.getElementById('btn-grid-csv')?.addEventListener('click', () => {
 
 let isConfigDirty = false;
 
+function savePersistedConfig() {
+  try {
+    const configStr = exportConfigJSON();
+    setLS(LS('persisted_config'), configStr);
+  } catch(e) {}
+}
+
+function restorePersistedConfigOnLoad() {
+  try {
+    const raw = localStorage.getItem(LS('persisted_config'));
+    if (!raw) return;
+    const cfg = JSON.parse(raw);
+    if (cfg.notes && Array.isArray(cfg.notes)) {
+      const restoredNotes = cfg.notes.map(n => {
+        const item = { id: n.id, title: n.title, text: n.text, links: n.links };
+        if (n.target) {
+          item.scope = n.target.type || 'table';
+          item.table = n.target.table || n.target.source_table || '';
+          item.source_table = n.target.source_table || n.target.table || '';
+          item.target_table = n.target.target_table || n.target.target || '';
+          item.foreign_key = n.target.foreign_key;
+          item.through = n.target.through;
+        }
+        return item;
+      });
+      NOTES.length = 0;
+      NOTES.push(...restoredNotes);
+    }
+    if (cfg.groups && Array.isArray(cfg.groups)) {
+      GROUPS.length = 0;
+      GROUPS.push(...cfg.groups);
+    }
+    if (cfg.tables && typeof cfg.tables === 'object') {
+      Object.keys(cfg.tables).forEach(tblName => {
+        const tblCfg = cfg.tables[tblName];
+        if (!tblCfg) return;
+        let t = DATA.tables[tblName];
+        if (!t) {
+          t = {
+            name: tblName,
+            logical_name: tblCfg.logical_name || '',
+            comment: tblCfg.comment || '',
+            columns: [],
+            associations: [],
+            indexes: [],
+            isProposed: true
+          };
+          DATA.tables[tblName] = t;
+        }
+        if (tblCfg.columns && Array.isArray(tblCfg.columns)) {
+          tblCfg.columns.forEach(cCfg => {
+            let col = (t.columns || []).find(c => c.name === cCfg.name);
+            if (!col) {
+              col = {
+                name: cCfg.name,
+                logical_name: cCfg.logical_name || '',
+                type: cCfg.type || 'varchar(255)',
+                nullable: !!cCfg.nullable,
+                comment: cCfg.comment || '',
+                primary: !!cCfg.primary,
+                isProposed: true
+              };
+              t.columns.push(col);
+            }
+          });
+        }
+      });
+    }
+  } catch(e) {
+    console.warn('Could not restore persisted config:', e);
+  }
+}
+
+function resetPersistedConfig() {
+  try {
+    localStorage.removeItem(LS('persisted_config'));
+    localStorage.removeItem(LS('draft_config'));
+    showToast('Reset to base schema — please reload the page to restore original state ✓');
+    location.reload();
+  } catch(e) {}
+}
+
 function markConfigDirty() {
   isConfigDirty = true;
   updateConfigDirtyUI();
-  try {
-    setLS(LS('draft_config'), 'true');
-  } catch (e) {}
+  savePersistedConfig();
 }
 
 function markConfigClean() {
   isConfigDirty = false;
   updateConfigDirtyUI();
-  try {
-    localStorage.removeItem(LS('draft_config'));
-  } catch (e) {}
+  savePersistedConfig();
 }
 
 function updateConfigDirtyUI() {
@@ -7426,6 +7504,7 @@ if(location.hash.startsWith('#v=')){
     showToast('Applied the shared view');
   }catch(e){ console.warn('Failed to load the shared view:', e); }
 }
+restorePersistedConfigOnLoad();
 renderGlobalNotes();
 renderTableList();
 renderDiagram();

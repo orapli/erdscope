@@ -107,6 +107,63 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         self.assertEqual(nick_col['logical_name'], 'ニックネーム')
         self.assertEqual(nick_col['type'], 'varchar(255)')
 
+    def test_persisted_config_restores_on_reload(self):
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(str(self.out_path))}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+        
+        const storageMap = {{}};
+        global.localStorage = {{
+          getItem: k => storageMap[k] || null,
+          setItem: (k, v) => storageMap[k] = String(v),
+          removeItem: k => delete storageMap[k]
+        }};
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.requestAnimationFrame = cb => cb();
+        global.clearTimeout = () => {{}};
+        global.setTimeout = () => {{}};
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}), getBBox: () => ({{ width: 100, height: 20, x: 0, y: 0 }}) }};
+        let docTitle = 'proposed_test';
+        global.document = {{
+          get title() {{ return docTitle; }},
+          set title(v) {{ docTitle = v; }},
+          body: dummyElem,
+          getElementById: () => dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        
+        const toasts = [];
+        global.showToast = msg => toasts.push(msg);
+        
+        // Session 1: Add proposed table
+        const ctx1 = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console, showToast: global.showToast, toasts }});
+        vm.runInContext(scriptContent, ctx1);
+        vm.runInContext("addProposedTable('persisted_table', '永続テーブル', '', '');", ctx1);
+        
+        console.warn('STORAGE MAP:', JSON.stringify(storageMap));
+        
+        // Session 2: Reload page (fresh VM context with shared localStorage)
+        const ctx2 = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console, showToast: global.showToast, toasts }});
+        vm.runInContext(scriptContent, ctx2);
+        
+        const restoredTable = vm.runInContext("DATA.tables['persisted_table']", ctx2);
+        console.log(JSON.stringify(restoredTable || null));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+        self.assertTrue(bool(proc.stdout.strip()), f"Empty stdout. Stderr: {proc.stderr}")
+        res = json.loads(proc.stdout.strip())
+        self.assertIsNotNone(res, f"restoredTable was null. Stderr: {proc.stderr}")
+        self.assertEqual(res['name'], 'persisted_table')
+        self.assertEqual(res['logical_name'], '永続テーブル')
+
 
 if __name__ == '__main__':
     unittest.main()
