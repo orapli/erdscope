@@ -71,6 +71,52 @@ class TestSchemaGridContract(unittest.TestCase):
         # Must use esc(...) helper instead of non-existent escapeHtml(...)
         self.assertNotIn('escapeHtml(', self.html)
 
+    def test_schema_grid_e2_batch_note_editing_contracts(self):
+        import subprocess, json
+        self.assertIn('saveGridNote', self.html)
+        self.assertIn('bindNoteEvents', self.html)
+        self.assertIn('grid-note-cell', self.html)
+        self.assertIn('grid-inline-editor', self.html)
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.html', delete=False)
+        tmp.write(self.html.encode('utf-8'))
+        tmp.close()
+
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(tmp.name)}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}), getBBox: () => ({{ width: 100, height: 20, x: 0, y: 0 }}) }};
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.localStorage = {{ getItem: () => null, setItem: () => {{}}, removeItem: () => {{}} }};
+        global.requestAnimationFrame = cb => cb();
+        global.clearTimeout = () => {{}};
+        global.setTimeout = () => {{}};
+        global.document = {{
+          title: 'Test Title',
+          body: dummyElem,
+          getElementById: () => dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        const context = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console }});
+        vm.runInContext(scriptContent, context);
+        vm.runInContext("saveGridNote('table', 'posts', null, 'New Posts Note');", context);
+        const notes = vm.runInContext('NOTES', context);
+        console.log(JSON.stringify(notes));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+        notes = json.loads(proc.stdout.strip())
+        posts_note = next((n for n in notes if n.get('table') == 'posts'), None)
+        self.assertIsNotNone(posts_note)
+        self.assertEqual(posts_note['text'], 'New Posts Note')
+
 
 if __name__ == '__main__':
     unittest.main()

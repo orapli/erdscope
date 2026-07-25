@@ -739,6 +739,115 @@ body.dark .grid-note-text {
 body.dark .grid-key-detail {
   color: #94a3b8;
 }
+.grid-note-cell {
+  position: relative;
+  min-width: 130px;
+}
+.grid-note-btn {
+  background: transparent;
+  border: 1px dashed #cbd5e1;
+  color: #64748b;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.grid-note-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #94a3b8;
+}
+body.dark .grid-note-btn {
+  border-color: #475569;
+  color: #94a3b8;
+}
+body.dark .grid-note-btn:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+.grid-note-edit-btn {
+  border: none;
+  background: none;
+  font-size: 12px;
+  padding: 0 3px;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.grid-note-edit-btn:hover {
+  opacity: 1;
+}
+.grid-note-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  justify-content: space-between;
+}
+.grid-inline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+.grid-inline-editor textarea {
+  width: 100%;
+  min-height: 52px;
+  font-size: 11px;
+  padding: 4px 6px;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  resize: vertical;
+  font-family: inherit;
+}
+body.dark .grid-inline-editor textarea {
+  background: #0f172a;
+  color: #f8fafc;
+  border-color: #60a5fa;
+}
+.grid-inline-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.grid-inline-actions button {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid #cbd5e1;
+}
+.grid-inline-save {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb !important;
+}
+.grid-inline-save:hover {
+  background: #1d4ed8;
+}
+.grid-inline-cancel {
+  background: #f1f5f9;
+  color: #475569;
+}
+body.dark .grid-inline-cancel {
+  background: #334155;
+  color: #cbd5e1;
+  border-color: #475569;
+}
+.grid-inline-modal {
+  background: transparent;
+  color: #64748b;
+  border-color: transparent !important;
+}
+.grid-inline-modal:hover {
+  text-decoration: underline;
+  color: #2563eb;
+}
+body.dark .grid-inline-modal:hover {
+  color: #60a5fa;
+}
 </style>
 </head>
 <body>
@@ -6072,11 +6181,29 @@ class SchemaGrid {
       } else {
         tableRows.forEach(r => {
           const grpHtml = r.groups ? `<span class="grid-badge grid-badge-group">${esc(r.groups)}</span>` : '<span style="color:#94a3b8">-</span>';
-          let notesHtml = '<span style="color:#94a3b8">-</span>';
+          let notesHtml = '';
+          const nList = notesForTable(r.name);
+          const existingNote = nList.find(n => n.scope === 'table') || nList[0];
+          const nid = existingNote ? ensureNoteId(existingNote) : '';
+          const noteTextVal = r.noteText;
+
           if (r.hasNotes) {
-            notesHtml = isDetailed
-              ? `<div class="grid-note-text">${esc(r.noteText)}</div>`
-              : `<span class="grid-badge grid-badge-notes" title="${esc(r.noteText)}">✓ Note</span>`;
+            notesHtml = `
+              <div class="grid-note-cell" data-grid-scope="table" data-grid-table="${esc(r.name)}" data-grid-nid="${esc(nid)}">
+                <div class="grid-note-content">
+                  ${isDetailed
+                    ? `<div class="grid-note-text" data-grid-act="edit" title="Click to edit inline">${esc(noteTextVal)}</div>`
+                    : `<span class="grid-badge grid-badge-notes" data-grid-act="edit" title="${esc(noteTextVal)}">✓ Note</span>`
+                  }
+                  <button class="grid-note-edit-btn" data-grid-act="edit" title="Edit inline">✏️</button>
+                  <button class="grid-note-edit-btn" data-grid-act="modal" title="Advanced edit in modal">⚙️</button>
+                </div>
+              </div>`;
+          } else {
+            notesHtml = `
+              <div class="grid-note-cell" data-grid-scope="table" data-grid-table="${esc(r.name)}">
+                <button class="grid-note-btn" data-grid-act="edit">+ Note</button>
+              </div>`;
           }
 
           let keysHtml = '';
@@ -6139,11 +6266,31 @@ class SchemaGrid {
             }).join('');
           }
 
-          let notesHtml = '<span style="color:#94a3b8">-</span>';
+          let notesHtml = '';
+          const isFk = r.badges.includes('FK');
+          const scope = isFk ? 'relation' : 'table';
+          const colNotesList = notesForColumn(r.tableName, r.name);
+          const existingNote = colNotesList[0] || notesForTable(r.tableName).find(n => n.scope === 'table');
+          const nid = existingNote ? ensureNoteId(existingNote) : '';
+          const noteTextVal = r.noteText;
+
           if (r.hasNotes) {
-            notesHtml = isDetailed
-              ? `<div class="grid-note-text">${esc(r.noteText)}</div>`
-              : `<span class="grid-badge grid-badge-notes" title="${esc(r.noteText)}">✓ Note</span>`;
+            notesHtml = `
+              <div class="grid-note-cell" data-grid-scope="${scope}" data-grid-table="${esc(r.tableName)}" data-grid-column="${esc(r.name)}" data-grid-nid="${esc(nid)}">
+                <div class="grid-note-content">
+                  ${isDetailed
+                    ? `<div class="grid-note-text" data-grid-act="edit" title="Click to edit inline">${esc(noteTextVal)}</div>`
+                    : `<span class="grid-badge grid-badge-notes" data-grid-act="edit" title="${esc(noteTextVal)}">✓ Note</span>`
+                  }
+                  <button class="grid-note-edit-btn" data-grid-act="edit" title="Edit inline">✏️</button>
+                  <button class="grid-note-edit-btn" data-grid-act="modal" title="Advanced edit in modal">⚙️</button>
+                </div>
+              </div>`;
+          } else {
+            notesHtml = `
+              <div class="grid-note-cell" data-grid-scope="${scope}" data-grid-table="${esc(r.tableName)}" data-grid-column="${esc(r.name)}">
+                <button class="grid-note-btn" data-grid-act="edit">+ Note</button>
+              </div>`;
           }
 
           html += `<tr>
@@ -6162,6 +6309,8 @@ class SchemaGrid {
       html += `</tbody></table>`;
       this.container.innerHTML = html;
     }
+
+    this.bindNoteEvents();
 
     this.container.querySelectorAll('[data-goto-table]').forEach(el => {
       el.addEventListener('click', e => {
@@ -6182,6 +6331,88 @@ class SchemaGrid {
           } catch (err) {
             console.warn('Could not focus table in opener window:', err);
           }
+        }
+      });
+    });
+  }
+
+  bindNoteEvents() {
+    if (!this.container) return;
+    this.container.querySelectorAll('[data-grid-act]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        const cell = el.closest('.grid-note-cell');
+        if (!cell) return;
+        const act = el.getAttribute('data-grid-act');
+        const scope = cell.getAttribute('data-grid-scope') || 'table';
+        const table = cell.getAttribute('data-grid-table') || '';
+        const column = cell.getAttribute('data-grid-column') || '';
+        const nid = cell.getAttribute('data-grid-nid') || '';
+        const existingNote = nid ? NOTES.find(n => ensureNoteId(n) === nid) : null;
+
+        if (act === 'modal') {
+          if (typeof openNoteModal === 'function') {
+            openNoteModal(existingNote || { scope, table, source_table: table, foreign_key: column });
+          } else if (window.opener && !window.opener.closed && typeof window.opener.openNoteModal === 'function') {
+            window.opener.openNoteModal(existingNote || { scope, table, source_table: table, foreign_key: column });
+          }
+          return;
+        }
+
+        if (act === 'edit') {
+          const currentText = existingNote ? noteText(existingNote) : '';
+          cell.innerHTML = `
+            <div class="grid-inline-editor">
+              <textarea class="grid-inline-textarea" placeholder="Type note text...">${esc(currentText)}</textarea>
+              <div class="grid-inline-actions">
+                <button class="grid-inline-save" type="button">Save</button>
+                <button class="grid-inline-cancel" type="button">Cancel</button>
+                <button class="grid-inline-modal" type="button">Modal...</button>
+              </div>
+            </div>`;
+          const textarea = cell.querySelector('.grid-inline-textarea');
+          if (textarea) {
+            textarea.focus();
+            textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+          }
+
+          const doSave = () => {
+            const val = textarea.value;
+            saveGridNote(scope, table, column, val, nid);
+          };
+
+          const doCancel = () => {
+            this.render();
+          };
+
+          cell.querySelector('.grid-inline-save')?.addEventListener('click', ev => {
+            ev.stopPropagation();
+            doSave();
+          });
+
+          cell.querySelector('.grid-inline-cancel')?.addEventListener('click', ev => {
+            ev.stopPropagation();
+            doCancel();
+          });
+
+          cell.querySelector('.grid-inline-modal')?.addEventListener('click', ev => {
+            ev.stopPropagation();
+            if (typeof openNoteModal === 'function') {
+              openNoteModal(existingNote || { scope, table, source_table: table, foreign_key: column });
+            } else if (window.opener && !window.opener.closed && typeof window.opener.openNoteModal === 'function') {
+              window.opener.openNoteModal(existingNote || { scope, table, source_table: table, foreign_key: column });
+            }
+          });
+
+          textarea?.addEventListener('keydown', ev => {
+            if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+              ev.preventDefault();
+              doSave();
+            } else if (ev.key === 'Escape') {
+              ev.preventDefault();
+              doCancel();
+            }
+          });
         }
       });
     });
@@ -6539,6 +6770,49 @@ function saveNoteFromModal() {
   closeNoteModal();
   showToast('Saved note ✓');
   refreshAllNoteViews();
+}
+
+function saveGridNote(scope, table, column, text, nid = null) {
+  text = (text || '').trim();
+  let note = nid ? NOTES.find(n => ensureNoteId(n) === nid) : null;
+  if (!note) {
+    if (scope === 'table') {
+      note = NOTES.find(n => n.scope === 'table' && n.table === table);
+    } else if (scope === 'relation') {
+      note = NOTES.find(n => n.scope === 'relation' && n.source_table === table && n.foreign_key === column);
+    }
+  }
+
+  if (!text) {
+    if (note) {
+      deleteNote(ensureNoteId(note));
+    } else {
+      if (typeof refreshAllNoteViews === 'function') refreshAllNoteViews();
+    }
+    return;
+  }
+
+  if (!note) {
+    note = { id: nid || ('note_' + Date.now()) };
+    if (scope === 'table') {
+      note.scope = 'table';
+      note.table = table;
+    } else if (scope === 'relation') {
+      note.scope = 'relation';
+      note.source_table = table;
+      note.foreign_key = column;
+      const tblData = (DATA.tables || {})[table];
+      if (tblData && tblData.associations) {
+        const assoc = tblData.associations.find(a => a.foreign_key === column);
+        if (assoc) note.target_table = assoc.target;
+      }
+    }
+    NOTES.push(note);
+  }
+
+  note.text = text;
+  if (typeof showToast === 'function') showToast('Saved note ✓');
+  if (typeof refreshAllNoteViews === 'function') refreshAllNoteViews();
 }
 
 function deleteNote(nid) {
