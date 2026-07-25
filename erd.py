@@ -5651,9 +5651,11 @@ body.dark .badge-proposed {
         </label>
         <button class="diag-btn" id="btn-grid-add-table" title="Add a proposed ToBe table to the schema">+ Proposed Table</button>
         <button class="diag-btn" id="btn-grid-add-col" title="Add a proposed ToBe column to a table">+ Proposed Column</button>
-        <button class="diag-btn" id="btn-grid-copy" title="Copy active view data to clipboard as TSV for Excel">📋 Copy TSV</button>
-        <button class="diag-btn" id="btn-grid-csv" title="Download active view data as CSV file">⬇ CSV</button>
-        <button class="diag-btn" id="btn-grid-newtab" title="Open Data Dictionary in a new browser tab">↗ New Tab</button>
+        <button class="diag-btn" id="btn-grid-tsv-copy" title="Copy active view data to clipboard as TSV for Excel">📋 TSV</button>
+        <button class="diag-btn" id="btn-grid-tsv-dl" title="Download active view data as TSV file">⬇ TSV</button>
+        <button class="diag-btn" id="btn-grid-csv-copy" title="Copy active view data to clipboard as CSV">📋 CSV</button>
+        <button class="diag-btn" id="btn-grid-csv-dl" title="Download active view data as CSV file">⬇ CSV</button>
+        <button class="diag-btn" id="btn-grid-newtab" title="Open Data Dictionary in a new browser tab">Open read-only view ↗</button>
         <button class="modal-close" id="btn-grid-modal-close" title="Close modal (Esc)">✕</button>
       </div>
     </div>
@@ -11231,16 +11233,22 @@ document.getElementById('grid-search-clear')?.addEventListener('click', () => {
   }
 });
 
-document.getElementById('btn-grid-copy')?.addEventListener('click', () => {
+function downloadGridTSV() {
   if (!schemaGrid) return;
   const tsv = schemaGrid.toTSV();
-  const fallback = () => showToast('TSV ready to copy');
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(tsv).then(() => showToast('Copied grid data to clipboard ✓')).catch(fallback);
-  } else fallback();
-});
+  const blob = new Blob(['\uFEFF' + tsv], { type: 'text/tab-separated-values;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `schema_grid_${schemaGrid.activeTab}.tsv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Downloaded TSV ✓');
+}
 
-document.getElementById('btn-grid-csv')?.addEventListener('click', () => {
+function downloadGridCSV() {
   if (!schemaGrid) return;
   const csv = schemaGrid.toCSV();
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -11253,7 +11261,39 @@ document.getElementById('btn-grid-csv')?.addEventListener('click', () => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('Downloaded CSV ✓');
-});
+}
+
+function copyGridTSV() {
+  if (!schemaGrid) return;
+  const tsv = schemaGrid.toTSV();
+  const fallback = () => {
+    downloadGridTSV();
+    showToast('Clipboard unavailable — downloaded TSV file instead ✓');
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(tsv).then(() => showToast('Copied TSV to clipboard ✓')).catch(fallback);
+  } else fallback();
+}
+
+function copyGridCSV() {
+  if (!schemaGrid) return;
+  const csv = schemaGrid.toCSV();
+  const fallback = () => {
+    downloadGridCSV();
+    showToast('Clipboard unavailable — downloaded CSV file instead ✓');
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(csv).then(() => showToast('Copied CSV to clipboard ✓')).catch(fallback);
+  } else fallback();
+}
+
+document.getElementById('btn-grid-tsv-copy')?.addEventListener('click', copyGridTSV);
+document.getElementById('btn-grid-tsv-dl')?.addEventListener('click', downloadGridTSV);
+document.getElementById('btn-grid-csv-copy')?.addEventListener('click', copyGridCSV);
+document.getElementById('btn-grid-csv-dl')?.addEventListener('click', downloadGridCSV);
+// Backward compatibility bindings for any residual triggers
+document.getElementById('btn-grid-copy')?.addEventListener('click', copyGridTSV);
+document.getElementById('btn-grid-csv')?.addEventListener('click', downloadGridCSV);
 
 let isConfigDirty = false;
 
