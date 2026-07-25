@@ -5427,6 +5427,11 @@ body.dark .grid-key-detail {
             <button class="diag-btn" id="btn-export-dbml" title="Covers displayed tables; paste into dbdiagram.io">Copy</button>
             <button class="diag-btn" id="btn-export-dbml-download">Download</button>
           </div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">Config</span>
+            <button class="diag-btn" id="btn-export-config-copy" title="Copy current schema config (with notes and groups) as JSON">Copy</button>
+            <button class="diag-btn" id="btn-export-config-download" title="Download current schema config as JSON file">Download</button>
+          </div>
         </div>
       </div>
       <div class="tb-sep"></div>
@@ -5494,6 +5499,46 @@ body.dark .grid-key-detail {
       </div>
     </div>
     <div class="modal-bdy" id="schema-grid-container"></div>
+  </div>
+</div>
+
+<div id="note-edit-modal" class="modal-backdrop hidden">
+  <div class="modal-dialog" style="max-width:560px;height:auto;max-height:85vh">
+    <div class="modal-hdr">
+      <span class="modal-title-text" id="note-modal-title">Edit Note</span>
+      <button class="modal-close" id="btn-note-modal-close" title="Close modal">✕</button>
+    </div>
+    <div class="modal-bdy" style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <input type="hidden" id="note-edit-id" />
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Scope</label>
+        <select id="note-edit-scope" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px">
+          <option value="table">Table Note</option>
+          <option value="relation">Relation Note</option>
+          <option value="global">Global Note</option>
+        </select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px" id="note-target-table-group">
+        <label style="font-size:12px;font-weight:600">Table Name</label>
+        <input type="text" id="note-edit-table" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="e.g. users" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px" id="note-target-rel-group">
+        <label style="font-size:12px;font-weight:600">Foreign Key / Target Table</label>
+        <input type="text" id="note-edit-target" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="e.g. posts or user_id" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Title (Optional)</label>
+        <input type="text" id="note-edit-title-val" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" placeholder="Note Title" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Note Content (Text)</label>
+        <textarea id="note-edit-text-val" rows="5" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px;font-family:inherit" placeholder="Write note text..."></textarea>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="diag-btn" id="btn-note-cancel">Cancel</button>
+        <button class="diag-btn" id="btn-note-save" style="background:#2563eb;color:#fff;border:none;padding:6px 16px;font-weight:600">Save Note</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -8690,11 +8735,17 @@ function showDetails(){
     h+='</div>';
   }
   const tableNotes=anchorVisible ? NOTES.filter(n=>n.scope==='table' && n.table===name) : [];
+  h+=`<div class="sec-title" style="display:flex;justify-content:space-between;align-items:center">
+    <span>Notes</span>
+    <button class="diag-btn" id="btn-add-table-note" data-add-note-table="${esc(name)}" style="padding:2px 8px;font-size:11px;font-weight:600">＋ Add Note</button>
+  </div><div class="note-list">`;
   if(tableNotes.length){
-    h+='<div class="sec-title">Notes</div><div class="note-list">';
     tableNotes.forEach(n=> h+=noteBlockHtml(n));
-    h+='</div>';
+  } else {
+    h+='<div class="empty-state" style="margin:4px 0;text-align:left;font-size:11px;color:#94a3b8">No table notes attached</div>';
   }
+  h+='</div>';
+
   el.innerHTML=h;
   // single click = locate (pan+flash), consistent with the list; double-click to focus
   el.querySelectorAll('[data-goto]').forEach(a=>{
@@ -8703,6 +8754,26 @@ function showDetails(){
   });
   // not-in-view targets: click to pull them into the diagram
   el.querySelectorAll('[data-add]').forEach(a=>a.addEventListener('click',()=>addTables([a.dataset.add])));
+  el.querySelectorAll('[data-note-edit]').forEach(a=>{
+    a.addEventListener('click', e=>{
+      e.stopPropagation();
+      const nid=a.getAttribute('data-note-edit');
+      const n=NOTES.find(item=>ensureNoteId(item)===nid);
+      if(n) openNoteModal(n);
+    });
+  });
+  el.querySelectorAll('[data-note-delete]').forEach(a=>{
+    a.addEventListener('click', e=>{
+      e.stopPropagation();
+      const nid=a.getAttribute('data-note-delete');
+      deleteNote(nid);
+    });
+  });
+  el.querySelector('#btn-add-table-note')?.addEventListener('click', e=>{
+    e.stopPropagation();
+    const tbl=e.currentTarget.getAttribute('data-add-note-table');
+    openNoteModal({scope:'table', table:tbl, text:''});
+  });
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 // esc(), plus wrapping wordMatcher matches in a <mark> — get every match
@@ -8728,6 +8799,11 @@ function escMark(s){
 // through esc()/escMark(), same discipline as every other DATA field above.
 // Link URLs are validated to http(s)-only at config-load time (config.py); no
 // Markdown/raw-HTML rendering is ever done here.
+let noteIdCounter = 1;
+function ensureNoteId(n) {
+  if (!n.id) n.id = 'note_' + (noteIdCounter++) + '_' + Math.random().toString(36).substr(2, 6);
+  return n.id;
+}
 function noteLinksHtml(links){
   if(!links || !links.length) return '';
   return '<div class="note-links">' + links.map(l=>
@@ -8735,8 +8811,13 @@ function noteLinksHtml(links){
   ).join('') + '</div>';
 }
 function noteBlockHtml(n){
+  const nid = ensureNoteId(n);
   const ttl = n.title ? `<div class="note-title">${escMark(n.title)}</div>` : '';
-  return `<div class="note-entry">${ttl}<div class="note-text">${escMark(n.text)}</div>${noteLinksHtml(n.links)}</div>`;
+  const actions = `<div style="display:flex;gap:8px;margin-top:4px;font-size:11px">
+    <a data-note-edit="${esc(nid)}" style="cursor:pointer;color:#2563eb;font-weight:600;text-decoration:none">✏️ Edit</a>
+    <a data-note-delete="${esc(nid)}" style="cursor:pointer;color:#dc2626;font-weight:600;text-decoration:none">🗑 Delete</a>
+  </div>`;
+  return `<div class="note-entry" data-note-id="${esc(nid)}">${ttl}<div class="note-text">${escMark(n.text)}</div>${noteLinksHtml(n.links)}${actions}</div>`;
 }
 // Mirrors the Python resolve_and_validate_notes identity fields exactly —
 // never re-derive relation identity from scratch in JS (association_key is
@@ -10751,6 +10832,129 @@ document.getElementById('btn-grid-csv')?.addEventListener('click', () => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('Downloaded CSV ✓');
+});
+
+function exportConfigJSON() {
+  const cleanNotes = NOTES.map(n => {
+    const copy = { ...n };
+    delete copy.id;
+    return copy;
+  });
+  const configObj = {
+    version: '1',
+    title: document.title,
+    notes: cleanNotes,
+    groups: GROUPS
+  };
+  return JSON.stringify(configObj, null, 2);
+}
+
+document.getElementById('btn-export-config-copy')?.addEventListener('click', () => {
+  const jsonStr = exportConfigJSON();
+  const fallback = () => showToast('Config JSON ready');
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(jsonStr).then(() => showToast('Copied config JSON to clipboard ✓')).catch(fallback);
+  } else fallback();
+});
+
+document.getElementById('btn-export-config-download')?.addEventListener('click', () => {
+  const jsonStr = exportConfigJSON();
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'erdscope_config.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Downloaded config JSON ✓');
+});
+
+function openNoteModal(n = {}) {
+  const modal = document.getElementById('note-edit-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  document.getElementById('note-edit-id').value = ensureNoteId(n);
+  document.getElementById('note-edit-scope').value = n.scope || 'table';
+  document.getElementById('note-edit-table').value = n.table || n.source_table || '';
+  document.getElementById('note-edit-target').value = n.target || n.foreign_key || '';
+  document.getElementById('note-edit-title-val').value = n.title || '';
+  document.getElementById('note-edit-text-val').value = n.text || '';
+}
+
+function closeNoteModal() {
+  const modal = document.getElementById('note-edit-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function saveNoteFromModal() {
+  const nid = document.getElementById('note-edit-id').value;
+  const scope = document.getElementById('note-edit-scope').value;
+  const tableVal = document.getElementById('note-edit-table').value.trim();
+  const targetVal = document.getElementById('note-edit-target').value.trim();
+  const titleVal = document.getElementById('note-edit-title-val').value.trim();
+  const textVal = document.getElementById('note-edit-text-val').value.trim();
+
+  if (!textVal) {
+    showToast('Note text is required');
+    return;
+  }
+
+  let note = NOTES.find(item => ensureNoteId(item) === nid);
+  if (!note) {
+    note = { id: nid || ('note_' + Date.now()) };
+    NOTES.push(note);
+  }
+
+  note.scope = scope;
+  if (scope === 'table') {
+    note.table = tableVal;
+    delete note.source_table;
+    delete note.target;
+    delete note.foreign_key;
+  } else if (scope === 'relation') {
+    note.source_table = tableVal;
+    note.target = targetVal;
+    note.foreign_key = targetVal;
+    delete note.table;
+  } else {
+    delete note.table;
+    delete note.source_table;
+    delete note.target;
+    delete note.foreign_key;
+  }
+
+  if (titleVal) note.title = titleVal; else delete note.title;
+  note.text = textVal;
+
+  closeNoteModal();
+  showToast('Saved note ✓');
+  refreshAllNoteViews();
+}
+
+function deleteNote(nid) {
+  const idx = NOTES.findIndex(item => ensureNoteId(item) === nid);
+  if (idx !== -1) {
+    NOTES.splice(idx, 1);
+    showToast('Deleted note ✓');
+    refreshAllNoteViews();
+  }
+}
+
+function refreshAllNoteViews() {
+  renderGlobalNotes();
+  showDetails();
+  renderDiagram();
+  if (schemaGrid) schemaGrid.render();
+}
+
+document.getElementById('btn-note-modal-close')?.addEventListener('click', closeNoteModal);
+document.getElementById('btn-note-cancel')?.addEventListener('click', closeNoteModal);
+document.getElementById('btn-note-save')?.addEventListener('click', saveNoteFromModal);
+
+document.getElementById('note-edit-modal')?.addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeNoteModal();
 });
 
 function safeJsonForScript(obj) {

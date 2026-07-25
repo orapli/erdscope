@@ -6253,6 +6253,29 @@ class TestSchemaGridModal(unittest.TestCase):
         selected = self.page.evaluate('[...selectedTables]')
         self.assertEqual(selected, ['posts'])
 
+    def test_note_editing_and_config_export(self):
+        # Click table 'users' to open right-pane details
+        self.page.evaluate('selectOnly("users")')
+        self.page.evaluate('showDetails()')
+
+        # Click "+ Add Note" button
+        self.page.click('#btn-add-table-note')
+        self.assertFalse(self.page.locator('#note-edit-modal').is_hidden())
+
+        # Fill and save new Note
+        self.page.fill('#note-edit-text-val', 'Newly added test note content')
+        self.page.click('#btn-note-save')
+
+        # Ensure modal closes and new Note renders in right pane
+        self.assertTrue(self.page.locator('#note-edit-modal').is_hidden())
+        details_text = self.page.inner_text('#table-details')
+        self.assertIn('Newly added test note content', details_text)
+
+        # Test Config JSON export evaluation
+        config_json = self.page.evaluate('exportConfigJSON()')
+        self.assertIn('Newly added test note content', config_json)
+        self.assertIn('"version": "1"', config_json)
+
 
 if __name__ == '__main__':
     unittest.main()

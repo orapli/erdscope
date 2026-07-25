@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Viewer: Interactive Note Editing & Config Export (E1).** Added in-browser Note
+  editing, creation, and deletion via the right-pane Details inspector, with modal
+  dialog (`#note-edit-modal`) supporting table/relation/global scopes. Added **Config**
+  Copy and Download actions to the toolbar Export menu, producing complete, valid
+  `config.json` files reflecting current in-memory notes and groups.
 - **Viewer: Data Dictionary / Schema Grid view & Standalone New Tab.** Added an
   interactive modal grid and standalone new-tab viewer accessible via the toolbar
   `📋 Grid` button and `↗ New Tab`. Features a decoupled `SchemaGrid` component

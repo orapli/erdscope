@@ -568,5 +568,43 @@ class TestNotesBackwardCompatRegression(_NoDBDriver):
         self.assertFalse(any('notes' in n.lower() for n in names))
 
 
+class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
+    def setUp(self):
+        table_rows = [('users', ''), ('posts', '')]
+        col_rows = [
+            ('users', 'id', 'int', 'int', 'NO', 'PRI', '', '', ''),
+            ('posts', 'id', 'int', 'int', 'NO', 'PRI', '', '', ''),
+            ('posts', 'user_id', 'int', 'int', 'NO', 'MUL', '', '', ''),
+        ]
+        fk_rows = [('posts', 'user_id', 'users')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
+        notes = [{'id': 'n1', 'target': {'type': 'table', 'table': 'users'}, 'text': 'Original note'}]
+
+        tmp = tempfile.mkdtemp()
+        out = Path(tmp) / 'out.html'
+        args = type('Args', (), {'output': str(out), 'models': None, 'excel': None, 'max_rows': 15, 'only': None, 'exclude': None, 'infer_fk': False})()
+        erd._finish(tables, args, 'note_edit_test', notes=notes)
+        with open(out, 'r', encoding='utf-8') as f:
+            self.html = f.read()
+
+    def test_note_edit_modal_elements_exist(self):
+        self.assertIn('id="note-edit-modal"', self.html)
+        self.assertIn('id="note-edit-scope"', self.html)
+        self.assertIn('id="note-edit-table"', self.html)
+        self.assertIn('id="note-edit-title-val"', self.html)
+        self.assertIn('id="note-edit-text-val"', self.html)
+        self.assertIn('id="btn-note-save"', self.html)
+
+    def test_note_action_buttons_and_config_export_exist(self):
+        self.assertIn('data-note-edit', self.html)
+        self.assertIn('data-note-delete', self.html)
+        self.assertIn('btn-add-table-note', self.html)
+        self.assertIn('btn-export-config-copy', self.html)
+        self.assertIn('btn-export-config-download', self.html)
+        self.assertIn('exportConfigJSON', self.html)
+        self.assertIn('saveNoteFromModal', self.html)
+        self.assertIn('deleteNote', self.html)
+
+
 if __name__ == '__main__':
     unittest.main()
