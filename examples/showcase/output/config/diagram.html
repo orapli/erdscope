@@ -845,8 +845,51 @@ body.dark .grid-inline-cancel {
   text-decoration: underline;
   color: #2563eb;
 }
-body.dark .grid-inline-modal:hover {
-  color: #60a5fa;
+.config-dirty-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 6px;
+  user-select: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.config-dirty-badge.clean {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+body.dark .config-dirty-badge {
+  background: #78350f;
+  color: #fef3c7;
+  border-color: #b45309;
+}
+body.dark .config-dirty-badge.clean {
+  background: #14532d;
+  color: #dcfce7;
+  border-color: #15803d;
+}
+.badge-proposed {
+  background: #fef08a;
+  color: #854d0e;
+  border: 1px solid #fde047;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+}
+body.dark .badge-proposed {
+  background: #713f12;
+  color: #fef08a;
+  border-color: #a16207;
 }
 </style>
 </head>
@@ -991,6 +1034,7 @@ body.dark .grid-inline-modal:hover {
       <div class="tb-sep"></div>
       <div class="tb-group" id="export-group">
         <button class="diag-btn" id="btn-export-toggle" title="Export the diagram" aria-haspopup="true">⬇ Export</button>
+        <span id="config-dirty-badge" class="config-dirty-badge hidden" title="Unsaved Config / ToBe changes exist. Click to manage or Export Config JSON to save for --config.">⚠️ Unsaved Config</span>
         <div id="export-menu" class="tb-popup">
           <div class="tb-popup-caption">Image options</div>
           <label class="tb-popup-check"><input type="checkbox" id="export-opt-labels" checked> Join-table labels (⇢)</label>
@@ -1095,6 +1139,8 @@ body.dark .grid-inline-modal:hover {
         <label id="grid-search-exact-label" style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer;user-select:none" title="Exact match mode">
           <input type="checkbox" id="grid-search-exact" /> Exact
         </label>
+        <button class="diag-btn" id="btn-grid-add-table" title="Add a proposed ToBe table to the schema">+ Proposed Table</button>
+        <button class="diag-btn" id="btn-grid-add-col" title="Add a proposed ToBe column to a table">+ Proposed Column</button>
         <button class="diag-btn" id="btn-grid-copy" title="Copy active view data to clipboard as TSV for Excel">📋 Copy TSV</button>
         <button class="diag-btn" id="btn-grid-csv" title="Download active view data as CSV file">⬇ CSV</button>
         <button class="diag-btn" id="btn-grid-newtab" title="Open Data Dictionary in a new browser tab">↗ New Tab</button>
@@ -1102,6 +1148,106 @@ body.dark .grid-inline-modal:hover {
       </div>
     </div>
     <div class="modal-bdy" id="schema-grid-container"></div>
+  </div>
+</div>
+
+<div id="unsaved-config-modal" class="modal-backdrop hidden">
+  <div class="modal-dialog" style="max-width:480px;height:auto">
+    <div class="modal-hdr">
+      <span class="modal-title-text">⚠️ Unsaved Config / ToBe Changes</span>
+      <button class="modal-close" id="btn-unsaved-close" title="Close modal">✕</button>
+    </div>
+    <div class="modal-bdy" style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <p style="font-size:13px;line-height:1.5;margin:0;color:#334155">
+        You have unexported Config / ToBe changes. If you leave without downloading, your changes will not be saved for future CLI <code>--config</code> runs.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <button class="diag-btn" id="btn-unsaved-download" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px">
+          ⬇ Save & Download Config JSON
+        </button>
+        <button class="diag-btn" id="btn-unsaved-copy" style="padding:8px 16px">
+          📋 Copy Config JSON
+        </button>
+        <button class="diag-btn" id="btn-unsaved-discard" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;padding:8px 16px">
+          Discard & Close
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="proposed-table-modal" class="modal-backdrop hidden">
+  <div class="modal-dialog" style="max-width:500px;height:auto">
+    <div class="modal-hdr">
+      <span class="modal-title-text">+ Add Proposed Table (ToBe)</span>
+      <button class="modal-close" id="btn-prop-table-close">✕</button>
+    </div>
+    <div class="modal-bdy" style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Table Name (Physical)</label>
+        <input type="text" id="prop-table-name" placeholder="e.g. proposed_orders" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Logical Name (Optional)</label>
+        <input type="text" id="prop-table-logical" placeholder="e.g. 注文提案テーブル" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Comment (Optional)</label>
+        <textarea id="prop-table-comment" rows="2" placeholder="ToBe table comment..." style="padding:6px;border:1px solid #cbd5e1;border-radius:4px;font-family:inherit"></textarea>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Group Name (Optional)</label>
+        <input type="text" id="prop-table-group" placeholder="e.g. Core Domain" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" />
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="diag-btn" id="btn-prop-table-cancel">Cancel</button>
+        <button class="diag-btn" id="btn-prop-table-save" style="background:#2563eb;color:#fff;border:none;padding:6px 16px;font-weight:600">Add Table</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="proposed-column-modal" class="modal-backdrop hidden">
+  <div class="modal-dialog" style="max-width:500px;height:auto">
+    <div class="modal-hdr">
+      <span class="modal-title-text">+ Add Proposed Column (ToBe)</span>
+      <button class="modal-close" id="btn-prop-col-close">✕</button>
+    </div>
+    <div class="modal-bdy" style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Target Table</label>
+        <select id="prop-col-table-sel" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px"></select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Column Name</label>
+        <input type="text" id="prop-col-name" placeholder="e.g. status_code" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Logical Name (Optional)</label>
+        <input type="text" id="prop-col-logical" placeholder="e.g. ステータスコード" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" />
+      </div>
+      <div style="display:flex;gap:12px">
+        <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:12px;font-weight:600">Data Type</label>
+          <input type="text" id="prop-col-type" placeholder="e.g. varchar(255)" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" value="varchar(255)" />
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:12px;font-weight:600">Nullable</label>
+          <select id="prop-col-nullable" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px">
+            <option value="YES">NULL</option>
+            <option value="NO">NOT NULL</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:12px;font-weight:600">Comment (Optional)</label>
+        <input type="text" id="prop-col-comment" placeholder="e.g. ToBe proposed status" style="padding:6px;border:1px solid #cbd5e1;border-radius:4px" />
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="diag-btn" id="btn-prop-col-cancel">Cancel</button>
+        <button class="diag-btn" id="btn-prop-col-save" style="background:#2563eb;color:#fff;border:none;padding:6px 16px;font-weight:600">Add Column</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -6064,7 +6210,8 @@ class SchemaGrid {
           idxDetails,
           groups: groupStr,
           hasNotes,
-          noteText: noteTextVal
+          noteText: noteTextVal,
+          isProposed: !!t.isProposed
         });
       }
     });
@@ -6147,7 +6294,8 @@ class SchemaGrid {
             defaultVal: c.default !== undefined && c.default !== null ? String(c.default) : '',
             comment: c.comment || '',
             hasNotes,
-            noteText: noteTextVal
+            noteText: noteTextVal,
+            isProposed: !!c.isProposed || !!t.isProposed
           });
         }
       });
@@ -6226,9 +6374,11 @@ class SchemaGrid {
               <td style="text-align:right">${r.idxCount ? `<span class="grid-badge grid-badge-idx">${r.idxCount}</span>` : '0'}</td>`;
           }
 
+          const propBadge = r.isProposed ? '<span class="badge-proposed">PROPOSED</span>' : '';
+
           html += `<tr>
             <td>${grpHtml}</td>
-            <td><a class="grid-table-link" data-goto-table="${esc(r.name)}">${esc(r.name)}</a></td>
+            <td><a class="grid-table-link" data-goto-table="${esc(r.name)}">${esc(r.name)}</a>${propBadge}</td>
             <td>${esc(r.logical_name || '-')}</td>
             <td>${esc(r.comment || '-')}</td>
             <td style="text-align:right;font-weight:600">${r.columnCount}</td>
@@ -6301,9 +6451,11 @@ class SchemaGrid {
               </div>`;
           }
 
+          const propBadge = r.isProposed ? '<span class="badge-proposed">PROPOSED</span>' : '';
+
           html += `<tr>
             <td><a class="grid-table-link" data-goto-table="${esc(r.tableName)}">${esc(r.tableName)}</a></td>
-            <td style="font-weight:600">${esc(r.name)}</td>
+            <td style="font-weight:600">${esc(r.name)}${propBadge}</td>
             <td>${esc(r.logical_name || '-')}</td>
             <td><code>${esc(r.type || '-')}</code></td>
             <td><span style="color:${r.nullable === 'NULL' ? '#64748b' : '#059669'};font-size:11px">${r.nullable}</span></td>
@@ -6590,6 +6742,50 @@ document.getElementById('btn-grid-csv')?.addEventListener('click', () => {
   showToast('Downloaded CSV ✓');
 });
 
+let isConfigDirty = false;
+
+function markConfigDirty() {
+  isConfigDirty = true;
+  updateConfigDirtyUI();
+  try {
+    setLS(LS('draft_config'), 'true');
+  } catch (e) {}
+}
+
+function markConfigClean() {
+  isConfigDirty = false;
+  updateConfigDirtyUI();
+  try {
+    localStorage.removeItem(LS('draft_config'));
+  } catch (e) {}
+}
+
+function updateConfigDirtyUI() {
+  const badge = document.getElementById('config-dirty-badge');
+  if (!badge) return;
+  if (isConfigDirty) {
+    badge.classList.remove('hidden', 'clean');
+    badge.textContent = '⚠️ Unsaved Config';
+  } else {
+    badge.classList.add('clean');
+    badge.textContent = '✓ Config Saved';
+    if (typeof setTimeout !== 'undefined') {
+      setTimeout(() => {
+        if (!isConfigDirty) badge.classList.add('hidden');
+      }, 3000);
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+}
+
+window.addEventListener('beforeunload', e => {
+  if (isConfigDirty) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
 function exportConfigJSON() {
   const configNotes = NOTES.map((n, idx) => {
     const entry = { id: n.id || ('note_' + (idx + 1)) };
@@ -6620,17 +6816,43 @@ function exportConfigJSON() {
     return entry;
   });
 
+  const configTables = {};
+  Object.keys(DATA.tables || {}).forEach(tblName => {
+    const t = DATA.tables[tblName];
+    if (!t) return;
+    const proposedCols = (t.columns || []).filter(c => c.isProposed);
+    if (t.isProposed || proposedCols.length > 0) {
+      const tblConfig = {};
+      if (t.logical_name) tblConfig.logical_name = t.logical_name;
+      if (t.comment) tblConfig.comment = t.comment;
+      tblConfig.columns = (t.columns || []).map(c => {
+        const colObj = { name: c.name, type: c.type || 'varchar(255)' };
+        if (c.logical_name) colObj.logical_name = c.logical_name;
+        if (c.nullable) colObj.nullable = true;
+        if (c.comment) colObj.comment = c.comment;
+        if (c.primary) colObj.primary = true;
+        return colObj;
+      });
+      configTables[tblName] = tblConfig;
+    }
+  });
+
   const configObj = {
     version: '1',
     title: document.title,
     notes: configNotes,
     groups: GROUPS
   };
+  if (Object.keys(configTables).length > 0) {
+    configObj.tables = configTables;
+  }
+
   return JSON.stringify(configObj, null, 2);
 }
 
 document.getElementById('btn-export-config-copy')?.addEventListener('click', () => {
   const jsonStr = exportConfigJSON();
+  markConfigClean();
   const fallback = () => showToast('Config JSON ready');
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(jsonStr).then(() => showToast('Copied config JSON to clipboard ✓')).catch(fallback);
@@ -6639,6 +6861,7 @@ document.getElementById('btn-export-config-copy')?.addEventListener('click', () 
 
 document.getElementById('btn-export-config-download')?.addEventListener('click', () => {
   const jsonStr = exportConfigJSON();
+  markConfigClean();
   const blob = new Blob([jsonStr], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -6722,7 +6945,7 @@ function saveNoteFromModal() {
       showToast('Table name is required for Table Note');
       return;
     }
-    if (!validTables[tableVal]) {
+    if (!Object.hasOwn(validTables, tableVal)) {
       showToast(`Unknown table: "${tableVal}"`);
       return;
     }
@@ -6731,7 +6954,7 @@ function saveNoteFromModal() {
       showToast('Source table is required for Relation Note');
       return;
     }
-    if (!validTables[sourceTableVal]) {
+    if (!Object.hasOwn(validTables, sourceTableVal)) {
       showToast(`Unknown source table: "${sourceTableVal}"`);
       return;
     }
@@ -6739,7 +6962,7 @@ function saveNoteFromModal() {
       showToast('Target table is required for Relation Note');
       return;
     }
-    if (!validTables[targetTableVal]) {
+    if (!Object.hasOwn(validTables, targetTableVal)) {
       showToast(`Unknown target table: "${targetTableVal}"`);
       return;
     }
@@ -6776,6 +6999,7 @@ function saveNoteFromModal() {
   note.text = textVal;
 
   closeNoteModal();
+  markConfigDirty();
   showToast('Saved note ✓');
   refreshAllNoteViews();
 }
@@ -6809,7 +7033,8 @@ function saveGridNote(scope, table, column, text, nid = null) {
       note.scope = 'relation';
       note.source_table = table;
       note.foreign_key = column;
-      const tblData = (DATA.tables || {})[table];
+      const validTables = DATA.tables || {};
+      const tblData = Object.hasOwn(validTables, table) ? validTables[table] : null;
       if (tblData && tblData.associations) {
         const assoc = tblData.associations.find(a => a.foreign_key === column);
         if (assoc) note.target_table = assoc.target;
@@ -6819,6 +7044,7 @@ function saveGridNote(scope, table, column, text, nid = null) {
   }
 
   note.text = text;
+  markConfigDirty();
   if (typeof showToast === 'function') showToast('Saved note ✓');
   if (typeof refreshAllNoteViews === 'function') refreshAllNoteViews();
 }
@@ -6827,10 +7053,163 @@ function deleteNote(nid) {
   const idx = NOTES.findIndex(item => ensureNoteId(item) === nid);
   if (idx !== -1) {
     NOTES.splice(idx, 1);
+    markConfigDirty();
     showToast('Deleted note ✓');
     refreshAllNoteViews();
   }
 }
+
+// ── Proposed ToBe Schema & Unsaved Config Handlers ───────────────────────
+function addProposedTable(name, logical, comment, group) {
+  name = (name || '').trim();
+  if (!name) { showToast('Table name is required'); return false; }
+  if (Object.hasOwn(DATA.tables || {}, name)) { showToast(`Table "${name}" already exists`); return false; }
+
+  DATA.tables[name] = {
+    name,
+    logical_name: logical || '',
+    comment: comment || '',
+    columns: [
+      { name: 'id', type: 'bigint', primary: true, nullable: false, comment: 'Primary Key', isProposed: true }
+    ],
+    associations: [],
+    indexes: [],
+    isProposed: true
+  };
+
+  if (group) {
+    let g = GROUPS.find(item => item.id === group || item.title === group);
+    if (!g) {
+      g = { id: group.toLowerCase().replace(/\s+/g, '_'), title: group, tables: [] };
+      GROUPS.push(g);
+    }
+    if (!g.tables.includes(name)) g.tables.push(name);
+  }
+
+  markConfigDirty();
+  showToast(`Added proposed table "${name}" ✓`);
+  refreshView();
+  if (typeof renderTableList === 'function') renderTableList();
+  if (schemaGrid) schemaGrid.render();
+  return true;
+}
+
+function addProposedColumn(tableName, colName, logical, colType, nullableVal, comment) {
+  tableName = (tableName || '').trim();
+  colName = (colName || '').trim();
+  if (!tableName || !Object.hasOwn(DATA.tables || {}, tableName)) {
+    showToast(`Unknown target table: "${tableName}"`);
+    return false;
+  }
+  if (!colName) { showToast('Column name is required'); return false; }
+
+  const tbl = DATA.tables[tableName];
+  tbl.columns = tbl.columns || [];
+  if (tbl.columns.some(c => c.name === colName)) {
+    showToast(`Column "${colName}" already exists in table "${tableName}"`);
+    return false;
+  }
+
+  tbl.columns.push({
+    name: colName,
+    logical_name: logical || '',
+    type: colType || 'varchar(255)',
+    nullable: nullableVal === 'YES',
+    comment: comment || '',
+    isProposed: true
+  });
+
+  markConfigDirty();
+  showToast(`Added proposed column "${colName}" to "${tableName}" ✓`);
+  refreshView();
+  if (schemaGrid) schemaGrid.render();
+  return true;
+}
+
+function openProposedTableModal() {
+  const m = document.getElementById('proposed-table-modal');
+  if (m) m.classList.remove('hidden');
+  document.getElementById('prop-table-name').value = '';
+  document.getElementById('prop-table-logical').value = '';
+  document.getElementById('prop-table-comment').value = '';
+  document.getElementById('prop-table-group').value = '';
+}
+function closeProposedTableModal() {
+  const m = document.getElementById('proposed-table-modal');
+  if (m) m.classList.add('hidden');
+}
+
+function openProposedColumnModal() {
+  const m = document.getElementById('proposed-column-modal');
+  if (!m) return;
+  const sel = document.getElementById('prop-col-table-sel');
+  if (sel) {
+    sel.innerHTML = Object.keys(DATA.tables || {}).sort().map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+  }
+  m.classList.remove('hidden');
+  document.getElementById('prop-col-name').value = '';
+  document.getElementById('prop-col-logical').value = '';
+  document.getElementById('prop-col-type').value = 'varchar(255)';
+  document.getElementById('prop-col-comment').value = '';
+}
+function closeProposedColumnModal() {
+  const m = document.getElementById('proposed-column-modal');
+  if (m) m.classList.add('hidden');
+}
+
+function openUnsavedConfigModal() {
+  const m = document.getElementById('unsaved-config-modal');
+  if (m) m.classList.remove('hidden');
+}
+function closeUnsavedConfigModal() {
+  const m = document.getElementById('unsaved-config-modal');
+  if (m) m.classList.add('hidden');
+}
+
+document.getElementById('btn-grid-add-table')?.addEventListener('click', openProposedTableModal);
+document.getElementById('btn-grid-add-col')?.addEventListener('click', openProposedColumnModal);
+
+document.getElementById('btn-prop-table-close')?.addEventListener('click', closeProposedTableModal);
+document.getElementById('btn-prop-table-cancel')?.addEventListener('click', closeProposedTableModal);
+document.getElementById('btn-prop-table-save')?.addEventListener('click', () => {
+  const name = document.getElementById('prop-table-name').value;
+  const logical = document.getElementById('prop-table-logical').value;
+  const comment = document.getElementById('prop-table-comment').value;
+  const group = document.getElementById('prop-table-group').value;
+  if (addProposedTable(name, logical, comment, group)) {
+    closeProposedTableModal();
+  }
+});
+
+document.getElementById('btn-prop-col-close')?.addEventListener('click', closeProposedColumnModal);
+document.getElementById('btn-prop-col-cancel')?.addEventListener('click', closeProposedColumnModal);
+document.getElementById('btn-prop-col-save')?.addEventListener('click', () => {
+  const table = document.getElementById('prop-col-table-sel').value;
+  const name = document.getElementById('prop-col-name').value;
+  const logical = document.getElementById('prop-col-logical').value;
+  const type = document.getElementById('prop-col-type').value;
+  const nullable = document.getElementById('prop-col-nullable').value;
+  const comment = document.getElementById('prop-col-comment').value;
+  if (addProposedColumn(table, name, logical, type, nullable, comment)) {
+    closeProposedColumnModal();
+  }
+});
+
+document.getElementById('config-dirty-badge')?.addEventListener('click', openUnsavedConfigModal);
+document.getElementById('btn-unsaved-close')?.addEventListener('click', closeUnsavedConfigModal);
+document.getElementById('btn-unsaved-download')?.addEventListener('click', () => {
+  document.getElementById('btn-export-config-download')?.click();
+  closeUnsavedConfigModal();
+});
+document.getElementById('btn-unsaved-copy')?.addEventListener('click', () => {
+  document.getElementById('btn-export-config-copy')?.click();
+  closeUnsavedConfigModal();
+});
+document.getElementById('btn-unsaved-discard')?.addEventListener('click', () => {
+  markConfigClean();
+  closeUnsavedConfigModal();
+  showToast('Discarded unsaved config changes');
+});
 
 function refreshAllNoteViews() {
   renderGlobalNotes();

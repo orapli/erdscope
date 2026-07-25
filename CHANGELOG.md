@@ -9,11 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Viewer: Interactive Note Editing & Config Export (E1/E2).** Added in-browser Note
-  editing, creation, and deletion via the right-pane Details inspector and direct
-  in-cell batch inline editing (`+ Note` button, `✏️` inline textarea, `⚙️` modal)
-  in the **SchemaGrid** data dictionary view. Supports instant real-time synchronization
-  with the ER diagram, global notes, inspector, and Config JSON export.
+- **Viewer: Proposed Schema Editing (ToBe) & Unsaved Config Guard (E3).** Added in-browser
+  creation of proposed ToBe tables (`+ Proposed Table`) and columns (`+ Proposed Column`)
+  in the **SchemaGrid** view. Introduced a real-time `⚠️ Unsaved Config` status badge,
+  `beforeunload` navigation guard, and an interactive `#unsaved-config-modal` prompting
+  users to download or copy Config JSON before leaving, ensuring zero accidental data loss
+  for future CLI `--config` and `--diff` runs.
 - **Viewer: Auto-tidy Undo/Redo Integration (A3).** Recorded position and Auto-tidy
   toggle state snapshots upon clicking the `Auto-tidy` button. Performing Undo (`Ctrl+Z`)
   now seamlessly restores the manual layout coordinates and toggles Auto-tidy back OFF.

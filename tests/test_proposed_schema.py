@@ -1,0 +1,112 @@
+import importlib.util
+import pathlib
+import unittest
+import tempfile
+import json
+import subprocess
+from types import SimpleNamespace
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+spec = importlib.util.spec_from_file_location('erd', ROOT / 'erd.py')
+erd = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(erd)
+
+
+class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
+    def setUp(self):
+        table_rows = [('users', ''), ('posts', '')]
+        col_rows = [
+            ('users', 'id', 'int', 'int', 'NO', 'PRI', '', '', ''),
+            ('users', 'email', 'varchar', 'varchar(255)', 'YES', '', '', '', ''),
+            ('posts', 'id', 'int', 'int', 'NO', 'PRI', '', '', ''),
+            ('posts', 'user_id', 'int', 'int', 'NO', 'MUL', '', '', ''),
+        ]
+        fk_rows = [('posts', 'user_id', 'users')]
+        tables = erd.mysql_ir(table_rows, col_rows, fk_rows, [])
+        
+        tmp = tempfile.mkdtemp()
+        self.out_path = pathlib.Path(tmp) / 'out.html'
+        args = SimpleNamespace(output=str(self.out_path), models=None, excel=None, max_rows=15,
+                                only=None, exclude=None, infer_fk=False)
+        erd._finish(tables, args, 'proposed_test')
+
+    def test_proposed_table_and_column_export_config_json(self):
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(str(self.out_path))}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+        const elemMap = {{}};
+        const createFormInput = (val = '') => ({{ value: val, style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }} }});
+        
+        const toasts = [];
+        global.showToast = msg => toasts.push(msg);
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.localStorage = {{ getItem: () => null, setItem: () => {{}}, removeItem: () => {{}} }};
+        global.requestAnimationFrame = cb => cb();
+        global.clearTimeout = () => {{}};
+        global.setTimeout = () => {{}};
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}), getBBox: () => ({{ width: 100, height: 20, x: 0, y: 0 }}) }};
+        global.document = {{
+          title: 'Test Title',
+          body: dummyElem,
+          getElementById: id => elemMap[id] || dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        const context = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console, showToast: global.showToast, toasts, elemMap }});
+        vm.runInContext(scriptContent, context);
+        vm.runInContext('showToast = msg => toasts.push(msg);', context);
+        
+        const initialDirty = vm.runInContext('isConfigDirty', context);
+        
+        // 1. Add proposed table
+        vm.runInContext("addProposedTable('proposed_orders', '注文提案テーブル', 'ToBe table', 'Orders Domain');", context);
+        const dirtyAfterTable = vm.runInContext('isConfigDirty', context);
+        
+        // 2. Add proposed column to existing table
+        vm.runInContext("addProposedColumn('users', 'nickname', 'ニックネーム', 'varchar(255)', 'YES', 'Proposed user nickname');", context);
+        
+        // 3. Export config JSON
+        const exportedJson = vm.runInContext('exportConfigJSON();', context);
+        const dirtyAfterExport = vm.runInContext('isConfigDirty', context);
+        
+        // 4. Mark clean after download/copy
+        vm.runInContext('markConfigClean();', context);
+        const cleanAfterSave = vm.runInContext('isConfigDirty', context);
+        
+        console.log(JSON.stringify({{ initialDirty, dirtyAfterTable, dirtyAfterExport, cleanAfterSave, exportedJson: JSON.parse(exportedJson) }}));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+        res = json.loads(proc.stdout.strip())
+        
+        self.assertFalse(res['initialDirty'])
+        self.assertTrue(res['dirtyAfterTable'])
+        self.assertTrue(res['dirtyAfterExport'])
+        self.assertFalse(res['cleanAfterSave'])
+        
+        cfg = res['exportedJson']
+        self.assertIn('tables', cfg)
+        tables = cfg['tables']
+        self.assertIn('proposed_orders', tables)
+        self.assertIn('users', tables)
+        
+        prop_order = tables['proposed_orders']
+        self.assertEqual(prop_order['logical_name'], '注文提案テーブル')
+        self.assertEqual(prop_order['comment'], 'ToBe table')
+        self.assertEqual(prop_order['columns'][0]['name'], 'id')
+        
+        users_table = tables['users']
+        nick_col = next((c for c in users_table['columns'] if c['name'] == 'nickname'), None)
+        self.assertIsNotNone(nick_col)
+        self.assertEqual(nick_col['logical_name'], 'ニックネーム')
+        self.assertEqual(nick_col['type'], 'varchar(255)')
+
+
+if __name__ == '__main__':
+    unittest.main()
