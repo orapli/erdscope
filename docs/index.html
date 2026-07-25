@@ -6362,10 +6362,14 @@ function exportConfigJSON() {
         source_table: n.source_table || n.table || '',
         target_table: n.target_table || n.target || ''
       };
-      if (n.foreign_key) tgt.foreign_key = n.foreign_key;
+      if ('foreign_key' in n) tgt.foreign_key = n.foreign_key;
+      else if (n.foreign_key !== undefined) tgt.foreign_key = n.foreign_key;
+
+      if ('through' in n) tgt.through = n.through;
+      else if (n.through !== undefined) tgt.through = n.through;
+
       if (n.name) tgt.name = n.name;
       if (n.assoc_type || n.type) tgt.assoc_type = n.assoc_type || n.type;
-      if (n.through) tgt.through = n.through;
       if (typeof n.polymorphic === 'boolean') tgt.polymorphic = n.polymorphic;
       entry.target = tgt;
     } else {
@@ -6471,6 +6475,35 @@ function saveNoteFromModal() {
   if (!textVal) {
     showToast('Note text is required');
     return;
+  }
+
+  const validTables = DATA.tables || {};
+  if (scope === 'table') {
+    if (!tableVal) {
+      showToast('Table name is required for Table Note');
+      return;
+    }
+    if (!validTables[tableVal]) {
+      showToast(`Unknown table: "${tableVal}"`);
+      return;
+    }
+  } else if (scope === 'relation') {
+    if (!sourceTableVal) {
+      showToast('Source table is required for Relation Note');
+      return;
+    }
+    if (!validTables[sourceTableVal]) {
+      showToast(`Unknown source table: "${sourceTableVal}"`);
+      return;
+    }
+    if (!targetTableVal) {
+      showToast('Target table is required for Relation Note');
+      return;
+    }
+    if (!validTables[targetTableVal]) {
+      showToast(`Unknown target table: "${targetTableVal}"`);
+      return;
+    }
   }
 
   let note = NOTES.find(item => ensureNoteId(item) === nid);

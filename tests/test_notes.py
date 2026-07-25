@@ -649,6 +649,112 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         self.assertEqual(resolved[0]['scope'], 'table')
         self.assertEqual(resolved[0]['table'], 'users')
 
+    def test_config_export_preserves_explicit_null_foreign_key_and_through(self):
+        import subprocess
+        # Generate with valid relation note so _finish resolves it cleanly
+        notes_rel = [
+            {
+                'id': 'rel_null_fk',
+                'target': {
+                    'type': 'relation',
+                    'source_table': 'posts',
+                    'target_table': 'users',
+                    'foreign_key': 'user_id'
+                },
+                'text': 'Explicit null foreign_key and through test'
+            }
+        ]
+        tmp = tempfile.mkdtemp()
+        out_path = Path(tmp) / 'out.html'
+        args = type('Args', (), {'output': str(out_path), 'models': None, 'excel': None, 'max_rows': 15, 'only': None, 'exclude': None, 'infer_fk': False})()
+        erd._finish(self.tables, args, 'null_test', notes=notes_rel)
+
+        # In Node context, set NOTES[0].foreign_key = null and NOTES[0].through = null to simulate null attributes in resolved NOTES
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(str(out_path))}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}) }};
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.localStorage = {{ getItem: () => null, setItem: () => {{}}, removeItem: () => {{}} }};
+        global.requestAnimationFrame = cb => cb();
+        global.document = {{
+          title: 'Test Title',
+          body: dummyElem,
+          getElementById: () => dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        const context = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, console }});
+        vm.runInContext(scriptContent, context);
+        vm.runInContext('NOTES[0].foreign_key = null; NOTES[0].through = null;', context);
+        console.log(vm.runInContext('exportConfigJSON()', context));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+
+        exported_json = proc.stdout.strip()
+        cfg = json.loads(exported_json)
+        note_target = cfg['notes'][0]['target']
+        self.assertIn('foreign_key', note_target)
+        self.assertIsNone(note_target['foreign_key'])
+        self.assertIn('through', note_target)
+        self.assertIsNone(note_target['through'])
+
+    def test_save_note_from_modal_validates_table_existence(self):
+        import subprocess
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(str(self.out_path))}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+        const elemMap = {{}};
+        const createFormInput = (val = '') => ({{ value: val, style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }} }});
+        
+        elemMap['note-edit-id'] = createFormInput('new_note');
+        elemMap['note-edit-scope'] = createFormInput('table');
+        elemMap['note-edit-table'] = createFormInput('non_existent_table');
+        elemMap['note-edit-source-table'] = createFormInput('');
+        elemMap['note-edit-target-table'] = createFormInput('');
+        elemMap['note-edit-foreign-key'] = createFormInput('');
+        elemMap['note-edit-title-val'] = createFormInput('Title');
+        elemMap['note-edit-text-val'] = createFormInput('Text content');
+        elemMap['note-edit-scope'] = createFormInput('table');
+        
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.localStorage = {{ getItem: () => null, setItem: () => {{}}, removeItem: () => {{}} }};
+        global.requestAnimationFrame = cb => cb();
+        global.clearTimeout = () => {{}};
+        global.setTimeout = () => {{}};
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}) }};
+        global.document = {{
+          title: 'Test Title',
+          body: dummyElem,
+          getElementById: id => elemMap[id] || dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        const context = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console }});
+        vm.runInContext(scriptContent, context);
+        vm.runInContext('saveNoteFromModal()', context);
+        const notesCount = vm.runInContext('NOTES.length', context);
+        console.log(JSON.stringify({{ notesCount }}));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+        res = json.loads(proc.stdout.strip())
+        # Since table 'non_existent_table' is invalid, note should NOT be added to NOTES array
+        self.assertEqual(res['notesCount'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()
