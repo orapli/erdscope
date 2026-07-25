@@ -11,6 +11,8 @@ The normal product workflow is implemented by `src/erdscope/cli.py`:
 5. Merge, reconcile, validate, optionally infer, and filter.
 6. Write self-contained HTML and optional XLSX or additive schema projections (`--emit-json`, `--emit-config`, `--emit-digest`, `--emit-dbml`, `--emit-mermaid`, `--emit-plantuml`).
 
+For CI or batch projection jobs, `--no-html` skips the HTML write, but it must be paired with at least one `--emit-*` flag or `--excel`; it cannot be combined with `-o/--output`. This keeps output paths unambiguous while allowing schema artifacts without an unwanted diagram.
+
 Useful smoke commands:
 
 ```bash
@@ -57,7 +59,7 @@ Subclass `FrameworkOverlay`, assign a unique `name` and detection `priority`, im
 
 - Detection is first-match by `(priority, name)`; marker-based overlays (Rails/Django/Prisma/Laravel) use shallow root-level checks, while content-based overlays such as SQLAlchemy must recurse as deeply as `build()`.
 - Registration is a contract boundary: names, priorities, accepted-input descriptions, and required methods are validated, and same-name registrations replace earlier classes. `build()` results are validated as `ProviderResult`s at both typed and untyped dispatch; framework output may be sparse, unlike the complete table contract required from DB adapters.
-- Framework fragments have lower physical authority than DB but higher logical authority. SQLAlchemy contributes declarative columns and relationships; its empty 2.0 declarative-base subclasses are not models. Laravel is association-only so DB columns survive the merge, and a project-root path is narrowed to `app/Models` before parsing; Laravel’s priority keeps Rails’ weak directory marker from claiming that root on case-insensitive filesystems.
+- Framework fragments have lower physical authority than DB but higher logical authority. SQLAlchemy contributes declarative columns and relationships; its empty 2.0 declarative-base subclasses are not models. SQLAlchemy 2.0 `Mapped[...]`, `Optional[...]`/`| None`, and collection annotations can supply coarse column type, nullability, relationship target, and cardinality when calls omit those details; annotation-only relationships still need a statically resolvable target. Laravel is association-only so DB columns survive the merge, and a project-root path is narrowed to `app/Models` before parsing; Laravel’s priority keeps Rails’ weak directory marker from claiming that root on case-insensitive filesystems.
 - Multiple `--models` sources merge in order.
 - Explicit typed sources are dispatched through `src/erdscope/sources.py`, including `<overlay>.models` registrations such as `sqlalchemy.models` and `laravel.models`; `dbml` contributes a schema layer, while `mermaid.er` contributes a lowest-authority sketch layer.
 - Static parsing cannot resolve every dynamic framework feature; expose actionable warnings or allow config/table-map correction rather than guessing silently.
@@ -84,10 +86,11 @@ The CLI can write additive projections alongside HTML: `--emit-json` (canonical 
 
 ### Viewer
 
-Edit `src/erdscope/viewer.html`, not the inlined copy in `erd.py` or generated `docs/index.html`. The current overview supports persisted Vertical, Horizontal, and viewport-scored Auto orientation (Focus remains Vertical), and relation routing is straight-first with bounded orthogonal obstacle avoidance before Bézier fallback. E2E changes should cover orientation persistence/selection, layout scoring or routing behavior, and the existing generated-artifact checks.
+Edit `src/erdscope/viewer.html`, not the inlined copy in `erd.py` or generated `docs/index.html`. The viewer now includes the Schema Grid/Data Dictionary, interactive note editing and Config JSON export, proposed ToBe table/column editing, persisted unsaved changes with Config/Updated HTML export, and a clean Discard/reload path. Persisted config must not be created on an unmodified page load. The current overview supports persisted Vertical, Horizontal, and viewport-scored Auto orientation (Focus remains Vertical), and relation routing is straight-first with bounded orthogonal obstacle avoidance before Bézier fallback. E2E changes should cover the affected modal/export/persistence behavior as well as orientation persistence/selection, layout scoring or routing behavior, and the existing generated-artifact checks.
 
 ```bash
 python3 -m unittest tests.test_e2e -v
+python3 -m unittest tests.test_schema_grid tests.test_notes tests.test_proposed_schema -v
 python3 tools/build_single_file.py
 python3 docs/gen_demo.py
 python3 docs/gen_shots.py

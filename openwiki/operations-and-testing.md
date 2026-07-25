@@ -17,6 +17,8 @@ python3 -m unittest tests.test_erd -v                # Laravel parser/provider b
 python3 -m unittest tests.test_provider_contract -v   # typed provider contracts
 python3 -m unittest tests.test_showcase -v            # committed review outputs
 python3 -m unittest tests.test_version -v             # --version and -V parity
+python3 -m unittest tests.test_no_html -v              # output-only CLI mode
+python3 -m unittest tests.test_schema_grid tests.test_notes tests.test_proposed_schema -v # viewer editing/export contracts
 ```
 
 Parser and exporter behavior is concentrated in `tests/test_erd.py`; typed DBML/Mermaid input has dedicated `tests/test_dbml_input.py` and `tests/test_mermaid_input.py`; projection/diff contracts are in `tests/test_emit_*.py` and `tests/test_diff.py`; golden compatibility is in `tests/test_characterization.py`. `tests/test_showcase.py` protects the committed multi-provider review outputs, while `tests/test_provider_contract.py` protects extension-boundary validation.
@@ -40,6 +42,7 @@ python3 -m unittest discover -s tests -v
 - Playwright drives `tests/test_e2e.py` in Chromium.
 - `openpyxl` round-trips generated workbooks in tests.
 - PyYAML enables YAML config tests; JSON config remains dependency-free.
+- Node.js is used by the note/config-export contract tests to execute the embedded viewer script.
 
 Automated browser coverage does not currently include Firefox or WebKit.
 
@@ -130,7 +133,8 @@ For large image exports, the viewer caps PNG canvas dimensions and may reduce sc
 | Browser slow on huge schema | Narrow tables before generation; use benchmark to distinguish generation from layout cost |
 | Driver and CLI outputs differ | Reproduce with `tests/test_db_integration.py`; focus on TSV/COPY null and escaping paths |
 | Typed DBML/Mermaid input changes | Run `tests/test_dbml_input.py` and `tests/test_mermaid_input.py`; check source kind and merge rank |
-| Projection output changes | Run the matching `tests/test_emit_*.py` contract; preserve deterministic ordering and stdout/path collision rules |
+| Projection output changes | Run the matching `tests/test_emit_*.py` contract; preserve deterministic ordering and stdout/path collision rules; for output-only jobs check `tests/test_no_html.py` and the `--no-html` pairing rules |
+| Viewer notes/proposed schema behavior changes | Run `tests.test_schema_grid`, `tests.test_notes`, and `tests.test_proposed_schema`; include E2E coverage for modal, persistence, discard, and export behavior |
 
 ## Pre-release checklist
 

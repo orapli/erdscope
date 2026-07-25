@@ -1330,8 +1330,9 @@ association は常に <code>manual</code> として表示されます。複合�
 <h3 id="diff">スキーマ diff / drift ゲート</h3>
 <p><code>--diff SNAPSHOT.json</code> は、このrunを以前保存した <code>--emit-json</code>
 スナップショットと比較し、出力を生成する代わりに差分を報告します — <code>--diff</code> の実行では
-HTML、Excel、JSON スナップショット、config ファイル、digest のいずれも書き出されず、
-<code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--excel</code> とは併用できません
+HTML、Excel、JSON スナップショット、config ファイル、digest、DBML、Mermaid、PlantUML のいずれも書き出されず、
+<code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/
+<code>--emit-mermaid</code>/<code>--emit-plantuml</code>/<code>--excel</code> とは併用できません
 （使用エラー、終了コード 2）。比較は <strong>level1</strong> — <a href="#emit-config">設定ファイル
 エクスポート</a>と同じ「実質的に同一のスキーマ」という考え方 — で行われ、バイト同一ではありません。
 <code>added</code> は「この run にのみ存在する」、<code>removed</code> は「スナップショットにのみ
@@ -1381,9 +1382,9 @@ relation note はそれが対象とする association の行に追記されま�
 <p><code>--emit-dbml FILE.dbml</code>（<code>-</code> で標準出力）は、最終スキーマを HTML と
 並べて、最小限の <a href="https://dbml.dbdiagram.io/docs/" target="_blank" rel="noopener">DBML</a>
 として書き出します — テーブル、カラム、主キー、インデックス、単一カラム FK のリレーション
-（<code>Ref:</code>）、テーブルコメント（<code>Note:</code>）です。これは DBML 対応の
-「エクスポート」側のみで、DBML を*入力*ソースとして使う機能は別の後続タスクです。まずこの
-エクスポートでスキーマ⇔DBML のマッピングを固めておく、という位置づけです。
+（<code>Ref:</code>）、テーブルコメント（<code>Note:</code>）です。typed DBML 入力ソースを補完する
+機能であり、DBML を統合スキーマへ読み込んだうえで、その最終結果を以下の再現範囲に従って
+エクスポートできます。
 <strong>高精度に再現されるもの:</strong> 各カラムは生の <code>sql_type</code>（DB 型が
 記録されていない場合のみ、粗い type 表記にフォールバック）、<code>pk</code>/
 <code>increment</code>/<code>not null</code>/<code>unique</code>/<code>default</code> の各属性、

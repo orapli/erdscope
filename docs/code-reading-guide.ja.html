@@ -1,0 +1,1122 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>erdscope コード読解ルート</title>
+  <style>
+    :root {
+      --paper: #f4f8fb;
+      --surface: #ffffff;
+      --surface-2: #e9f1f6;
+      --ink: #122331;
+      --muted: #526a7a;
+      --line: #c9d9e3;
+      --route: #087e8b;
+      --route-soft: #d8f0f1;
+      --amber: #b95d00;
+      --amber-soft: #fff0d9;
+      --test: #397653;
+      --test-soft: #ddf0e5;
+      --violet: #6456a3;
+      --violet-soft: #ece8ff;
+      --shadow: 0 10px 35px rgba(18, 35, 49, .09);
+      --radius: 12px;
+      --sans: "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #0d171e;
+        --surface: #14232c;
+        --surface-2: #1b303b;
+        --ink: #e7f1f6;
+        --muted: #a8bdc8;
+        --line: #304955;
+        --route: #56c7ca;
+        --route-soft: #183c43;
+        --amber: #ffb465;
+        --amber-soft: #432f1e;
+        --test: #8bd3a6;
+        --test-soft: #1e3b2c;
+        --violet: #b7a9ff;
+        --violet-soft: #312d50;
+        --shadow: 0 10px 35px rgba(0, 0, 0, .22);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        linear-gradient(rgba(8, 126, 139, .045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(8, 126, 139, .045) 1px, transparent 1px),
+        var(--paper);
+      background-size: 24px 24px;
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.75;
+    }
+
+    a { color: var(--route); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    :focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+    code, kbd {
+      font-family: var(--mono);
+      font-size: .91em;
+    }
+    code {
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface-2);
+      padding: .12em .35em;
+    }
+    pre {
+      overflow: auto;
+      margin: 1rem 0;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--route);
+      border-radius: 8px;
+      background: #10242d;
+      color: #e3f5f4;
+      padding: 1rem 1.1rem;
+      font: .86rem/1.65 var(--mono);
+    }
+    pre code { border: 0; background: none; padding: 0; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(235px, 285px) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .rail {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--paper) 93%, transparent);
+      backdrop-filter: blur(12px);
+      padding: 1.5rem 1.1rem 2rem;
+    }
+    .rail-mark {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      margin-bottom: 1.5rem;
+      font: 800 .95rem/1.2 var(--mono);
+      letter-spacing: .04em;
+    }
+    .rail-mark svg { flex: none; color: var(--route); }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font: .75rem/1.4 var(--mono);
+    }
+    .progress-track {
+      height: 5px;
+      margin: .45rem 0 1.4rem;
+      overflow: hidden;
+      border-radius: 99px;
+      background: var(--line);
+    }
+    .progress-bar {
+      width: 0;
+      height: 100%;
+      background: var(--route);
+      transition: width .25s ease;
+    }
+    .rail nav { display: grid; gap: .2rem; }
+    .rail nav a {
+      display: grid;
+      grid-template-columns: 1.7rem 1fr;
+      gap: .35rem;
+      border-radius: 7px;
+      color: var(--muted);
+      padding: .42rem .5rem;
+      text-decoration: none;
+      font-size: .86rem;
+      line-height: 1.35;
+    }
+    .rail nav a:hover,
+    .rail nav a[aria-current="true"] {
+      background: var(--route-soft);
+      color: var(--ink);
+    }
+    .rail nav b {
+      color: var(--route);
+      font: 700 .77rem/1.5 var(--mono);
+    }
+    .rail-note {
+      margin-top: 1.5rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      padding: 1rem .45rem 0;
+      font-size: .76rem;
+    }
+
+    main {
+      width: min(1160px, 100%);
+      margin: 0 auto;
+      padding: 4.5rem clamp(1.25rem, 4vw, 4.8rem) 7rem;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(260px, .6fr);
+      gap: clamp(2rem, 6vw, 5.5rem);
+      align-items: end;
+      min-height: 55vh;
+      padding-bottom: 4rem;
+    }
+    .eyebrow {
+      margin: 0 0 1rem;
+      color: var(--route);
+      font: 700 .78rem/1.4 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3 { line-height: 1.25; text-wrap: balance; }
+    h1 {
+      max-width: 850px;
+      margin: 0;
+      font-size: clamp(2.6rem, 7vw, 6.3rem);
+      font-weight: 900;
+      letter-spacing: -.065em;
+    }
+    .hero-lead {
+      max-width: 760px;
+      margin: 1.6rem 0 0;
+      color: var(--muted);
+      font-size: clamp(1rem, 1.6vw, 1.25rem);
+    }
+    .snapshot {
+      border: 1px solid var(--line);
+      border-top: 5px solid var(--amber);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 1.2rem 1.25rem;
+    }
+    .snapshot strong {
+      display: block;
+      margin-bottom: .55rem;
+      font: 800 .78rem/1.4 var(--mono);
+      color: var(--amber);
+    }
+    .snapshot dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: .35rem .8rem;
+      margin: 0;
+      font-size: .85rem;
+    }
+    .snapshot dt { color: var(--muted); }
+    .snapshot dd { margin: 0; font-family: var(--mono); }
+
+    .thesis {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      margin-bottom: 5rem;
+    }
+    .thesis > div { padding: 1.35rem 1.45rem; }
+    .thesis > div + div { border-left: 1px solid var(--line); }
+    .thesis b {
+      display: block;
+      margin-bottom: .35rem;
+      font-size: .95rem;
+    }
+    .thesis p { margin: 0; color: var(--muted); font-size: .88rem; }
+
+    section {
+      scroll-margin-top: 1.5rem;
+      margin: 0 0 6rem;
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: 4.2rem minmax(0, 1fr) auto;
+      gap: 1rem;
+      align-items: start;
+      margin-bottom: 1.6rem;
+    }
+    .station {
+      display: grid;
+      place-items: center;
+      width: 3.4rem;
+      height: 3.4rem;
+      border: 3px solid var(--route);
+      border-radius: 50%;
+      background: var(--paper);
+      color: var(--route);
+      font: 800 .85rem/1 var(--mono);
+      box-shadow: 0 0 0 7px var(--route-soft);
+    }
+    h2 {
+      margin: 0;
+      font-size: clamp(1.65rem, 3vw, 2.5rem);
+      letter-spacing: -.035em;
+    }
+    .section-head p { margin: .4rem 0 0; color: var(--muted); }
+    .done {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      white-space: nowrap;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      padding: .4rem .7rem;
+      cursor: pointer;
+      font: .78rem/1 var(--mono);
+    }
+    .done input { accent-color: var(--route); }
+
+    .route-section {
+      position: relative;
+      padding-left: 1.2rem;
+    }
+    .route-section::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      top: 3.4rem;
+      bottom: -6rem;
+      left: 2.85rem;
+      width: 3px;
+      background: repeating-linear-gradient(
+        to bottom,
+        var(--route) 0 13px,
+        transparent 13px 21px
+      );
+      opacity: .55;
+    }
+    .route-section.last::before { display: none; }
+
+    .grid-2,
+    .grid-3 {
+      display: grid;
+      gap: 1rem;
+    }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 1.2rem 1.3rem;
+    }
+    .card h3 { margin: 0 0 .5rem; font-size: 1rem; }
+    .card p { margin: .4rem 0; color: var(--muted); font-size: .9rem; }
+    .card ul { margin: .65rem 0 0; padding-left: 1.15rem; }
+    .card li + li { margin-top: .35rem; }
+    .file-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+    .file-card .file {
+      display: inline-block;
+      margin-bottom: .55rem;
+      font: 750 .82rem/1.45 var(--mono);
+      overflow-wrap: anywhere;
+    }
+    .file-card .why { flex: 1; }
+    .question {
+      margin-top: .9rem;
+      border-top: 1px solid var(--line);
+      color: var(--ink);
+      padding-top: .75rem;
+      font-size: .84rem;
+    }
+    .question::before {
+      content: "理解の目印";
+      display: block;
+      margin-bottom: .25rem;
+      color: var(--route);
+      font: 700 .68rem/1.4 var(--mono);
+    }
+
+    .callout {
+      margin: 1rem 0;
+      border-left: 5px solid var(--amber);
+      border-radius: 0 9px 9px 0;
+      background: var(--amber-soft);
+      padding: 1rem 1.2rem;
+    }
+    .callout.test {
+      border-left-color: var(--test);
+      background: var(--test-soft);
+    }
+    .callout.violet {
+      border-left-color: var(--violet);
+      background: var(--violet-soft);
+    }
+    .callout strong { display: block; margin-bottom: .2rem; }
+    .callout p { margin: .2rem 0; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(105px, 1fr));
+      gap: .55rem;
+      margin: 1.2rem 0;
+      overflow-x: auto;
+      padding: .35rem .1rem .9rem;
+    }
+    .flow > div {
+      position: relative;
+      min-width: 105px;
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--route);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: .7rem .75rem;
+      font-size: .78rem;
+    }
+    .flow > div::after {
+      content: "→";
+      position: absolute;
+      top: 50%;
+      right: -.55rem;
+      z-index: 2;
+      color: var(--route);
+      transform: translate(50%, -50%);
+      font-weight: 900;
+    }
+    .flow > div:last-child::after { display: none; }
+    .flow b { display: block; margin-bottom: .3rem; font-family: var(--mono); }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+      font-size: .88rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: .7rem .85rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface-2);
+      color: var(--muted);
+      font: 700 .72rem/1.4 var(--mono);
+      letter-spacing: .03em;
+    }
+    tr:last-child td { border-bottom: 0; }
+
+    .mode-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      margin-bottom: 1rem;
+    }
+    .mode-tabs button {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      padding: .55rem .85rem;
+      cursor: pointer;
+      font: 700 .78rem/1 var(--mono);
+    }
+    .mode-tabs button[aria-selected="true"] {
+      border-color: var(--route);
+      background: var(--route-soft);
+      color: var(--ink);
+    }
+    .mode-panel[hidden] { display: none; }
+
+    .compact-list {
+      display: grid;
+      gap: .45rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .compact-list li {
+      display: grid;
+      grid-template-columns: minmax(150px, .42fr) minmax(0, 1fr);
+      gap: .8rem;
+      border-bottom: 1px solid var(--line);
+      padding: .55rem 0;
+    }
+    .compact-list li:last-child { border-bottom: 0; }
+
+    .danger-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: .7rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .danger-list li {
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--amber);
+      border-radius: 7px;
+      background: var(--surface);
+      padding: .75rem .9rem;
+      font-size: .88rem;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      padding-top: 1.5rem;
+      font-size: .82rem;
+    }
+
+    @media (max-width: 900px) {
+      .shell { display: block; }
+      .rail {
+        position: relative;
+        width: 100%;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .rail nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .rail-note { display: none; }
+      main { padding-top: 2.7rem; }
+      .hero { grid-template-columns: 1fr; min-height: auto; }
+      .thesis { grid-template-columns: 1fr; }
+      .thesis > div + div { border-top: 1px solid var(--line); border-left: 0; }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 620px) {
+      .rail nav { grid-template-columns: 1fr; }
+      .grid-2, .grid-3, .danger-list { grid-template-columns: 1fr; }
+      .section-head { grid-template-columns: 3.5rem 1fr; }
+      .section-head .done { grid-column: 2; justify-self: start; }
+      .route-section { padding-left: 0; }
+      .route-section::before { left: 1.7rem; }
+      .station { width: 3rem; height: 3rem; }
+      .compact-list li { grid-template-columns: 1fr; gap: .15rem; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
+
+    @media print {
+      .shell { display: block; }
+      .rail, .done, .mode-tabs { display: none; }
+      main { width: auto; padding: 1cm; }
+      body { background: white; color: #111; }
+      .hero { min-height: auto; }
+      .mode-panel[hidden] { display: block; }
+      section { break-inside: avoid; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .progress-bar { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="rail-mark">
+        <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+          <rect x="2" y="3" width="10" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <rect x="18" y="19" width="10" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 7h5v16h1" fill="none" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        ERDSCOPE / READ ROUTE
+      </div>
+      <div class="progress-label"><span>読了</span><span id="progress-text">0 / 9</span></div>
+      <div class="progress-track" aria-hidden="true"><div class="progress-bar" id="progress-bar"></div></div>
+      <nav aria-label="読解ルート">
+        <a href="#start"><b>00</b><span>最初に持つ地図</span></a>
+        <a href="#product"><b>01</b><span>製品を一度使う</span></a>
+        <a href="#build"><b>02</b><span>単一ファイルの仕組み</span></a>
+        <a href="#ir"><b>03</b><span>IRとマージ規則</span></a>
+        <a href="#inputs"><b>04</b><span>入力レイヤー</span></a>
+        <a href="#pipeline"><b>05</b><span>CLIと出力境界</span></a>
+        <a href="#viewer"><b>06</b><span>Viewerの内部</span></a>
+        <a href="#tests"><b>07</b><span>テストを仕様書として読む</span></a>
+        <a href="#change"><b>08</b><span>安全に変更する</span></a>
+        <a href="#tracks"><b>+</b><span>目的別の短縮ルート</span></a>
+      </nav>
+      <p class="rail-note">
+        チェック状態はこのHTMLのlocalStorageだけに保存されます。リポジトリやアプリの状態は変更しません。
+      </p>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <div>
+          <p class="eyebrow">A dependency-aware reading guide</p>
+          <h1>コードを、<br>依存順に読む。</h1>
+          <p class="hero-lead">
+            erdscopeは「分割して開発し、単一ファイルで配る」ため、普通のPythonパッケージの感覚で読むと迷いやすいプロジェクトです。
+            このページは、理解が次の理解の前提になる順に、読むファイルと確認すべき問いを並べた読解ルートです。
+          </p>
+        </div>
+        <aside class="snapshot" aria-label="この文書の基準点">
+          <strong>CURRENT SNAPSHOT</strong>
+          <dl>
+            <dt>確認日</dt><dd>2026-07-26</dd>
+            <dt>HEAD</dt><dd>b2ce0c3</dd>
+            <dt>release</dt><dd>0.11.3</dd>
+            <dt>focus</dt><dd>pipeline + viewer</dd>
+          </dl>
+        </aside>
+      </header>
+
+      <div class="thesis" aria-label="読解の原則">
+        <div>
+          <b><code>erd.py</code>から読まない</b>
+          <p>配布物であり生成結果。編集元の分割ソースから追います。</p>
+        </div>
+        <div>
+          <b>データ境界を先に覚える</b>
+          <p>ProviderResult → merged IR → viewer payloadの3境界が全体を貫きます。</p>
+        </div>
+        <div>
+          <b>Viewerは3層に分ける</b>
+          <p>表示集合、ノード配置、エッジ経路を混ぜずに読みます。</p>
+        </div>
+      </div>
+
+      <section id="start" class="route-section">
+        <div class="section-head">
+          <span class="station">00</span>
+          <div>
+            <h2>最初に持つ地図</h2>
+            <p>細部へ入る前に、処理の一本道と「正典」を固定します。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="start"> 読了</label>
+        </div>
+
+        <div class="flow" aria-label="メインデータフロー">
+          <div><b>source</b>DB / models / config</div>
+          <div><b>ProviderResult</b>疎な入力レイヤー</div>
+          <div><b>merge_ir</b>権限・同一性の解決</div>
+          <div><b>final IR</b>列・関連・由来</div>
+          <div><b>serialize</b>互換payloadへ変換</div>
+          <div><b>viewer</b>表示・配置・経路</div>
+          <div><b>artifact</b>HTML / XLSX / text</div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h3>正典の優先順位</h3>
+            <ol>
+              <li>現行の <code>src/erdscope/*</code> とテスト</li>
+              <li><code>tools/build_single_file.py</code> の組み立て順</li>
+              <li>OpenWikiのアーキテクチャ説明</li>
+              <li>過去の作業指示書・計画書</li>
+            </ol>
+          </div>
+          <div class="card">
+            <h3>現在地について</h3>
+            <p>
+              OpenWikiは現行HEADに更新され、最近のSchema Grid、提案スキーマ編集、Layout orientation、straight-first routingも概説しています。
+              実装の細かな挙動と境界条件は引き続き
+              <a href="../src/erdscope/viewer.html">viewer.html</a> と
+              <a href="../tests/test_e2e.py">test_e2e.py</a> を正としてください。
+            </p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>30分しかない場合</strong>
+          <p>この00を読んだら、02 → 05 → 06の「理解の目印」だけを追ってください。ファイル全読は後で構いません。</p>
+        </div>
+      </section>
+
+      <section id="product" class="route-section">
+        <div class="section-head">
+          <span class="station">01</span>
+          <div>
+            <h2>製品を一度使う</h2>
+            <p>コードより先に、入力と成果物を手で結びつけます。所要目安15〜25分。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="product"> 読了</label>
+        </div>
+
+        <div class="grid-3">
+          <article class="card file-card">
+            <a class="file" href="../README.ja.md">README.ja.md</a>
+            <p class="why">対応入力、代表ユースケース、Viewerで何ができるかを把握します。</p>
+            <div class="question">「この製品は何を統合し、何を出すのか」を一文で言える。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="manual.ja.html">docs/manual.ja.html</a>
+            <p class="why">UIの名前と利用者向けの意味を先に覚えます。特にLayout、Direction、Auto-expand、Focus。</p>
+            <div class="question">Layoutと関係探索Directionの違いを説明できる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../examples/README.md">examples/README.md</a>
+            <p class="why">SQLiteのコミット済み例で、ゼロセットアップの入出力を確認します。</p>
+            <div class="question">生成HTMLがサーバー不要の自己完結ファイルだと分かる。</div>
+          </article>
+        </div>
+
+        <pre><code>python3 erd.py demo --no-open
+python3 erd.py sqlite:///examples/demo_shop.db -o /tmp/erdscope-reading.html</code></pre>
+      </section>
+
+      <section id="build" class="route-section">
+        <div class="section-head">
+          <span class="station">02</span>
+          <div>
+            <h2>単一ファイルの仕組み</h2>
+            <p>このリポジトリ固有の「読み方」を決める最重要ステーションです。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="build"> 読了</label>
+        </div>
+
+        <div class="grid-3">
+          <article class="card file-card">
+            <a class="file" href="../tools/build_single_file.py">tools/build_single_file.py</a>
+            <p class="why"><code>MODULES</code> がPython断片の実行順です。ディレクトリは <code>base.py</code> を先頭に展開されます。</p>
+            <div class="question">分割ファイル同士がimportせず、同一モジュールのglobalを共有する理由が分かる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/exporters.py">src/erdscope/exporters.py</a>
+            <p class="why"><code>HTML_TEMPLATE</code> sentinelがviewer埋め込み位置です。Excel出力もここにあります。</p>
+            <div class="question">viewer.htmlがどこでPython文字列になるかを指せる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../pyproject.toml">pyproject.toml</a>
+            <p class="why">配布対象が <code>erd</code> という単一py-moduleであることを確認します。</p>
+            <div class="question">なぜ <code>src/erdscope</code> が通常のPython packageではないか説明できる。</div>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>絶対に守る編集境界</strong>
+          <p><code>erd.py</code> と <code>docs/index.html</code> は生成物です。Pythonは <code>src/erdscope/*.py</code>、Viewerは <code>src/erdscope/viewer.html</code> を編集します。</p>
+        </div>
+
+        <pre><code>python3 tools/build_single_file.py          # 生成
+python3 tools/build_single_file.py --check  # sourceと生成物の一致確認
+python3 docs/gen_demo.py                    # docs/index.htmlを再生成</code></pre>
+      </section>
+
+      <section id="ir" class="route-section">
+        <div class="section-head">
+          <span class="station">03</span>
+          <div>
+            <h2>IRとマージ規則</h2>
+            <p>入力形式の違いを吸収する中間表現と、フィールド別の権限を理解します。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="ir"> 読了</label>
+        </div>
+
+        <div class="grid-2">
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/ir.py">src/erdscope/ir.py</a>
+            <p class="why"><code>ProviderResult</code>、association provenance、viewer向けlegacy flagの最小契約です。短いので全読します。</p>
+            <div class="question"><code>db_fk</code> / <code>declared</code> / <code>manual</code> / <code>inferred</code> の由来を説明できる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../openwiki/domain/schema-merge.md">openwiki/domain/schema-merge.md</a>
+            <p class="why">physicalとlogicalの権限、疎なfragment、関連の同一性、config操作の意図を先に言葉で読みます。</p>
+            <div class="question">「後から来た入力が常に全部勝つ」わけではない理由が分かる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/merge.py">src/erdscope/merge.py</a>
+            <p class="why"><code>merge_ir()</code>、<code>association_key()</code>、DB FK reconciliationが実際の契約です。</p>
+            <div class="question">Phase Aの同一性マージとPhase BのDB FK吸収を分けて説明できる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../tests/test_merge_ir.py">tests/test_merge_ir.py</a>
+            <p class="why">文章では曖昧になりやすい同率・欠落・drop・重複関連の境界例をテストから学びます。</p>
+            <div class="question">変更するフィールドに対応する既存テストを見つけられる。</div>
+          </article>
+        </div>
+
+        <table>
+          <thead><tr><th>境界</th><th>主な形</th><th>注意点</th></tr></thead>
+          <tbody>
+            <tr><td>ProviderResult</td><td><code>{source, tables, warnings}</code></td><td>疎なfragment。欠落は「空」と同じではありません。</td></tr>
+            <tr><td>Merged IR</td><td>tables / columns / indexes / associations</td><td>構造化provenanceとsourcesを保持します。</td></tr>
+            <tr><td>Viewer payload</td><td>legacy flags + notes + groups</td><td>内部provenanceを直接漏らさない互換境界です。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="inputs" class="route-section">
+        <div class="section-head">
+          <span class="station">04</span>
+          <div>
+            <h2>入力レイヤー</h2>
+            <p>すべての入力実装を読む必要はありません。registryと代表1本を読んでから横展開します。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="inputs"> 読了</label>
+        </div>
+
+        <div class="grid-3">
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/db/base.py">db/base.py</a>
+            <p class="why"><code>DBAdapter</code> registry、plugin seam、共通IR builderを読みます。</p>
+            <div class="question">URL schemeからadapter classへ到達する流れを追える。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/frameworks/base.py">frameworks/base.py</a>
+            <p class="why"><code>FrameworkOverlay</code>、priority付き自動検出、FK推論の基礎です。</p>
+            <div class="question">untyped <code>--models</code> のfirst-match規則を説明できる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/sources.py">sources.py</a>
+            <p class="why">legacy modelsとtyped sourcesを一つのInputSpec列へ正規化します。</p>
+            <div class="question"><code>rails.project</code> macroが何へ展開されるか追える。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/providers.py">providers.py</a>
+            <p class="why">DB provider、config layer、notes/groupsの意味検証が集まります。</p>
+            <div class="question">構文検証とfinal IRに対する意味検証の違いが分かる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/db/sqlite.py">db/sqlite.py</a>
+            <p class="why">最小で追いやすいDB adapterの代表として先に読みます。</p>
+            <div class="question">adapterが最終形ではなくProviderResult用tablesを返すと分かる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/frameworks/sqlalchemy.py">frameworks/sqlalchemy.py</a>
+            <p class="why">AST検出、base除外、列と関連の両方を持つ複合的なoverlay例です。</p>
+            <div class="question">静的解析の限界をwarning/configで補う設計が分かる。</div>
+          </article>
+        </div>
+
+        <div class="callout violet">
+          <strong>派生実装のおすすめ順</strong>
+          <p>SQLite → MySQL/PostgreSQL → Rails schema → SQLAlchemy → Rails/Django/Prisma/Laravel。最初から全parserを精読しないでください。</p>
+        </div>
+      </section>
+
+      <section id="pipeline" class="route-section">
+        <div class="section-head">
+          <span class="station">05</span>
+          <div>
+            <h2>CLIと出力境界</h2>
+            <p>ここで、入力レイヤーが一つの実行へ組み上がります。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="pipeline"> 読了</label>
+        </div>
+
+        <div class="grid-2">
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/cli.py">src/erdscope/cli.py</a>
+            <p class="why">まず <code>_run_pipeline()</code>、次に <code>serialize_for_viewer()</code>、最後に <code>_finish()</code> の順で読みます。argparse全体は後回しで構いません。</p>
+            <div class="question">config読み込みから最終HTML書き込みまでを7段階ほどで説明できる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/config.py">src/erdscope/config.py</a>
+            <p class="why">CLI overrideとconfig default、厳格なshape検証、URL組み立てを担当します。</p>
+            <div class="question">argparseの<code>SUPPRESS</code>が明示指定を区別する理由が分かる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/exporters.py">src/erdscope/exporters.py</a>
+            <p class="why">HTML template境界とstdlibだけのXLSX writerを確認します。</p>
+            <div class="question">HTMLへJSONを安全に埋める責任がどこにあるか分かる。</div>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../src/erdscope/emit.py">emit.py</a>
+            <p class="why">canonical snapshotと再入力可能configという、目的の異なる2投影があります。</p>
+            <div class="question">canonical JSONとconfig round-tripがbyte-identicalを目指さない理由が分かる。</div>
+          </article>
+        </div>
+
+        <div class="callout test">
+          <strong>ここまでの理解を確認するテスト</strong>
+          <pre><code>python3 -m unittest tests.test_pipeline -v
+python3 -m unittest tests.test_characterization -v
+python3 -m unittest tests.test_build -v</code></pre>
+        </div>
+      </section>
+
+      <section id="viewer" class="route-section">
+        <div class="section-head">
+          <span class="station">06</span>
+          <div>
+            <h2>Viewerの内部</h2>
+            <p>7,000行を超えるファイルを上から通読せず、状態 → 表示集合 → 配置 → 描画 → 編集・操作の順で分割します。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="viewer"> 読了</label>
+        </div>
+
+        <div class="callout">
+          <strong>最重要の分離</strong>
+          <p><code>getDisplayTables()</code> が「何を見せるか」、<code>layoutAll()</code> が「テーブルをどこへ置くか」、<code>routeEdge()</code> が「線をどう通すか」を決めます。相互に責任を逆流させません。</p>
+        </div>
+
+        <table>
+          <thead><tr><th>読む順</th><th>viewer.htmlの目印</th><th>理解する内容</th></tr></thead>
+          <tbody>
+            <tr><td>6-A</td><td><code>DATA</code>〜<code>getDisplayEdges()</code></td><td>永続状態、ROOT/AUTO/KEPT、focus、表示集合。</td></tr>
+            <tr><td>6-B</td><td><code>calcSize()</code>〜<code>layoutAll()</code></td><td>実ノード寸法、Vertical/Horizontal、Auto候補評価、衝突補正。</td></tr>
+            <tr><td>6-C</td><td><code>refreshView()</code>〜<code>drawNode()</code></td><td>再配置条件、fit、SVG描画、group frame。</td></tr>
+            <tr><td>6-D</td><td><code>edgeCard()</code>〜<code>drawEdge()</code></td><td>straight-first routing、marker、through label、self loop。</td></tr>
+            <tr><td>6-E</td><td>selection〜details/undo</td><td>選択、focus、ban/promote、notes、undo/redo。</td></tr>
+            <tr><td>6-F</td><td><code>buildExportSvg()</code>〜PNG</td><td>画面とexportの経路・marker・group再利用。</td></tr>
+            <tr><td>6-G</td><td>Schema Grid〜proposed schema / config export</td><td>表形式の探索、notes、ToBe編集、永続化、Discard、Config/HTML export。</td></tr>
+            <tr><td>6-H</td><td>drag〜control sync / views / share</td><td>incident edgeだけの再描画、UIイベント、views/share/state。</td></tr>
+          </tbody>
+        </table>
+
+        <h3>現在のLayoutモデル</h3>
+        <div class="grid-3">
+          <div class="card">
+            <h3>Vertical</h3>
+            <p>互換デフォルト。BFS depth row、branch順、isolated shelfを維持します。</p>
+          </div>
+          <div class="card">
+            <h3>Horizontal</h3>
+            <p>hubの左右へdepth-1 branchを負荷分割し、子孫をowner側に保ちます。</p>
+          </div>
+          <div class="card">
+            <h3>Auto</h3>
+            <p>両orientationの有限候補を最終補正後に比較し、実質同点ならVerticalを選びます。</p>
+          </div>
+        </div>
+
+        <h3>現在のEdge routingモデル</h3>
+        <div class="flow" aria-label="エッジ候補の優先順">
+          <div><b>1 straight</b>clearなら必ず優先</div>
+          <div><b>2 one bend</b>H→V / V→H</div>
+          <div><b>3 dogleg</b>外側laneで2折り</div>
+          <div><b>validate</b>8px障害物余白</div>
+          <div><b>endpoints</b>内部通過を棄却</div>
+          <div><b>fallback</b>最後だけBézier</div>
+          <div><b>label</b>pill全体を退避</div>
+        </div>
+
+        <ul class="danger-list">
+          <li>multi-association数を線の曲がりで表現しません。</li>
+          <li>self relationだけは従来のcompact loopです。</li>
+          <li>drag中はincident edgeだけを差し替えます。</li>
+          <li>group frameは通常のtable obstacleとは別扱いで、新しく自動配置するtableに対してだけ障害物になります。</li>
+          <li>Layout変更はoverviewだけ。Focus配置は別契約です。</li>
+          <li>同じ入力・寸法・viewportなら決定的である必要があります。</li>
+        </ul>
+      </section>
+
+      <section id="tests" class="route-section">
+        <div class="section-head">
+          <span class="station">07</span>
+          <div>
+            <h2>テストを仕様書として読む</h2>
+            <p>正確な境界条件は、説明文よりfixtureとassertionに現れます。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="tests"> 読了</label>
+        </div>
+
+        <div class="grid-3">
+          <article class="card file-card">
+            <a class="file" href="../tests/test_characterization.py">test_characterization.py</a>
+            <p class="why">既存出力のshapeと決定性。大きな変更前の土台です。</p>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../tests/test_pipeline.py">test_pipeline.py</a>
+            <p class="why">入力レイヤーからviewer payloadまでの統合境界です。</p>
+          </article>
+          <article class="card file-card">
+            <a class="file" href="../tests/test_e2e.py">test_e2e.py</a>
+            <p class="why">実際の生成HTMLをChromiumで操作します。Viewerの挙動仕様として読みます。</p>
+          </article>
+        </div>
+
+        <h3>Viewer E2Eのおすすめ読解順</h3>
+        <ol>
+          <li><code>TestLayoutOrientation</code> — 状態、UI、focus、undo境界</li>
+          <li><code>TestHorizontalLayout</code> — branch ownershipと左右負荷分割</li>
+          <li><code>TestAutoLayoutOrientation</code> — viewport別選択とtie-break</li>
+          <li><code>TestEdgeRouting</code> — 直線、dogleg、障害物、label、drag、export</li>
+          <li><code>TestAutoTidyLayoutQuality</code> — groupとresidual overlapの難所</li>
+          <li><code>TestClientJS</code> — 選択、drag、align、viewportの横断回帰</li>
+          <li><code>TestSchemaGridModal</code> と <code>test_schema_grid</code> / <code>test_notes</code> / <code>test_proposed_schema</code> — 表形式UI、編集、永続化、export</li>
+        </ol>
+
+        <pre><code>python3 -m unittest \
+  tests.test_e2e.TestLayoutOrientation \
+  tests.test_e2e.TestHorizontalLayout \
+  tests.test_e2e.TestAutoLayoutOrientation \
+  tests.test_e2e.TestEdgeRouting -v</code></pre>
+
+        <div class="callout test">
+          <strong>Optional dependencyを見落とさない</strong>
+          <p>Playwrightがない環境ではE2Eがskipします。「全テストOK」と「ブラウザ確認済み」は同義ではありません。</p>
+        </div>
+      </section>
+
+      <section id="change" class="route-section last">
+        <div class="section-head">
+          <span class="station">08</span>
+          <div>
+            <h2>安全に変更する</h2>
+            <p>理解の最後は、変更対象から最小の検証へ戻れる地図です。</p>
+          </div>
+          <label class="done"><input type="checkbox" data-progress="change"> 読了</label>
+        </div>
+
+        <table>
+          <thead><tr><th>変更したいもの</th><th>最初に開く</th><th>最低限の検証</th><th>生成</th></tr></thead>
+          <tbody>
+            <tr><td>DB adapter</td><td><code>db/base.py</code> + engine</td><td>adapter units / integration</td><td><code>erd.py</code></td></tr>
+            <tr><td>Framework parser</td><td><code>frameworks/base.py</code> + parser</td><td>fixture + provider contract</td><td><code>erd.py</code></td></tr>
+            <tr><td>merge/config</td><td><code>ir.py</code>, <code>merge.py</code>, <code>config.py</code></td><td>merge + config + pipeline</td><td><code>erd.py</code></td></tr>
+            <tr><td>Viewer/layout</td><td><code>viewer.html</code></td><td>focused Playwright + full E2E</td><td><code>erd.py</code>, <code>docs/index.html</code></td></tr>
+            <tr><td>Export projection</td><td>対応する<code>emit_*.py</code></td><td>対応する<code>test_emit_*</code></td><td><code>erd.py</code></td></tr>
+            <tr><td>Demo</td><td><code>demo.py</code>, <code>docs/gen_demo.py</code></td><td>demo + determinism</td><td>demo DB / docs</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Viewer変更の標準手順</h3>
+        <pre><code># 1. focused browser tests
+python3 -m unittest tests.test_e2e.TestEdgeRouting -v
+
+# 2. generated artifacts
+python3 tools/build_single_file.py
+python3 docs/gen_demo.py
+
+# 3. consistency and regression
+python3 tools/build_single_file.py --check
+python3 -m unittest tests.test_characterization.TestDemoHTMLDeterminism -v
+python3 -m unittest discover -s tests -v
+git diff --check</code></pre>
+
+        <div class="callout">
+          <strong>差分レビューで毎回見ること</strong>
+          <p>生成物だけの手編集、無関係なvertical/focus挙動、順序依存の追加、非決定性、optional dependencyの無言skip、古いstate/share payloadの互換性。</p>
+        </div>
+      </section>
+
+      <section id="tracks">
+        <div class="section-head">
+          <span class="station">+</span>
+          <div>
+            <h2>目的別の短縮ルート</h2>
+            <p>担当範囲が決まっている場合は、基礎3ステーションの後に枝分かれできます。</p>
+          </div>
+        </div>
+
+        <div class="mode-tabs" role="tablist" aria-label="目的別ルート">
+          <button type="button" role="tab" aria-selected="true" aria-controls="track-viewer" id="tab-viewer">Viewer</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="track-input" id="tab-input">入力・parser</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="track-domain" id="tab-domain">IR・merge</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="track-release" id="tab-release">リリース</button>
+        </div>
+
+        <div id="track-viewer" class="mode-panel" role="tabpanel" aria-labelledby="tab-viewer">
+          <ul class="compact-list">
+            <li><strong>共通基礎</strong><span>00 → 01 → 02</span></li>
+            <li><strong>状態と表示</strong><span><code>DATA</code> → <code>getDisplayTables()</code> / <code>getDisplayEdges()</code></span></li>
+            <li><strong>配置</strong><span><code>calcSize()</code> → <code>layoutAll()</code> → Layout 3クラスのE2E</span></li>
+            <li><strong>経路</strong><span><code>edgeCard()</code> → <code>drawEdge()</code> → <code>TestEdgeRouting</code></span></li>
+            <li><strong>編集UI</strong><span>Schema Grid / notes / proposed schema → 専用contract tests</span></li>
+            <li><strong>回帰</strong><span>drag / groups / export / persistence / discard E2E</span></li>
+          </ul>
+        </div>
+        <div id="track-input" class="mode-panel" role="tabpanel" aria-labelledby="tab-input" hidden>
+          <ul class="compact-list">
+            <li><strong>共通基礎</strong><span>00 → 02 → 03</span></li>
+            <li><strong>dispatch</strong><span><code>db/base.py</code> または <code>frameworks/base.py</code></span></li>
+            <li><strong>normalization</strong><span><code>sources.py</code> と <code>providers.py</code></span></li>
+            <li><strong>代表実装</strong><span>最も近いbuilt-inを1本だけ全読</span></li>
+            <li><strong>契約</strong><span>provider contract + 専用fixture tests</span></li>
+          </ul>
+        </div>
+        <div id="track-domain" class="mode-panel" role="tabpanel" aria-labelledby="tab-domain" hidden>
+          <ul class="compact-list">
+            <li><strong>共通基礎</strong><span>00 → 02</span></li>
+            <li><strong>契約</strong><span><code>ir.py</code> → schema-merge.md</span></li>
+            <li><strong>実装</strong><span><code>merge.py</code> → <code>providers.py</code></span></li>
+            <li><strong>境界</strong><span><code>serialize_for_viewer()</code> と <code>emit.py</code></span></li>
+            <li><strong>仕様</strong><span>merge / pipeline / characterization tests</span></li>
+          </ul>
+        </div>
+        <div id="track-release" class="mode-panel" role="tabpanel" aria-labelledby="tab-release" hidden>
+          <ul class="compact-list">
+            <li><strong>共通基礎</strong><span>00 → 01 → 02 → 05</span></li>
+            <li><strong>運用</strong><span><a href="../openwiki/operations-and-testing.md">operations-and-testing.md</a></span></li>
+            <li><strong>履歴</strong><span><code>CHANGELOG.md</code> とrelease workflow</span></li>
+            <li><strong>成果物</strong><span>erd.py / docs demo / wheelの決定性</span></li>
+            <li><strong>任意依存</strong><span>Playwright / openpyxl / PyYAML込みで再実行</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <footer>
+        <p>
+          このページは人が保守する読解入口です。実装変更で責任境界や推奨順が変わったら、この文書を更新してください。
+          自動生成OpenWikiページではないため、通常のソースドキュメントとしてレビュー対象にできます。
+        </p>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const progressBoxes = [...document.querySelectorAll('[data-progress]')];
+      const storageKey = 'erdscope:code-reading-guide:progress:v1';
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(storageKey) || '{}') || {}; } catch {}
+
+      function updateProgress() {
+        const count = progressBoxes.filter(box => box.checked).length;
+        document.getElementById('progress-text').textContent = `${count} / ${progressBoxes.length}`;
+        document.getElementById('progress-bar').style.width =
+          `${progressBoxes.length ? count / progressBoxes.length * 100 : 0}%`;
+        const state = Object.fromEntries(progressBoxes.map(box => [box.dataset.progress, box.checked]));
+        try { localStorage.setItem(storageKey, JSON.stringify(state)); } catch {}
+      }
+
+      progressBoxes.forEach(box => {
+        box.checked = Boolean(saved[box.dataset.progress]);
+        box.addEventListener('change', updateProgress);
+      });
+      updateProgress();
+
+      const navLinks = [...document.querySelectorAll('.rail nav a')];
+      const sections = navLinks
+        .map(link => document.querySelector(link.getAttribute('href')))
+        .filter(Boolean);
+      const observer = new IntersectionObserver(entries => {
+        const visible = entries
+          .filter(entry => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (!visible) return;
+        navLinks.forEach(link => {
+          link.setAttribute(
+            'aria-current',
+            link.getAttribute('href') === `#${visible.target.id}` ? 'true' : 'false'
+          );
+        });
+      }, { rootMargin: '-15% 0px -72% 0px' });
+      sections.forEach(section => observer.observe(section));
+
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          tabs.forEach(item => {
+            const selected = item === tab;
+            item.setAttribute('aria-selected', String(selected));
+            document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
+          });
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

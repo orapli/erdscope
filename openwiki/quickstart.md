@@ -2,7 +2,7 @@
 
 erdscope is a Python 3.9+ CLI that produces a self-contained interactive ER-diagram HTML file and optional Excel, JSON/config/digest/DBML/Mermaid/PlantUML schema exports. A schema can come from any combination of a live MySQL/PostgreSQL/SQLite database, Rails/Prisma/Django/SQLAlchemy/Laravel model code, typed DBML or Mermaid `erDiagram` input, and declarative JSON/YAML config. The repository’s defining constraint is that development is split into readable source fragments, while distribution remains one zero-required-dependency `erd.py` file.
 
-This wiki documents local HEAD `018ace6` / release `0.11.3` (2026-07-24). The package version is exposed by `erdscope --version` / `-V` and kept aligned with `pyproject.toml` by `tests/test_version.py`.
+This wiki documents local HEAD `b2ce0c3` / release `0.11.3`. The package version is exposed by `erdscope --version` / `-V` and kept aligned with `pyproject.toml` by `tests/test_version.py`.
 
 ## Start here
 
@@ -48,7 +48,8 @@ At least one database, model path, or non-empty config `tables:` map is required
 4. **Regenerate the hosted demo after viewer/output changes:** `python3 docs/gen_demo.py`; CI diffs `docs/index.html`.
 5. **Keep optional dependencies optional.** CI first tests with none installed.
 6. **Treat config changes as a merge-contract change.** Syntax validation, semantic validation, authority, operation stripping, and output serialization must stay aligned.
-7. **Load only trusted plugins.** `--adapter` executes Python in-process and later registrations may override built-ins.
+7. **Use `--no-html` only for output-only runs.** It requires at least one `--emit-*` or `--excel` output and cannot be combined with `-o/--output`.
+8. **Load only trusted plugins.** `--adapter` executes Python in-process and later registrations may override built-ins.
 
 ## Documentation map
 
