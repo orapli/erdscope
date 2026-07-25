@@ -9031,13 +9031,21 @@ function selectedPositioned(){
 
 // ── Layout undo/redo ─────────────────────────────────────────────────────
 function snapshotPos(){
-  const snap={};
+  const snap={ __autoLayout: autoLayout };
   Object.keys(nodePos).forEach(k=>{ snap[k]={...nodePos[k]}; });
   return snap;
 }
 function restorePos(snap){
   Object.keys(nodePos).forEach(k=>delete nodePos[k]);
-  Object.keys(snap).forEach(k=>{ nodePos[k]={...snap[k]}; });
+  if(snap && typeof snap.__autoLayout === 'boolean' && autoLayout !== snap.__autoLayout){
+    autoLayout = snap.__autoLayout;
+    saveState();
+    const btn = document.getElementById('btn-autolayout');
+    if(btn) btn.classList.toggle('active', autoLayout);
+  }
+  Object.keys(snap).forEach(k=>{
+    if(k !== '__autoLayout') nodePos[k]={...snap[k]};
+  });
 }
 // call *before* mutating nodePos
 function pushUndoSnapshot(){
@@ -9949,9 +9957,9 @@ document.getElementById('btn-dark').addEventListener('click',()=>{
   setLS(LS('dk'), String(on));
 });
 document.getElementById('btn-autolayout').addEventListener('click',()=>{
+  pushUndoSnapshot();
   autoLayout=!autoLayout;
   document.getElementById('btn-autolayout').classList.toggle('active',autoLayout);
-document.body.classList.toggle('dark', localStorage.getItem(LS('dk'))==='true');
   saveState();
   if(autoLayout) refreshView(false, true); // apply immediately, even though the display set itself hasn't changed
   showToast(autoLayout?'Auto-tidy ON — rearranges the overview and replaces manual positions when displayed tables or sizes change':'Auto-tidy OFF');

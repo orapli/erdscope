@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-cell batch inline editing (`+ Note` button, `✏️` inline textarea, `⚙️` modal)
   in the **SchemaGrid** data dictionary view. Supports instant real-time synchronization
   with the ER diagram, global notes, inspector, and Config JSON export.
+- **Viewer: Auto-tidy Undo/Redo Integration (A3).** Recorded position and Auto-tidy
+  toggle state snapshots upon clicking the `Auto-tidy` button. Performing Undo (`Ctrl+Z`)
+  now seamlessly restores the manual layout coordinates and toggles Auto-tidy back OFF.
 - **Viewer: Data Dictionary / Schema Grid view & Standalone New Tab.** Added an
   interactive modal grid and standalone new-tab viewer accessible via the toolbar
   `📋 Grid` button and `↗ New Tab`. Features a decoupled `SchemaGrid` component
