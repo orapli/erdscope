@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = Path(__file__).resolve().parent / 'fixture_sqlalchemy'
+FIXTURE_20 = Path(__file__).resolve().parent / 'fixture_sqlalchemy_20'
 FIXTURE_CONTRACT = Path(__file__).resolve().parent / 'fixture_contract' / 'sqlalchemy'
 
 spec = importlib.util.spec_from_file_location('erd', ROOT / 'erd.py')
@@ -129,6 +130,150 @@ class TestSQLAlchemyIRSnapshot(unittest.TestCase):
 
     def test_detect_code_source(self):
         self.assertEqual(erd.detect_code_source(FIXTURE), 'sqlalchemy')
+
+
+class TestSQLAlchemy20AnnotationIRSnapshot(unittest.TestCase):
+    """Full parse_sqlalchemy() output for tests/fixture_sqlalchemy_20 — the
+    2.0 annotation-first style, where `Mapped[...]` is the only place the
+    column type and the relationship target appear because the
+    mapped_column()/relationship() call beside it carries neither.
+
+    Covers: annotation-derived types (int/str/Decimal/datetime), an explicit
+    type argument still winning over the annotation (User.name), nullability
+    from Optional[...] and from PEP 604 `str | None`, an explicit nullable=
+    beating the annotation (User.nickname), an unrecognised annotation name
+    passing through lowercased (User.role), a collection annotation left
+    untyped rather than typed as its element (User.scores), relationship
+    targets resolved from `Mapped[List["Post"]]` / `Mapped["Tag"]` /
+    `Mapped[Optional["Profile"]]` with no call argument at all, cardinality
+    read off the annotation (list -> has_many, scalar -> has_one,
+    WriteOnlyMapped -> has_many), and the FK-column/relationship() dedup
+    still collapsing Post.author_id + Post.author into one edge."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables, cls.warnings = erd.parse_sqlalchemy(FIXTURE_20)
+
+    def test_no_warnings(self):
+        self.assertEqual(self.warnings, [])
+
+    def test_full_ir(self):
+        expected = {
+            'users': {
+                'columns': [
+                    {'name': 'id', 'type': 'integer', 'nullable': False, 'primary': True},
+                    {'name': 'name', 'type': 'string', 'nullable': False, 'primary': False},
+                    {'name': 'email', 'type': 'string', 'nullable': True, 'primary': False},
+                    {'name': 'bio', 'type': 'string', 'nullable': True, 'primary': False},
+                    {'name': 'nickname', 'type': 'string', 'nullable': False, 'primary': False},
+                    {'name': 'balance', 'type': 'decimal', 'nullable': False, 'primary': False},
+                    {'name': 'created_at', 'type': 'datetime', 'nullable': False, 'primary': False},
+                    {'name': 'role', 'type': 'role', 'nullable': False, 'primary': False},
+                    {'name': 'scores', 'type': '', 'nullable': False, 'primary': False},
+                ],
+                'associations': [
+                    {'type': 'has_many', 'name': 'posts', 'target': 'posts'},
+                    {'type': 'has_one', 'name': 'profile', 'target': 'profiles'},
+                    {'type': 'has_many', 'name': 'audits', 'target': 'audits'},
+                ],
+                'primary_key': 'id',
+            },
+            'posts': {
+                'columns': [
+                    {'name': 'id', 'type': 'integer', 'nullable': False, 'primary': True},
+                    {'name': 'author_id', 'type': 'integer', 'nullable': False, 'primary': False},
+                ],
+                'associations': [
+                    {'type': 'belongs_to', 'name': 'author', 'target': 'users',
+                     'foreign_key': 'author_id'},
+                    {'type': 'has_one', 'name': 'primary_tag', 'target': 'tags'},
+                ],
+                'primary_key': 'id',
+            },
+            'profiles': {
+                'columns': [
+                    {'name': 'id', 'type': 'integer', 'nullable': False, 'primary': True},
+                    {'name': 'user_id', 'type': 'integer', 'nullable': False, 'primary': False},
+                ],
+                'associations': [
+                    {'type': 'has_one', 'name': 'user', 'target': 'users',
+                     'foreign_key': 'user_id'},
+                ],
+                'primary_key': 'id',
+            },
+            'tags': {
+                'columns': [
+                    {'name': 'id', 'type': 'integer', 'nullable': False, 'primary': True},
+                    {'name': 'label', 'type': 'string', 'nullable': False, 'primary': False},
+                ],
+                'associations': [],
+                'primary_key': 'id',
+            },
+            'audits': {
+                'columns': [
+                    {'name': 'id', 'type': 'integer', 'nullable': False, 'primary': True},
+                    {'name': 'action', 'type': 'string', 'nullable': False, 'primary': False},
+                ],
+                'associations': [],
+                'primary_key': 'id',
+            },
+        }
+        self.assertEqual(self.tables, expected)
+
+    def test_annotation_only_relationship_is_not_dropped(self):
+        # the regression this fixture exists for: `posts: Mapped[list["Post"]]
+        # = relationship()` has no target argument, so the association used to
+        # vanish entirely rather than merely lose its type
+        self.assertIn('posts', [a['name'] for a in self.tables['users']['associations']])
+
+    def test_fk_column_and_annotated_relationship_stay_one_edge(self):
+        edges = [a for a in self.tables['posts']['associations'] if a['target'] == 'users']
+        self.assertEqual(len(edges), 1, edges)
+
+
+class TestSQLAlchemyMappedAnnotationUnwrap(unittest.TestCase):
+    """_unwrap_mapped_annotation() shapes, incl. the ones that must NOT
+    resolve (a real union, an unrecognised generic, a bare annotation)."""
+
+    def _unwrap(self, source):
+        import ast
+        stmt = ast.parse(source).body[0]
+        return erd._unwrap_mapped_annotation(stmt.annotation)
+
+    def test_plain_scalar(self):
+        self.assertEqual(self._unwrap('x: Mapped[int] = c()'), ('int', False, False))
+
+    def test_optional_scalar(self):
+        self.assertEqual(self._unwrap('x: Mapped[Optional[str]] = c()'), ('str', False, True))
+
+    def test_pep604_optional(self):
+        self.assertEqual(self._unwrap('x: Mapped[str | None] = c()'), ('str', False, True))
+        self.assertEqual(self._unwrap('x: Mapped[None | str] = c()'), ('str', False, True))
+
+    def test_forward_reference_collection(self):
+        self.assertEqual(self._unwrap('x: Mapped[list["Item"]] = c()'), ('Item', True, False))
+        self.assertEqual(self._unwrap('x: Mapped[List[Item]] = c()'), ('Item', True, False))
+
+    def test_write_only_and_dynamic_are_collections(self):
+        self.assertEqual(self._unwrap('x: WriteOnlyMapped["Item"] = c()'), ('Item', True, False))
+        self.assertEqual(self._unwrap('x: DynamicMapped["Item"] = c()'), ('Item', True, False))
+
+    def test_qualified_wrapper(self):
+        self.assertEqual(self._unwrap('x: orm.Mapped[int] = c()'), ('int', False, False))
+
+    def test_optional_collection(self):
+        self.assertEqual(self._unwrap('x: Mapped[Optional[list["Item"]]] = c()'),
+                         ('Item', True, True))
+
+    def test_non_mapped_annotation_is_ignored(self):
+        self.assertEqual(self._unwrap('x: int = c()'), (None, False, False))
+        self.assertEqual(self._unwrap('x: Mapped = c()'), (None, False, False))
+
+    def test_genuine_union_has_no_single_type(self):
+        self.assertEqual(self._unwrap('x: Mapped[int | str] = c()'), (None, False, False))
+
+    def test_unrecognised_generic_has_no_single_type(self):
+        self.assertEqual(self._unwrap('x: Mapped[dict[str, Any]] = c()'), (None, False, False))
 
 
 class TestSQLAlchemyDetection(unittest.TestCase):

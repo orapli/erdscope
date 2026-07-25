@@ -327,7 +327,7 @@ footer{margin-top:88px;padding-top:22px;border-top:1px solid var(--line);color:v
   <a class="route-card" href="#quickstart"><strong>設定なしですぐ試したい</strong><span>内蔵のショップスキーマを開き、基本的な流れを確認します。</span></a>
   <a class="route-card" href="#input-sources"><strong>手元の情報から生成したい</strong><span>データベース、Rails、Prisma、Django、SQLAlchemy、Laravel、設定ファイルを単独または組み合わせて使います。</span></a>
   <a class="route-card" href="#viewer-guide"><strong>生成した図を探索したい</strong><span>検索、フォーカス、再配置、ビュー保存、リレーションの確認方法を説明します。</span></a>
-  <a class="route-card" href="#exports"><strong>結果を共有・納品したい</strong><span>PNG、SVG、Mermaid、PlantUML、Excelテーブル定義書へ出力します。</span></a>
+  <a class="route-card" href="#exports"><strong>結果を共有・納品したい</strong><span>PNG、SVG、Mermaid、PlantUML、DBML、Excelテーブル定義書へ出力します。</span></a>
   <a class="route-card wide" href="#troubleshooting"><strong>うまく動かない</strong><span>接続、リレーション、表示、大規模スキーマに関する解決方法を探します。</span></a>
 </div>
 
@@ -374,7 +374,7 @@ PostgreSQL では <code>pg_catalog</code>、SQLite では <code>PRAGMA</code> �
   <div class="card"><h4>コード側のセマンティクスを重ね合わせ</h4><p><code>--models</code> は Rails / Prisma / Django / SQLAlchemy / Laravel の関連をマージします。association ですでにカバーされている DB FK は重複排除され、残りには「DB FK」バッジが付きます。</p></div>
   <div class="card"><h4>インタラクティブな探索</h4><p>深度と方向を指定したフォーカス、2段階の非表示、テーブル・カラム検索、名前付きビュー、共有リンク。</p></div>
   <div class="card"><h4>読みやすいレイアウト</h4><p>ビューポートを考慮した自動配置、ドラッグ時のスナップ、複数選択での整列/分布、Auto-tidy、undo/redo。</p></div>
-  <div class="card"><h4>エクスポート</h4><p>PNG、SVG、Mermaid、PlantUML — それぞれコピーとダウンロードに対応 — に加えて Excel ワークブック。</p></div>
+  <div class="card"><h4>エクスポート</h4><p>PNG、SVG、Mermaid、PlantUML、DBML — それぞれコピーとダウンロードに対応 — に加えて Excel ワークブック。</p></div>
   <div class="card"><h4>論理名</h4><p>テーブルの DB コメントは検索可能な「論理名」を兼ね、物理名と並べて表示されます。</p></div>
   <div class="card"><h4>設計メモ（Notes）</h4><p>設計判断・運用ルール・ADR へのリンクをテーブル・関連・図全体に紐付け。実際のスキーマに対して検証され、テーブル/カラムと同様に検索できます。</p></div>
 </div>
@@ -492,7 +492,7 @@ Python 標準ライブラリの <code>zipfile</code>/XML 処理を使って直�
 <tr><td>Django</td><td>Django <strong>4.2 / 5.x</strong> 時点のモデル — FK / OneToOne / M2M（<code>through=</code> 含む）、抽象基底、<code>db_table</code>/<code>db_column</code>、<code>GenericForeignKey</code>（ポリモーフィックのマーカーとして保持）。swappable な <code>AUTH_USER_MODEL</code> への FK はカラムを保持しエッジのみスキップ</td></tr>
 <tr><td>DBML（<code>sources[].type: dbml</code>）</td><td><a href="https://dbml.dbdiagram.io/docs/" target="_blank" rel="noopener">dbml.dbdiagram.io</a> に記載の構文 — <code>Table</code>/カラム設定（<code>pk</code>/<code>not null</code>/<code>unique</code>/<code>increment</code>/<code>default</code>/<code>note</code>/インライン <code>ref</code>）、<code>indexes { (a, b) [pk] }</code> による複合主キー、独立文・ブロック双方の <code>Ref</code>（4種類のシンボルすべて）、<code>Enum</code>（認識はするが素通り）。<code>TableGroup</code>・独立した <code>Note</code> オブジェクト・複合（複数カラム）<code>Ref</code> は今回のスコープ外 — <a href="#input-sources">型付き入力ソース</a>参照</td></tr>
 <tr><td>Mermaid <code>erDiagram</code>（<code>sources[].type: mermaid.er</code>）</td><td><a href="https://mermaid.js.org/syntax/entityRelationshipDiagram.html" target="_blank" rel="noopener">erDiagram 構文</a> — エンティティブロック（<code>PK</code>/<code>FK</code>/<code>UK</code>、クォート付きコメント）とリレーション行（実線・破線を問わずcrow's-foot記法の全組み合わせ）。単体の <code>.mmd</code>/<code>.mermaid</code> ファイルのみ対応 — Markdown フェンス抽出は未対応</td></tr>
-<tr><td>SQLAlchemy（<code>sources[].type: sqlalchemy.models</code>）</td><td>従来型 <code>declarative_base()</code>・2.0 <code>DeclarativeBase</code> 両スタイルの宣言的モデル — 型オブジェクト明示の <code>Column(...)</code>/<code>mapped_column(...)</code>、<code>ForeignKey</code>、<code>relationship(secondary=...)</code> の多対多。静的 AST 解析のみ（モデルを import しない）。型注釈のみのカラム（型引数なしの <code>Mapped[int]</code>）は現状カラムは保持・型は空。対象引数なしの <code>relationship()</code>（型注釈のみ）は読み取られない</td></tr>
+<tr><td>SQLAlchemy（<code>sources[].type: sqlalchemy.models</code>）</td><td>従来型 <code>declarative_base()</code>・2.0 <code>DeclarativeBase</code> 両スタイルの宣言的モデル — 型オブジェクト明示の <code>Column(...)</code>/<code>mapped_column(...)</code>、<code>ForeignKey</code>、<code>relationship(secondary=...)</code> の多対多。静的 AST 解析のみ（モデルを import しない）。2.0 の型注釈のみのカラム・関連は <code>Mapped[...]</code> から読み取り（型・null 許可・対象クラス・多重度）</td></tr>
 <tr><td>Laravel Eloquent（<code>sources[].type: laravel.models</code>）</td><td><code>*.php</code> モデルファイル（<code>vendor/</code> 除外）の <code>hasMany</code>/<code>hasOne</code>/<code>belongsTo</code>/<code>belongsToMany</code> と <code>morphTo</code>/<code>morphMany</code>/<code>morphOne</code>/<code>morphToMany</code>。関連のみ — カラムはライブDBか別の物理ソースから</td></tr>
 <tr><td>Python</td><td>3.9 以上（<code>requires-python</code>）。CI は最新の CPython 3.x で実行</td></tr>
 </table>
@@ -665,11 +665,22 @@ Mermaid のカラム型はスケッチしながら書き留めた自由なテキ
 erdscope の粗い型に写像され、<code>ForeignKey('table.col')</code> は <code>belongs_to</code>
 （カラムが unique なら <code>has_one</code>）に、<code>relationship(secondary=...)</code> は
 多対多になります。自動判別は他フレームワークのマーカーファイル方式と異なり、内容ベース（再帰スキャン）で
-SQLAlchemy プロジェクトを認識します。今回の既知の制限: 型注釈のみのカラム
-（<code>id: Mapped[int] = mapped_column(primary_key=True)</code>、型引数なし）はカラム自体は
-保持されますが型が空になります。また、対象を型注釈だけで示す <code>relationship()</code>
-（<code>Mapped[list["Item"]]</code> のみで第一引数なし）は読み取られません —
-<code>relationship("Item", ...)</code> と対象を明示すると関連として拾われます。
+SQLAlchemy プロジェクトを認識します。
+</p>
+<p>
+2.0 の型注釈中心のスタイルは、注釈そのものから読み取ります（隣の呼び出しに型も対象も書かれないことが
+多いため）。<code>id: Mapped[int] = mapped_column(primary_key=True)</code> は
+<code>Mapped[int]</code> からカラム型を決定し、
+<code>posts: Mapped[list["Post"]] = relationship()</code> は第一引数なしでも
+<code>Mapped[list["Post"]]</code> から対象クラスを解決します。null 許可も 2.0 の規則に従い、
+<code>Mapped[str]</code> は NOT NULL、<code>Mapped[Optional[str]]</code> と
+<code>Mapped[str | None]</code> は nullable になります（明示的な <code>nullable=</code> キーワードや
+型引数があればそちらが常に優先）。多重度も注釈から決まります —
+<code>Mapped[list["Post"]]</code>（および <code>WriteOnlyMapped</code>/<code>DynamicMapped</code>）は
+to-many、スカラーの <code>Mapped["User"]</code> は to-one です。静的解析で解決できないもの:
+本物のユニオン（<code>Mapped[int | str]</code>）や未知のジェネリック
+（<code>Mapped[dict[str, Any]]</code>）は型が空のままになり、<em>カラム</em>側のコレクション注釈
+（<code>Mapped[list[int]]</code> — ARRAY/JSON カラム）は要素型で報告せず空のままにします。
 </p>
 <p>
 <strong><code>laravel.models</code></strong> は Laravel Eloquent モデルの <code>*.php</code>
@@ -922,21 +933,22 @@ groups が1つでも設定されていれば、<code>--excel</code> ワークブ
 <tr><td><code>mysql://…</code>、<code>postgres://…</code>、または <code>sqlite:///…</code></td><td>位置引数。データベース接続 URL。<code>postgres://</code> は任意の <code>?schema=name</code>（デフォルト <code>public</code>）を受け付けます。<code>postgresql://</code> という表記も使えます。<code>sqlite:///path/to/app.db</code> は標準ライブラリの <code>sqlite3</code> でローカルファイルを読みます（サーバー不要・インストール不要）。MySQL/PostgreSQL/SQLite は設定ファイルの <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> から組み立てることもできます（パスワード用のフィールドはありません。<code>engine: sqlite</code> の場合 <code>database</code> はファイルパスで <code>host</code>/<code>port</code>/<code>user</code> は指定できません — <a href="#config-file">設定ファイル</a>参照）。</td></tr>
 <tr><td><code>demo</code></td><td>位置引数。実際のデータベースの代わりに、同梱のサンプル e コマースデータベースから生成します — 一時ディレクトリに使い捨ての SQLite コピーを作成し、通常のパイプラインを実行して、結果をブラウザで開きます。この表の他のオプションもすべて併用できます。設定ファイルの自動検出は強制的に無効化され、明示的な <code>--config</code> 指定も警告付きで無視されるため、カレントディレクトリの状態に関わらずデモは常に同じ結果になります。デフォルトの出力先は（<code>erd.html</code> ではなく）<code>erd_demo.html</code> なので、通常実行の出力を上書きしません</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>出力 HTML ファイル（デフォルト: <code>erd.html</code>）</td></tr>
+<tr><td><code>--no-html</code></td><td>HTML 図を一切生成せず、指定した他の出力だけを書き出します — <code>--emit-*</code> ファイルや <code>--excel</code> ワークブックの生成が目的の CI 実行で便利です。<code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--emit-mermaid</code>/<code>--emit-plantuml</code>/<code>--excel</code> のいずれか1つ以上が必須で、指定がないと何も出力されないためエラー終了します。<code>-o/--output</code> とは併用不可</td></tr>
 <tr><td><code>--models PATH</code></td><td>アプリケーションコードから解析した関連セマンティクスをマージ: Rails プロジェクト（または <code>app/models</code> ディレクトリ）、<code>schema.prisma</code>、Django プロジェクト、SQLAlchemy のモデルディレクトリ、Laravel の <code>app/Models</code> ディレクトリ、または Rails の <code>db/schema.rb</code> ファイル — ソースは自動判別されます。繰り返し指定して複数のフレームワークをマージできます（競合時は後に指定した方が優先）。曖昧さのない、型を明示した代替手段については設定の<a href="#input-sources"><code>sources:</code></a>を参照してください</td></tr>
 <tr><td><code>--adapter PATH</code></td><td>独自のデータベースアダプタ（<code>DBAdapter</code>）やフレームワークオーバーレイ（<code>FrameworkOverlay</code>）を登録する Python プラグインを読み込みます — <a href="#extending">拡張</a>を参照。繰り返し指定可。config の <code>adapters</code> でも指定できます</td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>テーブル定義書も出力: 概要シート＋テーブルごとのシート</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>ワークブックの色/フォント/罫線をテンプレート <code>.xlsx</code> から上書き — 5セル契約については<a href="#excel-template">エクスポート</a>を参照。<code>--excel</code> なしでは効果がなく（警告が出ます）</td></tr>
-<tr><td><code>--emit-json FILE.json</code></td><td>HTML と並べて、正規化された JSON スキーマスナップショット（provenance と内容フィンガープリント付き）も書き出します — <a href="#emit-json">エクスポート</a>参照。<code>-</code> で標準出力へ。HTML は常に生成されます</td></tr>
-<tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>最終スキーマを、<code>--config</code>で再取込可能な設定ファイル形式でも書き出します — <a href="#emit-config">エクスポート</a>参照。拡張子で形式を判定（<code>-</code>で標準出力、常にJSON）。HTML は常に生成されます</td></tr>
+<tr><td><code>--emit-json FILE.json</code></td><td>HTML と並べて、正規化された JSON スキーマスナップショット（provenance と内容フィンガープリント付き）も書き出します — <a href="#emit-json">エクスポート</a>参照。<code>-</code> で標準出力へ。HTML も生成されます（<code>--no-html</code> 指定時を除く）</td></tr>
+<tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>最終スキーマを、<code>--config</code>で再取込可能な設定ファイル形式でも書き出します — <a href="#emit-config">エクスポート</a>参照。拡張子で形式を判定（<code>-</code>で標準出力、常にJSON）。HTML も生成されます（<code>--no-html</code> 指定時を除く）</td></tr>
 <tr><td><code>--diff SNAPSHOT.json</code></td><td>出力を生成する代わりに、保存済みの <code>--emit-json</code> スナップショットと比較します — <a href="#diff">エクスポート</a>参照。CLI 専用（config キーなし）。<code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--emit-mermaid</code>/<code>--emit-plantuml</code>/<code>--excel</code> とは併用不可</td></tr>
 <tr><td><code>--diff-provenance</code></td><td><code>--diff</code> で、association の provenance/sources も比較する（デフォルトでは無視）</td></tr>
 <tr><td><code>--diff-exit-zero</code></td><td><code>--diff</code> で、差分があっても終了コード 0 にする</td></tr>
 <tr><td><code>--diff-format text|json</code></td><td><code>--diff</code> の出力形式を人間可読テキスト（デフォルト）または決定論的な JSON にする</td></tr>
-<tr><td><code>--emit-digest FILE.md</code></td><td>HTML と並べて、設計メモ付きの、LLM/エージェント向けトークン効率の良い Markdown ダイジェストも書き出します — <a href="#emit-digest">エクスポート</a>参照。<code>-</code> で標準出力へ。HTML は常に生成されます</td></tr>
+<tr><td><code>--emit-digest FILE.md</code></td><td>HTML と並べて、設計メモ付きの、LLM/エージェント向けトークン効率の良い Markdown ダイジェストも書き出します — <a href="#emit-digest">エクスポート</a>参照。<code>-</code> で標準出力へ。HTML も生成されます（<code>--no-html</code> 指定時を除く）</td></tr>
 <tr><td><code>--digest-verbose</code></td><td><code>--emit-digest</code> で、各カラムに nullable/default/sql_type も含める（デフォルトでは省略）</td></tr>
-<tr><td><code>--emit-dbml FILE.dbml</code></td><td>スキーマの最小限の DBML エクスポート（テーブル/カラム/インデックス/単一カラム FK のリレーション/テーブルコメント）も書き出します — <a href="#emit-dbml">エクスポート</a>参照。<code>-</code> で標準出力へ。notes/groups/<code>TableGroup</code>（後回し）は含みません。HTML は常に生成されます</td></tr>
-<tr><td><code>--emit-mermaid FILE.mmd</code></td><td>スキーマの Mermaid <code>erDiagram</code> エクスポート（テーブル/カラム/PK・FKマーカー/リレーション）も書き出します — <a href="#emit-mermaid">エクスポート</a>参照。<code>-</code> で標準出力へ。notes/groups は含みません。HTML は常に生成されます</td></tr>
-<tr><td><code>--emit-plantuml FILE.puml</code></td><td>スキーマの PlantUML エンティティ関連図エクスポート（テーブル/カラム/PK・FKマーカー/リレーション）も書き出します — <a href="#emit-plantuml">エクスポート</a>参照。<code>-</code> で標準出力へ。notes/groups は含みません。HTML は常に生成されます</td></tr>
+<tr><td><code>--emit-dbml FILE.dbml</code></td><td>スキーマの最小限の DBML エクスポート（テーブル/カラム/インデックス/単一カラム FK のリレーション/テーブルコメント）も書き出します — <a href="#emit-dbml">エクスポート</a>参照。<code>-</code> で標準出力へ。notes/groups/<code>TableGroup</code>（後回し）は含みません。HTML も生成されます（<code>--no-html</code> 指定時を除く）</td></tr>
+<tr><td><code>--emit-mermaid FILE.mmd</code></td><td>スキーマの Mermaid <code>erDiagram</code> エクスポート（テーブル/カラム/PK・FKマーカー/リレーション）も書き出します — <a href="#emit-mermaid">エクスポート</a>参照。<code>-</code> で標準出力へ。notes/groups は含みません。HTML も生成されます（<code>--no-html</code> 指定時を除く）</td></tr>
+<tr><td><code>--emit-plantuml FILE.puml</code></td><td>スキーマの PlantUML エンティティ関連図エクスポート（テーブル/カラム/PK・FKマーカー/リレーション）も書き出します — <a href="#emit-plantuml">エクスポート</a>参照。<code>-</code> で標準出力へ。notes/groups は含みません。HTML も生成されます（<code>--no-html</code> 指定時を除く）</td></tr>
 <tr><td><code>--max-rows N</code></td><td>テーブルごとにスクロールなしで表示するカラム数の上限（デフォルト: 15）</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>指定した glob パターンに一致するテーブルのみを含める。繰り返し指定可、カンマ区切りリストも可</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>指定した glob パターンに一致するテーブルを除外。<code>--only</code> と同じ構文</td></tr>
@@ -1051,7 +1063,7 @@ KEPT テーブルをチェックするとタグは新しいものに変わるの
 <li><strong>複数選択</strong> — クリックで1つだけ選択、<kbd>Shift</kbd>-クリックまたは <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>-クリックで選択に追加/削除、何もないキャンバス上から <kbd>Shift</kbd>-ドラッグでラバーバンド選択。何もないキャンバスをクリックするとすべて選択解除されます。</li>
 <li><strong>ドラッグで移動</strong> — 選択中のテーブルをドラッグすると、選択中のもの全体が一緒に動きます。ドラッグ中の端は近くのテーブルの端/中心に数ピクセル以内でスナップし、赤いガイド線（Figma のような）が表示されます — ドラッグ中に <kbd>Alt</kbd> を押すとスナップを無効化できます。</li>
 <li><strong><a href="#groups">グループ</a>のドラッグ</strong> — グループのタイトルチップをドラッグすると、そのグループのメンバー全員が一緒に動きます（スナップなし）。グループの枠もリアルタイムに追従します。</li>
-<li><strong>整列 / 分布</strong> — 2つ以上選択すると、右ペインに <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span> が表示されます。3つ以上選択すると <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> の分布も使えるようになります（両端のテーブルは固定したまま、間の間隔を均等にします）。</li>
+<li><strong>整列 / 分布</strong> — 2つ以上選択すると、右ペインに <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span> が表示されます。3つ以上選択すると <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> の分布も使えるようになります（両端のテーブルは固定したまま、間の間隔を均等にします）。選択したテーブルの合計幅が、それらが占めている範囲より広い場合、重ならずに並べる配置は存在しないため、反対側の端を外へ押し出す代わりに何もしません — 先に選択範囲を広げてください。</li>
 <li><strong>Layout（レイアウト向き）</strong> — <code>↺</code> / Auto-tidy の近くにあるツールバー操作で、概要の自動配置がグラフをどう詰めるかを選びます。トップバーの <strong>Direction</strong>（Both / Deps / Dependents）とは別物で、そちらは Auto-expand やフォーカス深さの<strong>関係たどり方向</strong>だけを制御します。
   <ul>
     <li><strong>Vertical</strong>（既定）— 従来どおりの上下方向・BFS 深さ行配置。欠落・古い・不正な保存値はここにフォールバックします。</li>
@@ -1160,12 +1172,12 @@ Auto-expand をオフにした後も画面に残っている（KEPT）テーブ�
 <a href="#emit-plantuml">PlantUML 図エクスポート</a>
 </div>
 
-<img class="shot" loading="lazy" src="img/export.png" alt="エクスポートパネルが開いた状態。Join-table labels がチェック済み、root badges が未チェック、Names: Both の画像オプションの下に、PNG・SVG・Mermaid・PlantUML の4つのフォーマット行が Copy と Download ボタンとともに並んでいる">
+<img class="shot" loading="lazy" src="img/export.png" alt="エクスポートパネルが開いた状態。Join-table labels がチェック済み、root badges が未チェック、Names: Both の画像オプションの下に、PNG・SVG・Mermaid・PlantUML・DBML の5つのフォーマット行が Copy と Download ボタンとともに並んでいる">
 <p class="cap">エクスポートパネル: 上部に画像オプション、下部にフォーマットごとの Copy/Download 行。</p>
 
 <h3>画像オプション <span class="chip">PNG / SVG のみ</span></h3>
 <p>これら2つのチェックボックスと1つのトグルは、PNG と SVG のエクスポートにのみ適用されます —
-Mermaid、PlantUML、Excel ワークブックには影響しません。</p>
+Mermaid、PlantUML、DBML、Excel ワークブックには影響しません。</p>
 <ul>
 <li><strong>Join-table labels</strong>（⇢）— デフォルトでオン。オフにすると、エクスポートした画像から
 「join テーブル経由」を示す小さなエッジラベルを除外します。</li>
@@ -1205,6 +1217,18 @@ SVG は、ライブビューの現在のダーク/ライト設定に関わらず
 マークアップは異なります: 主キーのカラムが区切り線の上に先頭でリストされ、null 非許可のカラムには
 <code>*</code> が付き、外部キーのカラムには <code>&lt;&lt;FK&gt;&gt;</code> が付き、テーブルに論理名が
 あれば物理名の横に全角括弧で表示されます。</p>
+
+<h3>DBML</h3>
+<p>Mermaid・PlantUML と同じ範囲（<em>現在表示されている</em>ものだけ）を、
+<a href="https://dbdiagram.io/" target="_blank" rel="noopener">dbdiagram.io</a> にそのまま貼り付けられる
+<a href="https://dbml.dbdiagram.io/docs/" target="_blank" rel="noopener">DBML</a> として書き出します。
+各テーブルは <code>Table</code> ブロックになり、カラムごとに1行（型と、該当する場合は <code>pk</code>/
+<code>increment</code>/<code>not null</code>/<code>default</code> の設定）が並びます。インデックスまたは
+複合主キーがあるテーブルには <code>indexes</code> ブロックが、テーブルコメント（なければ論理名）には
+<code>Note</code> が付きます。単一カラムかつ非ポリモーフィックな <code>belongs_to</code> のうち、
+対象テーブルも表示されているものが <code>Ref:</code> 行になります。CLI の
+<a href="#emit-dbml"><code>--emit-dbml</code></a> と同じ内容で、あちらは表示中のサブセットではなく
+スキーマ全体を対象とします。</p>
 
 <h3 id="excel-template">Excel ワークブック</h3>
 <p><code>--excel FILE.xlsx</code> は、外部のスプレッドシートライブラリを一切使わずにワークブックを

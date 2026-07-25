@@ -1615,6 +1615,15 @@ class TestClientJS(unittest.TestCase):
         for name in ('posts', 'comments', 'likes'):
             self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])
         self.assertEqual(self.page.evaluate('selectedTables.size'), 3)
+        # spread the three out first: in the default grid layout they sit
+        # closer together than their combined width, which is the degenerate
+        # "doesn't fit" case distribute now refuses outright (see
+        # test_distribute_is_a_no_op_when_the_selection_is_too_narrow). Give
+        # them a span that genuinely fits, so this exercises real gap math.
+        self.page.evaluate('''() => {
+            [0, 600, 1600].forEach((x,i) => { nodePos[['posts','comments','likes'][i]].x = x; });
+            renderDiagram();
+        }''')
         dist_btn = self.page.locator('[data-dist="h"]')
         self.assertTrue(dist_btn.is_enabled(), 'distribute should be enabled at 3+ selected')
         dist_btn.click()
@@ -1628,6 +1637,72 @@ class TestClientJS(unittest.TestCase):
         }''')
         self.assertAlmostEqual(gaps[0], gaps[1], places=3,
                                 msg='distribute should equalize the edge-to-edge gaps')
+        self.assertGreater(gaps[0], 0,
+                           'the gaps must be real spacing, not the packed-flush 0/0 that the '
+                           'old clamping behavior produced')
+
+    def test_distribute_leaves_both_outermost_tables_where_they_were(self):
+        # the UI tooltip and the manual both promise the two extreme tables
+        # stay fixed and only the gaps between them change — assert *both*
+        # ends, since a packing loop anchored to one end trivially keeps that
+        # one in place while moving the other
+        for name in ('posts', 'comments', 'likes'):
+            self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])
+        # a span they actually fit in, so this checks the promise on the
+        # success path rather than trivially holding because nothing moved
+        self.page.evaluate('''() => {
+            [0, 600, 1600].forEach((x,i) => { nodePos[['posts','comments','likes'][i]].x = x; });
+            renderDiagram();
+        }''')
+        before = self.page.evaluate(
+            "Object.fromEntries(['posts','comments','likes'].map(t => [t, {...nodePos[t]}]))")
+        ends = sorted(before, key=lambda t: before[t]['x'])
+        middle = ends[1]
+        self.page.locator('[data-dist="h"]').click()
+        after = self.page.evaluate(
+            "Object.fromEntries(['posts','comments','likes'].map(t => [t, {...nodePos[t]}]))")
+        for t in (ends[0], ends[-1]):
+            self.assertAlmostEqual(after[t]['x'], before[t]['x'], places=3,
+                                    msg=f'{t} is an outermost table and must not move')
+        self.assertNotAlmostEqual(after[middle]['x'], before[middle]['x'], places=3,
+                                   msg='the middle table should have been repositioned — '
+                                       'otherwise this test passes on a no-op')
+
+    def test_distribute_is_a_no_op_when_the_selection_is_too_narrow(self):
+        # regression: gap used to be clamped at 0 when the nodes are together
+        # wider than the span they're in, which packed them from the leading
+        # edge and pushed the *trailing* outermost node outward — breaking the
+        # "both ends stay fixed" promise. Now it must refuse and change nothing.
+        for name in ('posts', 'comments', 'likes'):
+            self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])
+        # cram all three centers into a span far narrower than their combined
+        # width, so no arrangement without overlap exists
+        self.page.evaluate('''() => {
+            ['posts','comments','likes'].forEach((t,i) => { nodePos[t].x = i * 20; });
+            renderDiagram();
+        }''')
+        before = self.page.evaluate(
+            "Object.fromEntries(['posts','comments','likes'].map(t => [t, {...nodePos[t]}]))")
+        widths = self.page.evaluate(
+            "['posts','comments','likes'].reduce((s,t) => s + (nodeSize[t]||calcSize(t)).w, 0)")
+        self.assertGreater(widths, 40 + 200, 'fixture nodes must actually overflow the 40px span')
+        self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                         'nothing undoable should have happened yet')
+
+        self.page.locator('[data-dist="h"]').click()
+
+        self.assertEqual(
+            self.page.evaluate(
+                "Object.fromEntries(['posts','comments','likes'].map(t => [t, {...nodePos[t]}]))"),
+            before, 'a distribute that cannot succeed must leave every position untouched')
+        self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),
+                         'a refused distribute must not push an undo snapshot either')
+        self.assertIn('Not enough space',
+                      self.page.evaluate("document.getElementById('toast').textContent"),
+                      'the user must be told why nothing moved')
+        self.assertTrue(
+            self.page.evaluate("document.getElementById('toast').classList.contains('show')"),
+            'the explanatory toast must actually be visible')
 
     def test_undo_redo_drag(self):
         self.assertTrue(self.page.evaluate("document.getElementById('btn-undo').disabled"),

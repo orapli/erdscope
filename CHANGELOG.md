@@ -14,6 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Viewer: DBML export.** The toolbar Export menu now includes Copy and
   Download actions for DBML markup (`schema.dbml`), matching the existing
   Mermaid and PlantUML exporters.
+- **SQLAlchemy 2.0 annotation inference.** `Mapped[...]` annotations are now
+  read, closing the two gaps left when the overlay landed. An annotation-only
+  column (`id: Mapped[int] = mapped_column(primary_key=True)`) takes its type
+  from the annotation instead of coming out untyped, and an annotation-only
+  `relationship()` (`posts: Mapped[list["Post"]] = relationship()`, no target
+  argument) resolves its target class instead of being dropped silently.
+  Nullability follows 2.0's own rule (`Mapped[str]` is NOT NULL,
+  `Mapped[Optional[str]]` / `Mapped[str | None]` are nullable) and cardinality
+  comes from the annotation (`Mapped[list["Post"]]`, `WriteOnlyMapped`, and
+  `DynamicMapped` are to-many; a scalar `Mapped["User"]` is to-one). An
+  explicit type argument or `nullable=` keyword still wins over the
+  annotation.
+
+### Fixed
+
+- **Viewer: Distribute no longer moves an outermost table.** Distribute
+  promises to keep the two extreme tables fixed and equalize the gaps between
+  them. When the selected tables were together wider than the span they
+  occupied, the gap was clamped to zero and they were packed from the leading
+  edge, pushing the trailing table outward. It now leaves every position
+  untouched and reports `Not enough space to distribute without overlap`.
 
 ## [0.11.3] - 2026-07-24
 

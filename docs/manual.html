@@ -327,7 +327,7 @@ footer{margin-top:88px;padding-top:22px;border-top:1px solid var(--line);color:v
   <a class="route-card" href="#quickstart"><strong>Try it with no setup</strong><span>Open the bundled shop schema and learn the basic workflow.</span></a>
   <a class="route-card" href="#input-sources"><strong>Generate from what I have</strong><span>Use a database, Rails, Prisma, Django, SQLAlchemy, Laravel, config, or several sources together.</span></a>
   <a class="route-card" href="#viewer-guide"><strong>Explore a generated diagram</strong><span>Search, focus, rearrange, save views, and understand relation types.</span></a>
-  <a class="route-card" href="#exports"><strong>Share or hand off the result</strong><span>Export PNG, SVG, Mermaid, PlantUML, or an Excel definition workbook.</span></a>
+  <a class="route-card" href="#exports"><strong>Share or hand off the result</strong><span>Export PNG, SVG, Mermaid, PlantUML, DBML, or an Excel definition workbook.</span></a>
   <a class="route-card wide" href="#troubleshooting"><strong>Something is not working</strong><span>Find connection, relation, display, and large-schema troubleshooting guidance.</span></a>
 </div>
 
@@ -377,7 +377,7 @@ diagram will be.
   <div class="card"><h4>Code semantics on top</h4><p><code>--models</code> merges in Rails/Prisma/Django/SQLAlchemy/Laravel associations; DB FKs already covered by an association are deduplicated, the rest get a "DB FK" badge.</p></div>
   <div class="card"><h4>Interactive exploration</h4><p>Focus with depth and direction, two-level hiding, table and column search, named views, share links.</p></div>
   <div class="card"><h4>Readable layouts</h4><p>Viewport-aware packing, drag-to-snap, multi-select align/distribute, Auto-tidy, undo/redo.</p></div>
-  <div class="card"><h4>Exports</h4><p>PNG, SVG, Mermaid, PlantUML — each with copy and download — plus an Excel workbook.</p></div>
+  <div class="card"><h4>Exports</h4><p>PNG, SVG, Mermaid, PlantUML, DBML — each with copy and download — plus an Excel workbook.</p></div>
   <div class="card"><h4>Logical names</h4><p>A table's DB comment doubles as a searchable logical name, shown alongside the physical name.</p></div>
   <div class="card"><h4>Notes</h4><p>Attach design decisions, operational rules, and ADR links to a table, a relation, or the whole diagram — validated against the real schema, searchable alongside tables and columns.</p></div>
 </div>
@@ -495,7 +495,7 @@ verified against:</p>
 <tr><td>Django</td><td>models as of Django <strong>4.2 / 5.x</strong> — FK / OneToOne / M2M (incl. <code>through=</code>), abstract bases, <code>db_table</code>/<code>db_column</code>, <code>GenericForeignKey</code> (kept as a polymorphic marker); a swappable <code>AUTH_USER_MODEL</code> FK keeps its column and skips the edge</td></tr>
 <tr><td>DBML (<code>sources[].type: dbml</code>)</td><td>the syntax documented at <a href="https://dbml.dbdiagram.io/docs/" target="_blank" rel="noopener">dbml.dbdiagram.io</a> — <code>Table</code>/column settings (<code>pk</code>/<code>not null</code>/<code>unique</code>/<code>increment</code>/<code>default</code>/<code>note</code>/inline <code>ref</code>), composite PK via <code>indexes { (a, b) [pk] }</code>, standalone and block <code>Ref</code> (all four symbols), <code>Enum</code> (recognized, consumed). <code>TableGroup</code>, a standalone <code>Note</code> object, and a composite (multi-column) <code>Ref</code> are out of scope this round — see <a href="#input-sources">Typed input sources</a></td></tr>
 <tr><td>Mermaid <code>erDiagram</code> (<code>sources[].type: mermaid.er</code>)</td><td>the <a href="https://mermaid.js.org/syntax/entityRelationshipDiagram.html" target="_blank" rel="noopener">erDiagram syntax</a> — entity blocks (<code>PK</code>/<code>FK</code>/<code>UK</code>, quoted comments) and relationship lines (all crow's-foot cardinality combinations, solid or dotted line). A single standalone <code>.mmd</code>/<code>.mermaid</code> file only — no Markdown-fence extraction yet</td></tr>
-<tr><td>SQLAlchemy (<code>sources[].type: sqlalchemy.models</code>)</td><td>declarative models in both the classic <code>declarative_base()</code> and the 2.0 <code>DeclarativeBase</code> styles — <code>Column(...)</code>/<code>mapped_column(...)</code> with explicit type objects, <code>ForeignKey</code>, <code>relationship(secondary=...)</code> many-to-many. Static AST analysis (never imports the models). An annotation-only column (<code>Mapped[int]</code>, no type argument) currently keeps the column with an empty type, and an annotation-only <code>relationship()</code> (no target argument) is not picked up</td></tr>
+<tr><td>SQLAlchemy (<code>sources[].type: sqlalchemy.models</code>)</td><td>declarative models in both the classic <code>declarative_base()</code> and the 2.0 <code>DeclarativeBase</code> styles — <code>Column(...)</code>/<code>mapped_column(...)</code> with explicit type objects, <code>ForeignKey</code>, <code>relationship(secondary=...)</code> many-to-many. Static AST analysis (never imports the models). 2.0 annotation-only columns and relationships are read from <code>Mapped[...]</code> — type, nullability, target class, and cardinality</td></tr>
 <tr><td>Laravel Eloquent (<code>sources[].type: laravel.models</code>)</td><td><code>hasMany</code>/<code>hasOne</code>/<code>belongsTo</code>/<code>belongsToMany</code> and <code>morphTo</code>/<code>morphMany</code>/<code>morphOne</code>/<code>morphToMany</code> over <code>*.php</code> model files (<code>vendor/</code> excluded); association-only — columns come from a live DB or another physical source</td></tr>
 <tr><td>Python</td><td>3.9+ (<code>requires-python</code>); CI runs the latest CPython 3.x</td></tr>
 </table>
@@ -671,11 +671,23 @@ with explicit type objects map onto erdscope's coarse column types,
 <code>ForeignKey('table.col')</code> becomes a <code>belongs_to</code> (a <code>has_one</code> when
 the column is unique), and <code>relationship(secondary=...)</code> becomes a many-to-many.
 Auto-detection recognizes a SQLAlchemy project by content (recursive scan), unlike the marker-file
-checks the other frameworks use. Known limits this round: an annotation-only column
-(<code>id: Mapped[int] = mapped_column(primary_key=True)</code>, no type argument) keeps the column
-but with an empty type, and an annotation-only <code>relationship()</code> (target named only in
-the <code>Mapped[list["Item"]]</code> annotation, no first argument) is skipped — declare the
-target explicitly (<code>relationship("Item", ...)</code>) for the association to be picked up.
+checks the other frameworks use.
+</p>
+<p>
+The 2.0 annotation-first style is read from the annotation itself, since the call beside it often
+carries no type and no target: <code>id: Mapped[int] = mapped_column(primary_key=True)</code> types
+the column from <code>Mapped[int]</code>, and
+<code>posts: Mapped[list["Post"]] = relationship()</code> resolves its target class out of
+<code>Mapped[list["Post"]]</code> with no first argument needed. Nullability follows 2.0's own rule —
+<code>Mapped[str]</code> is NOT NULL, <code>Mapped[Optional[str]]</code> and
+<code>Mapped[str | None]</code> are nullable — and an explicit <code>nullable=</code> keyword or type
+argument always wins over the annotation. Cardinality comes from the annotation too:
+<code>Mapped[list["Post"]]</code> (or <code>WriteOnlyMapped</code>/<code>DynamicMapped</code>) is
+to-many, a scalar <code>Mapped["User"]</code> is to-one. What still can't be resolved statically:
+an annotation naming a genuine union (<code>Mapped[int | str]</code>) or an unrecognised generic
+(<code>Mapped[dict[str, Any]]</code>) leaves the column untyped, and a collection annotation on a
+<em>column</em> (<code>Mapped[list[int]]</code> — an ARRAY/JSON column) is left untyped rather than
+reported as its element type.
 </p>
 <p>
 <strong><code>laravel.models</code></strong> statically parses a directory of Laravel Eloquent
@@ -935,21 +947,22 @@ each table's membership — see <a href="#excel-template">Excel workbook</a> for
 <tr><td><code>mysql://…</code>, <code>postgres://…</code>, or <code>sqlite:///…</code></td><td>Positional. Database connection URL. <code>postgres://</code> accepts an optional <code>?schema=name</code> (default <code>public</code>); <code>postgresql://</code> works too. <code>sqlite:///path/to/app.db</code> reads a local file via the built-in <code>sqlite3</code> module (no server, nothing to install). MySQL/PostgreSQL/SQLite can also be assembled from <code>engine</code>/<code>host</code>/<code>port</code>/<code>user</code>/<code>database</code> in the config file (no password field there; for <code>engine: sqlite</code>, <code>database</code> is a file path and <code>host</code>/<code>port</code>/<code>user</code> don't apply — see <a href="#config-file">Config file</a>).</td></tr>
 <tr><td><code>demo</code></td><td>Positional. Generate from a bundled sample e-commerce database instead of a real one — builds a throwaway SQLite copy in a temp directory, runs the normal pipeline, and opens the result in a browser. Every other option in this table still applies. Config auto-discovery is force-disabled and an explicit <code>--config</code> is ignored with a warning, so the demo always looks the same regardless of the cwd. Default output is <code>erd_demo.html</code> (not <code>erd.html</code>), so it never clobbers a real run's output</td></tr>
 <tr><td><code>-o, --output OUTPUT</code></td><td>Output HTML file (default: <code>erd.html</code>)</td></tr>
+<tr><td><code>--no-html</code></td><td>Skip the HTML diagram entirely and write only the other requested outputs — useful in CI when the run exists to produce <code>--emit-*</code> files or an <code>--excel</code> workbook. At least one of <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--emit-mermaid</code>/<code>--emit-plantuml</code>/<code>--excel</code> is required, otherwise the run would produce nothing and exits with an error. Not combinable with <code>-o/--output</code></td></tr>
 <tr><td><code>--models PATH</code></td><td>Merge association semantics parsed from application code: a Rails project (or <code>app/models</code> dir), a <code>schema.prisma</code>, a Django project, a SQLAlchemy models dir, a Laravel <code>app/Models</code> dir, or a Rails <code>db/schema.rb</code> file — source auto-detected. Repeatable to merge several frameworks; later ones win on ties. For an unambiguous, typed alternative see config <a href="#input-sources"><code>sources:</code></a></td></tr>
 <tr><td><code>--adapter PATH</code></td><td>Load a Python plugin that registers a custom database adapter (<code>DBAdapter</code>) and/or framework overlay (<code>FrameworkOverlay</code>) — see <a href="#extending">Extending</a>. Repeatable; also settable as config <code>adapters</code></td></tr>
 <tr><td><code>--excel FILE.xlsx</code></td><td>Also write a table-definition workbook: an overview sheet plus one sheet per table</td></tr>
 <tr><td><code>--excel-template FILE.xlsx</code></td><td>Override the workbook's colors/fonts/borders from a template <code>.xlsx</code> — see <a href="#excel-template">Exports</a> for the 5-cell contract. Has no effect (and prints a warning) without <code>--excel</code></td></tr>
-<tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
-<tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>Also write the final schema as a config-authoring file, re-importable via <code>--config</code> — see <a href="#emit-config">Exports</a>. Extension picks the format (<code>-</code> for stdout, always JSON). The HTML is still generated</td></tr>
+<tr><td><code>--emit-json FILE.json</code></td><td>Also write a canonical JSON schema snapshot (with provenance and a content fingerprint) alongside the HTML — see <a href="#emit-json">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated unless <code>--no-html</code> is passed</td></tr>
+<tr><td><code>--emit-config FILE.yml|.yaml|.json</code></td><td>Also write the final schema as a config-authoring file, re-importable via <code>--config</code> — see <a href="#emit-config">Exports</a>. Extension picks the format (<code>-</code> for stdout, always JSON). The HTML is still generated unless <code>--no-html</code> is passed</td></tr>
 <tr><td><code>--diff SNAPSHOT.json</code></td><td>Compare this run against a saved <code>--emit-json</code> snapshot instead of generating any output — see <a href="#diff">Exports</a>. CLI-only (no config key). Not combinable with <code>--emit-json</code>/<code>--emit-config</code>/<code>--emit-digest</code>/<code>--emit-dbml</code>/<code>--emit-mermaid</code>/<code>--emit-plantuml</code>/<code>--excel</code></td></tr>
 <tr><td><code>--diff-provenance</code></td><td>With <code>--diff</code>, also compare association provenance/sources (ignored by default)</td></tr>
 <tr><td><code>--diff-exit-zero</code></td><td>With <code>--diff</code>, exit 0 even when a difference is found</td></tr>
 <tr><td><code>--diff-format text|json</code></td><td>With <code>--diff</code>, render as human-readable text (default) or deterministic JSON</td></tr>
-<tr><td><code>--emit-digest FILE.md</code></td><td>Also write a token-efficient Markdown digest of the schema, with design notes, for LLMs/agents — see <a href="#emit-digest">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated</td></tr>
+<tr><td><code>--emit-digest FILE.md</code></td><td>Also write a token-efficient Markdown digest of the schema, with design notes, for LLMs/agents — see <a href="#emit-digest">Exports</a>. Use <code>-</code> for stdout. The HTML is still generated unless <code>--no-html</code> is passed</td></tr>
 <tr><td><code>--digest-verbose</code></td><td>With <code>--emit-digest</code>, also include nullable/default/sql_type per column (omitted by default)</td></tr>
-<tr><td><code>--emit-dbml FILE.dbml</code></td><td>Also write a minimal DBML export of the schema (tables/columns/indexes/single-column-FK relations/table comments) — see <a href="#emit-dbml">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups/<code>TableGroup</code> (deferred). The HTML is still generated</td></tr>
-<tr><td><code>--emit-mermaid FILE.mmd</code></td><td>Also write a Mermaid <code>erDiagram</code> export of the schema (tables/columns/PK-FK markers/relationships) — see <a href="#emit-mermaid">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups. The HTML is still generated</td></tr>
-<tr><td><code>--emit-plantuml FILE.puml</code></td><td>Also write a PlantUML entity-relationship export of the schema (tables/columns/PK-FK markers/relationships) — see <a href="#emit-plantuml">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups. The HTML is still generated</td></tr>
+<tr><td><code>--emit-dbml FILE.dbml</code></td><td>Also write a minimal DBML export of the schema (tables/columns/indexes/single-column-FK relations/table comments) — see <a href="#emit-dbml">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups/<code>TableGroup</code> (deferred). The HTML is still generated unless <code>--no-html</code> is passed</td></tr>
+<tr><td><code>--emit-mermaid FILE.mmd</code></td><td>Also write a Mermaid <code>erDiagram</code> export of the schema (tables/columns/PK-FK markers/relationships) — see <a href="#emit-mermaid">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups. The HTML is still generated unless <code>--no-html</code> is passed</td></tr>
+<tr><td><code>--emit-plantuml FILE.puml</code></td><td>Also write a PlantUML entity-relationship export of the schema (tables/columns/PK-FK markers/relationships) — see <a href="#emit-plantuml">Exports</a>. Use <code>-</code> for stdout. Does not include notes/groups. The HTML is still generated unless <code>--no-html</code> is passed</td></tr>
 <tr><td><code>--max-rows N</code></td><td>Max column rows shown per table before scrolling (default: 15)</td></tr>
 <tr><td><code>--only 'user*,post*'</code></td><td>Include only tables matching the glob pattern(s). Repeatable; comma-separated lists accepted</td></tr>
 <tr><td><code>--exclude '*_logs'</code></td><td>Exclude tables matching the glob pattern(s). Same syntax as <code>--only</code></td></tr>
@@ -1066,7 +1079,7 @@ expression) toggle — turning on regex mode in the filter box doesn't affect th
 <li><strong>Multi-select</strong> — click selects one table; <kbd>Shift</kbd>-click or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>-click adds/removes it from the selection; <kbd>Shift</kbd>-drag from empty canvas draws a rubber-band. Clicking empty canvas deselects everything.</li>
 <li><strong>Drag to move</strong> — dragging a selected table moves the whole selection together. Dragged edges snap to nearby tables' edges/centers within a few pixels, drawn as red guide lines (Figma-style) — hold <kbd>Alt</kbd> to disable snapping for a drag.</li>
 <li><strong><a href="#groups">Group</a> drag</strong> — dragging a group's title chip moves every member of that group together (no snapping); the group's frame tracks along, live.</li>
-<li><strong>Align / distribute</strong> — with 2+ tables selected, the right pane offers <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span>; with 3+ selected, <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> distribute becomes available too (it keeps the two outermost tables fixed and equalizes the gaps between the rest).</li>
+<li><strong>Align / distribute</strong> — with 2+ tables selected, the right pane offers <span class="btn-example">⇤ Left</span> / <span class="btn-example">⇡ Top</span> / <span class="btn-example">↔ Center</span> / <span class="btn-example">↕ Middle</span>; with 3+ selected, <span class="btn-example">⇔ Horiz.</span> / <span class="btn-example">⇕ Vert.</span> distribute becomes available too (it keeps the two outermost tables fixed and equalizes the gaps between the rest). If the selected tables are together wider than the span they occupy, there's no such arrangement without overlap, so distribute does nothing rather than shove the far end outward — spread the selection out first.</li>
 <li><strong>Layout orientation</strong> — a toolbar control next to <code>↺</code> / Auto-tidy that chooses how overview auto-layout packs the graph. It is <em>not</em> the same as top-bar <strong>Direction</strong> (Both / Deps / Dependents), which only controls relation <em>traversal</em> for Auto-expand and focus depth.
   <ul>
     <li><strong>Vertical</strong> (default) — the classic top/bottom BFS depth-row packing. Missing, old, or invalid saved values fall back here.</li>
@@ -1175,12 +1188,12 @@ just saving a file.</p>
 <a href="#emit-plantuml">PlantUML diagram export</a>
 </div>
 
-<img class="shot" loading="lazy" src="img/export.png" alt="Export panel open, showing Image options (Join-table labels checked, root badges unchecked, Names: Both) above four format rows — PNG, SVG, Mermaid, PlantUML — each with Copy and Download buttons">
+<img class="shot" loading="lazy" src="img/export.png" alt="Export panel open, showing Image options (Join-table labels checked, root badges unchecked, Names: Both) above five format rows — PNG, SVG, Mermaid, PlantUML, DBML — each with Copy and Download buttons">
 <p class="cap">The export panel: image options at the top, one Copy/Download row per format below.</p>
 
 <h3>Image options <span class="chip">PNG / SVG only</span></h3>
 <p>These two checkboxes and one toggle apply only to the PNG and SVG exports — Mermaid, PlantUML,
-and the Excel workbook are unaffected by them:</p>
+DBML, and the Excel workbook are unaffected by them:</p>
 <ul>
 <li><strong>Join-table labels</strong> (⇢) — on by default; turn off to exclude the small
 "via join table" edge labels from the exported image.</li>
@@ -1220,6 +1233,18 @@ name, type, and key marker.</p>
 entity markup: primary-key columns are listed first above a divider, non-nullable columns are
 marked <code>*</code>, foreign-key columns are marked <code>&lt;&lt;FK&gt;&gt;</code>, and a
 table's logical name (if it has one) appears alongside the physical name in full-width parentheses.</p>
+
+<h3>DBML</h3>
+<p>Same scope as Mermaid and PlantUML (whatever's <em>currently displayed</em>), emitted as
+<a href="https://dbml.dbdiagram.io/docs/" target="_blank" rel="noopener">DBML</a> ready to paste into
+<a href="https://dbdiagram.io/" target="_blank" rel="noopener">dbdiagram.io</a>. Each table becomes a
+<code>Table</code> block with one line per column (type, plus <code>pk</code> / <code>increment</code> /
+<code>not null</code> / <code>default</code> settings where they apply), an <code>indexes</code> block
+when the table has indexes or a composite primary key, and a <code>Note</code> carrying the table
+comment (falling back to its logical name). Single-column, non-polymorphic <code>belongs_to</code>
+associations whose target is also displayed become <code>Ref:</code> lines. This mirrors the CLI's
+<a href="#emit-dbml"><code>--emit-dbml</code></a>, which covers the whole schema instead of just the
+displayed subset.</p>
 
 <h3 id="excel-template">Excel workbook</h3>
 <p><code>--excel FILE.xlsx</code> writes a workbook with no external spreadsheet library involved:</p>

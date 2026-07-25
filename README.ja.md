@@ -191,6 +191,7 @@ python3 erd.py demo
 | `--emit-dbml FILE.dbml` | スキーマの最小限のDBMLエクスポートも書き出す — テーブル/カラム/インデックス/単一カラムFKのリレーション/テーブルコメント（`-`で標準出力、notes/groups/`TableGroup`は含まない） |
 | `--emit-mermaid FILE.mmd` | スキーマのMermaid `erDiagram`エクスポートも書き出す — テーブル/カラム/PK・FKマーカー/リレーション（`-`で標準出力、notes/groupsは含まない） |
 | `--emit-plantuml FILE.puml` | スキーマのPlantUMLエンティティ関連図エクスポートも書き出す — テーブル/カラム/PK・FKマーカー/リレーション（`-`で標準出力、notes/groupsは含まない） |
+| `--no-html` | HTML図を生成せず、指定した他の出力だけを書き出す（`--emit-*`か`--excel`を最低1つ指定する必要があり、`-o/--output`とは併用不可） |
 | `--only 'user*,order*'` | 一致するテーブルだけを生成する |
 | `--exclude '*_logs'` | 一致するテーブルを除外する |
 | `--infer-fk` | `*_id`カラムから推測したリレーションを、明確に区別して追加する |

@@ -4125,7 +4125,6 @@ function alignSelection(mode){
 function distributeSelection(axis){
   const ts=selectedPositioned();
   if(ts.length<3) return;
-  pushUndoSnapshot();
   const key=axis==='h'?'x':'y', dim=axis==='h'?'w':'h';
   const items=ts.map(t=>{
     const s=nodeSize[t]||calcSize(t);
@@ -4134,7 +4133,14 @@ function distributeSelection(axis){
   const first=items[0], last=items[items.length-1];
   const totalSpan=(last.c+last.half)-(first.c-first.half);
   const totalSize=items.reduce((s,it)=>s+it.half*2,0);
-  const gap=Math.max(0,(totalSpan-totalSize))/(items.length-1);
+  // The promise (UI + manual) is that the two outermost tables stay put and
+  // only the gaps between them are equalized. When the nodes are collectively
+  // wider than that span there is no such arrangement: packing them anyway
+  // would keep the near end fixed and shove the far one outward, silently
+  // breaking the contract. Do nothing instead — no move, no undo entry.
+  if(totalSize>totalSpan){ showToast('Not enough space to distribute without overlap'); return; }
+  const gap=(totalSpan-totalSize)/(items.length-1);
+  pushUndoSnapshot();
   let edge=first.c-first.half;
   items.forEach(it=>{
     nodePos[it.t][key]=edge+it.half;

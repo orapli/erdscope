@@ -19,6 +19,23 @@ SQLALCHEMY_TYPES = {
     'Uuid': 'uuid', 'UUID': 'uuid',
     'Enum': 'string',
 }
+# Python type names inside a 2.0-style `Mapped[...]` annotation, mapped to the
+# same coarse vocabulary SQLALCHEMY_TYPES produces. SQLAlchemy's own type
+# registry resolves these to concrete SQL types (int -> Integer, str ->
+# String, ...), which is exactly what an annotation-only `mapped_column()`
+# with no explicit type argument relies on.
+SQLALCHEMY_ANNOTATION_TYPES = {
+    'int': 'integer', 'str': 'string', 'float': 'float', 'bool': 'boolean',
+    'bytes': 'binary', 'datetime': 'datetime', 'date': 'date', 'time': 'time',
+    'timedelta': 'interval', 'Decimal': 'decimal', 'UUID': 'uuid',
+    'dict': 'jsonb', 'list': 'jsonb',
+}
+# `Mapped[list["Item"]]` and friends — the collection wrappers that make a
+# relationship a to-many rather than a scalar
+_SQLALCHEMY_COLLECTION_ANNOTATIONS = {'list', 'List', 'set', 'Set', 'frozenset', 'FrozenSet',
+                                      'Sequence', 'MutableSequence', 'Collection'}
+# the ORM's annotation wrappers, incl. the 2.0 lazy-collection variants
+_SQLALCHEMY_MAPPED_ANNOTATIONS = {'Mapped', 'WriteOnlyMapped', 'DynamicMapped'}
 _SQLALCHEMY_COLUMN_CALLS = {'Column', 'mapped_column'}
 _SQLALCHEMY_SKIP_DIRS = {'venv', '.venv', 'env', 'site-packages', 'node_modules',
                          '.git', 'migrations', 'versions', '__pycache__',
@@ -35,6 +52,65 @@ def _sqlalchemy_files(root):
 def _sqlalchemy_call_name(call):
     fn = call.func
     return fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else None
+
+
+def _annotation_name(node):
+    """The bare name an annotation node denotes: `int`, `orm.Mapped` -> Mapped,
+    or the forward reference in `Mapped["User"]`. None if it isn't a name."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        # a forward reference, quoted because the class isn't defined yet;
+        # only the last dotted segment can match a parsed class name
+        return node.value.split('.')[-1].strip('\'" ')
+    return None
+
+
+def _unwrap_mapped_annotation(annotation):
+    """Read a SQLAlchemy 2.0 `Mapped[...]` annotation, the style that carries
+    information the mapped_column()/relationship() call itself no longer
+    repeats. Returns (inner_name, is_collection, is_optional); inner_name is
+    None when there is no Mapped[...] to read or it's too dynamic to resolve
+    statically (a real union, an unrecognised generic).
+
+    Covers the shapes 2.0 code actually writes:
+        Mapped[int]            Mapped[Optional[str]]     Mapped[str | None]
+        Mapped["User"]         Mapped[list["Item"]]      Mapped[List[Item]]
+        WriteOnlyMapped[...]   DynamicMapped[...]
+    """
+    if not isinstance(annotation, ast.Subscript):
+        return None, False, False
+    wrapper = _annotation_name(annotation.value)
+    if wrapper not in _SQLALCHEMY_MAPPED_ANNOTATIONS:
+        return None, False, False
+    # WriteOnlyMapped["Post"] / DynamicMapped["Post"] are to-many collections
+    # by definition — they name the element type directly, with no list[...]
+    node, collection, optional = annotation.slice, wrapper != 'Mapped', False
+    for _ in range(4):  # bounded: real annotations nest Optional/list a couple deep at most
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            # PEP 604 `str | None`; anything else is a genuine union with no
+            # single type to report
+            left_none = isinstance(node.left, ast.Constant) and node.left.value is None
+            right_none = isinstance(node.right, ast.Constant) and node.right.value is None
+            if not (left_none or right_none):
+                return None, collection, optional
+            optional = True
+            node = node.left if right_none else node.right
+            continue
+        if isinstance(node, ast.Subscript):
+            outer = _annotation_name(node.value)
+            if outer == 'Optional':
+                optional = True
+            elif outer in _SQLALCHEMY_COLLECTION_ANNOTATIONS:
+                collection = True
+            else:
+                return None, collection, optional  # e.g. dict[str, Any] — not a single type
+            node = node.slice
+            continue
+        break
+    return _annotation_name(node), collection, optional
 
 
 def _looks_like_sqlalchemy(tree):
@@ -90,19 +166,17 @@ def parse_sqlalchemy(root):
     def assign_target_value(stmt):
         # a single-name Assign OR AnnAssign with a value — the two shapes a
         # `foo = Column(...)` / `foo: Mapped[int] = mapped_column(...)` /
-        # `__tablename__ = "x"` line can take. Only the VALUE (the call) is
-        # returned — the AnnAssign's own `Mapped[int]`/`Mapped[str]` annotation
-        # is discarded here, so a 2.0-style `mapped_column()` call with no
-        # explicit type argument (type-hint-only, the style SQLAlchemy's own
-        # docs now lead with) yields an empty coarse type below rather than
-        # reading it back out of the annotation. Known gap, not fixed here —
-        # columns are still retained (never dropped), just untyped.
+        # `__tablename__ = "x"` line can take. The AnnAssign's own annotation
+        # comes back as the third element: in the 2.0 style SQLAlchemy's docs
+        # now lead with, `Mapped[int]` / `Mapped[list["Item"]]` is where the
+        # type and the relationship target live, because the call beside it
+        # (`mapped_column()`, `relationship()`) often carries neither.
         if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)):
-            return stmt.targets[0].id, stmt.value
+            return stmt.targets[0].id, stmt.value, None
         if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
-            return stmt.target.id, stmt.value
-        return None, None
+            return stmt.target.id, stmt.value, stmt.annotation
+        return None, None, None
 
     for path in _sqlalchemy_files(root):
         try:
@@ -110,7 +184,7 @@ def parse_sqlalchemy(root):
         except SyntaxError:
             continue
         for node in ast.walk(tree):
-            name, value = assign_target_value(node)
+            name, value, _ = assign_target_value(node)
             if name is None or not isinstance(value, ast.Call):
                 continue
             fname = _sqlalchemy_call_name(value)
@@ -126,7 +200,7 @@ def parse_sqlalchemy(root):
                      b.id if isinstance(b, ast.Name) else '' for b in node.bases]
             tablename, abstract, fields = None, False, []
             for stmt in node.body:
-                fname_, value = assign_target_value(stmt)
+                fname_, value, annotation = assign_target_value(stmt)
                 if fname_ is None:
                     continue
                 if fname_ == '__tablename__' and isinstance(value, ast.Constant) and isinstance(value.value, str):
@@ -136,9 +210,11 @@ def parse_sqlalchemy(root):
                 elif isinstance(value, ast.Call):
                     call_name = _sqlalchemy_call_name(value)
                     if call_name in _SQLALCHEMY_COLUMN_CALLS:
-                        fields.append({'kind': 'column', 'name': fname_, 'call': value, 'lineno': stmt.lineno})
+                        fields.append({'kind': 'column', 'name': fname_, 'call': value,
+                                       'annotation': annotation, 'lineno': stmt.lineno})
                     elif call_name == 'relationship':
-                        fields.append({'kind': 'relationship', 'name': fname_, 'call': value, 'lineno': stmt.lineno})
+                        fields.append({'kind': 'relationship', 'name': fname_, 'call': value,
+                                       'annotation': annotation, 'lineno': stmt.lineno})
             # a class name collision across two files (globally keyed, unlike
             # parse_django's per-app namespacing — SQLAlchemy has no
             # equivalent app boundary) silently keeps the last one parsed;
@@ -279,9 +355,28 @@ def parse_sqlalchemy(root):
             primary = bool(const(kw.get('primary_key')))
             if primary:
                 pk = col_name
-            nullable = bool(const(kw['nullable'])) if 'nullable' in kw else not primary
+            ann_name, ann_collection, ann_optional = _unwrap_mapped_annotation(f.get('annotation'))
+            # In the 2.0 style the annotation, not a keyword, is what declares
+            # nullability: `Mapped[str]` is NOT NULL, `Mapped[Optional[str]]`
+            # (or `str | None`) is nullable. An explicit nullable= still wins,
+            # and a column with no readable annotation keeps the pre-2.0
+            # default of nullable-unless-PK.
+            if 'nullable' in kw:
+                nullable = bool(const(kw['nullable']))
+            elif ann_name is not None:
+                nullable = ann_optional
+            else:
+                nullable = not primary
             if type_node is not None:
                 ctype = coarse_type(type_node) or ''
+            elif ann_name is not None and not ann_collection:
+                # annotation-only mapped_column(): resolve the type from
+                # `Mapped[...]`. An unrecognised name (a custom type, an Enum
+                # class) passes through lowercased, same as an unrecognised
+                # SQLAlchemy type name does in coarse_type. A collection
+                # annotation is skipped deliberately — `Mapped[list[str]]` is
+                # an ARRAY/JSON column, not a string one.
+                ctype = SQLALCHEMY_ANNOTATION_TYPES.get(ann_name, ann_name.lower())
             else:
                 # no explicit type: a bare FK column infers its type from the
                 # referenced PK, almost always an integer surrogate key —
@@ -307,7 +402,14 @@ def parse_sqlalchemy(root):
                 continue
             call = f['call']
             kw = {k.arg: k.value for k in call.keywords if k.arg}
+            ann_name, ann_collection, _ = _unwrap_mapped_annotation(f.get('annotation'))
             target = resolve_rel_target(call.args[0]) if call.args else None
+            if target is None and ann_name is not None:
+                # 2.0 style: `items: Mapped[list["Item"]] = relationship()` —
+                # the call has no target argument at all, the annotation is
+                # the only place the target class appears. Without this the
+                # whole association was dropped silently.
+                target = table_of.get(ann_name)
             if target is None:
                 continue  # unresolvable target (dynamic/external class) — keep silent, same as parse_django
             if 'secondary' in kw:
@@ -333,7 +435,14 @@ def parse_sqlalchemy(root):
                 # swallow the genuine inverse collection (e.g. `children`)
                 continue
             uselist = const(kw.get('uselist'))
-            card = 'has_one' if uselist is False else 'has_many'
+            if uselist is not None:
+                card = 'has_many' if uselist else 'has_one'
+            elif ann_name is not None:
+                # the 2.0 annotation states the cardinality outright:
+                # `Mapped[list["Item"]]` is to-many, `Mapped["User"]` is scalar
+                card = 'has_many' if ann_collection else 'has_one'
+            else:
+                card = 'has_many'
             assocs.append({'type': card, 'name': f['name'], 'target': target})
         if pk is None:  # SQLAlchemy has no implicit PK; mirror parse_django's own bigint backfill for consistency
             pk = 'id'

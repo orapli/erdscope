@@ -190,6 +190,7 @@ explicit CLI argument wins.
 | `--emit-dbml FILE.dbml` | Also write a minimal DBML export of the schema — tables/columns/indexes/single-column-FK relations/table comments (`-` for stdout; no notes/groups/`TableGroup`) |
 | `--emit-mermaid FILE.mmd` | Also write a Mermaid `erDiagram` export of the schema — tables/columns/PK-FK markers/relationships (`-` for stdout; no notes/groups) |
 | `--emit-plantuml FILE.puml` | Also write a PlantUML entity-relationship export of the schema — tables/columns/PK-FK markers/relationships (`-` for stdout; no notes/groups) |
+| `--no-html` | Skip the HTML diagram and write only the other requested outputs (needs at least one `--emit-*` or `--excel`; cannot be combined with `-o/--output`) |
 | `--only 'user*,order*'` | Generate only matching tables |
 | `--exclude '*_logs'` | Leave matching tables out |
 | `--infer-fk` | Add clearly marked relation guesses from `*_id` columns |
