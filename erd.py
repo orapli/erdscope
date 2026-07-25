@@ -11228,7 +11228,7 @@ function saveNoteFromModal() {
       showToast('Table name is required for Table Note');
       return;
     }
-    if (!validTables[tableVal]) {
+    if (!Object.hasOwn(validTables, tableVal)) {
       showToast(`Unknown table: "${tableVal}"`);
       return;
     }
@@ -11237,7 +11237,7 @@ function saveNoteFromModal() {
       showToast('Source table is required for Relation Note');
       return;
     }
-    if (!validTables[sourceTableVal]) {
+    if (!Object.hasOwn(validTables, sourceTableVal)) {
       showToast(`Unknown source table: "${sourceTableVal}"`);
       return;
     }
@@ -11245,7 +11245,7 @@ function saveNoteFromModal() {
       showToast('Target table is required for Relation Note');
       return;
     }
-    if (!validTables[targetTableVal]) {
+    if (!Object.hasOwn(validTables, targetTableVal)) {
       showToast(`Unknown target table: "${targetTableVal}"`);
       return;
     }
@@ -11315,7 +11315,8 @@ function saveGridNote(scope, table, column, text, nid = null) {
       note.scope = 'relation';
       note.source_table = table;
       note.foreign_key = column;
-      const tblData = (DATA.tables || {})[table];
+      const validTables = DATA.tables || {};
+      const tblData = Object.hasOwn(validTables, table) ? validTables[table] : null;
       if (tblData && tblData.associations) {
         const assoc = tblData.associations.find(a => a.foreign_key === column);
         if (assoc) note.target_table = assoc.target;

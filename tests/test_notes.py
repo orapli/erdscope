@@ -707,7 +707,7 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         self.assertIsNone(note_target['through'])
 
     def test_save_note_from_modal_validates_table_existence(self):
-        import subprocess
+        import subprocess, json
         js_code = f"""
         const fs = require('fs');
         const html = fs.readFileSync({json.dumps(str(self.out_path))}, 'utf-8');
@@ -715,17 +715,28 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         const scriptContent = scriptMatch[1];
         const elemMap = {{}};
         const createFormInput = (val = '') => ({{ value: val, style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }} }});
+        const modalElem = {{
+          addEventListener: () => {{}},
+          classList: {{
+            hidden: false,
+            add: function(cls) {{ if (cls === 'hidden') this.hidden = true; }},
+            remove: function(cls) {{ if (cls === 'hidden') this.hidden = false; }},
+            contains: function(cls) {{ return cls === 'hidden' ? this.hidden : false; }}
+          }}
+        }};
         
+        elemMap['note-edit-modal'] = modalElem;
         elemMap['note-edit-id'] = createFormInput('new_note');
         elemMap['note-edit-scope'] = createFormInput('table');
-        elemMap['note-edit-table'] = createFormInput('non_existent_table');
+        elemMap['note-edit-table'] = createFormInput('');
         elemMap['note-edit-source-table'] = createFormInput('');
         elemMap['note-edit-target-table'] = createFormInput('');
         elemMap['note-edit-foreign-key'] = createFormInput('');
         elemMap['note-edit-title-val'] = createFormInput('Title');
         elemMap['note-edit-text-val'] = createFormInput('Text content');
-        elemMap['note-edit-scope'] = createFormInput('table');
         
+        const toasts = [];
+        global.showToast = msg => toasts.push(msg);
         global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
         global.location = {{ href: '', search: '', hash: '' }};
         global.localStorage = {{ getItem: () => null, setItem: () => {{}}, removeItem: () => {{}} }};
@@ -743,17 +754,94 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
           createElementNS: () => dummyElem
         }};
         const vm = require('vm');
-        const context = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console }});
+        const context = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console, showToast: global.showToast, toasts, elemMap }});
         vm.runInContext(scriptContent, context);
-        vm.runInContext('saveNoteFromModal()', context);
-        const notesCount = vm.runInContext('NOTES.length', context);
-        console.log(JSON.stringify({{ notesCount }}));
+        vm.runInContext('showToast = msg => toasts.push(msg);', context);
+        
+        const results = [];
+        
+        function testCase(caseName, scope, tbl, srcTbl, tgtTbl) {{
+          context.toasts.length = 0;
+          context.elemMap['note-edit-modal'].classList.hidden = false;
+          context.elemMap['note-edit-scope'].value = scope;
+          context.elemMap['note-edit-table'].value = tbl;
+          context.elemMap['note-edit-source-table'].value = srcTbl;
+          context.elemMap['note-edit-target-table'].value = tgtTbl;
+          
+          const initialLen = vm.runInContext('NOTES.length', context);
+          vm.runInContext('saveNoteFromModal()', context);
+          const finalLen = vm.runInContext('NOTES.length', context);
+          const isModalHidden = context.elemMap['note-edit-modal'].classList.contains('hidden');
+          const lastToast = context.toasts[context.toasts.length - 1] || '';
+          
+          results.push({{ caseName, initialLen, finalLen, isModalHidden, lastToast }});
+        }}
+        
+        // 1. Table scope: empty table name
+        testCase('table_empty', 'table', '', '', '');
+        // 2. Table scope: unknown table
+        testCase('table_unknown', 'table', 'non_existent_table', '', '');
+        // 3. Table scope: prototype property name ("constructor")
+        testCase('table_proto', 'table', 'constructor', '', '');
+        
+        // 4. Relation scope: empty source table
+        testCase('rel_empty_src', 'relation', '', '', 'users');
+        // 5. Relation scope: unknown source table
+        testCase('rel_unknown_src', 'relation', '', 'invalid_src', 'users');
+        // 6. Relation scope: empty target table
+        testCase('rel_empty_tgt', 'relation', '', 'users', '');
+        // 7. Relation scope: unknown target table
+        testCase('rel_unknown_tgt', 'relation', '', 'users', 'invalid_tgt');
+
+        // 8. Valid table note (should succeed & close modal)
+        testCase('table_valid', 'table', 'users', '', '');
+
+        console.log(JSON.stringify(results));
         """
         proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
-        res = json.loads(proc.stdout.strip())
-        # Since table 'non_existent_table' is invalid, note should NOT be added to NOTES array
-        self.assertEqual(res['notesCount'], 1)
+        res_list = json.loads(proc.stdout.strip())
+        res = { r['caseName']: r for r in res_list }
+
+        # Case 1: Empty table name
+        self.assertEqual(res['table_empty']['initialLen'], res['table_empty']['finalLen'])
+        self.assertFalse(res['table_empty']['isModalHidden'])
+        self.assertEqual(res['table_empty']['lastToast'], 'Table name is required for Table Note')
+
+        # Case 2: Unknown table
+        self.assertEqual(res['table_unknown']['initialLen'], res['table_unknown']['finalLen'])
+        self.assertFalse(res['table_unknown']['isModalHidden'])
+        self.assertEqual(res['table_unknown']['lastToast'], 'Unknown table: "non_existent_table"')
+
+        # Case 3: Prototype property name ("constructor")
+        self.assertEqual(res['table_proto']['initialLen'], res['table_proto']['finalLen'])
+        self.assertFalse(res['table_proto']['isModalHidden'])
+        self.assertEqual(res['table_proto']['lastToast'], 'Unknown table: "constructor"')
+
+        # Case 4: Relation empty source table
+        self.assertEqual(res['rel_empty_src']['initialLen'], res['rel_empty_src']['finalLen'])
+        self.assertFalse(res['rel_empty_src']['isModalHidden'])
+        self.assertEqual(res['rel_empty_src']['lastToast'], 'Source table is required for Relation Note')
+
+        # Case 5: Relation unknown source table
+        self.assertEqual(res['rel_unknown_src']['initialLen'], res['rel_unknown_src']['finalLen'])
+        self.assertFalse(res['rel_unknown_src']['isModalHidden'])
+        self.assertEqual(res['rel_unknown_src']['lastToast'], 'Unknown source table: "invalid_src"')
+
+        # Case 6: Relation empty target table
+        self.assertEqual(res['rel_empty_tgt']['initialLen'], res['rel_empty_tgt']['finalLen'])
+        self.assertFalse(res['rel_empty_tgt']['isModalHidden'])
+        self.assertEqual(res['rel_empty_tgt']['lastToast'], 'Target table is required for Relation Note')
+
+        # Case 7: Relation unknown target table
+        self.assertEqual(res['rel_unknown_tgt']['initialLen'], res['rel_unknown_tgt']['finalLen'])
+        self.assertFalse(res['rel_unknown_tgt']['isModalHidden'])
+        self.assertEqual(res['rel_unknown_tgt']['lastToast'], 'Unknown target table: "invalid_tgt"')
+
+        # Case 8: Valid table note (succeeds)
+        self.assertEqual(res['table_valid']['finalLen'], res['table_valid']['initialLen'] + 1)
+        self.assertTrue(res['table_valid']['isModalHidden'])
+        self.assertEqual(res['table_valid']['lastToast'], 'Saved note ✓')
 
     def test_auto_tidy_toggle_records_undo_snapshot(self):
         import subprocess, json
