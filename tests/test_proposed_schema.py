@@ -4,6 +4,7 @@ import unittest
 import tempfile
 import json
 import subprocess
+import shutil
 from types import SimpleNamespace
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -230,6 +231,80 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         self.assertEqual(res['restoredGroupTitle'], 'Test Group')
         self.assertEqual(res['restoredTableLogical'], '</script><script>alert(1)</script>')
         self.assertFalse(res['restoredDirtyState'], "Newly opened exported HTML should be in a clean state (isConfigDirty = false)")
+
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
+    def test_export_updated_html_crlf_input(self):
+        # Regression test for B6: on Windows, Path.write_text() used to translate
+        # every '\n' in the generated HTML to '\r\n'. generateUpdatedHTMLSource()
+        # in viewer.html matched DATA/NOTES/GROUPS with a bare `;\n`, which never
+        # matches inside a CRLF run (every \n is preceded by \r) — so the export
+        # silently kept the ORIGINAL DATA/NOTES/GROUPS instead of the edited ones.
+        # This reproduces that CRLF path on any platform (no Windows required) by
+        # converting the fixture HTML to CRLF before feeding it through the exact
+        # same node/vm export logic as test_export_updated_html.
+        lf_html = self.out_path.read_text(encoding='utf-8')
+        crlf_html = lf_html.replace('\r\n', '\n').replace('\n', '\r\n')
+        crlf_path = self.out_path.with_name('out_crlf.html')
+        crlf_path.write_bytes(crlf_html.encode('utf-8'))
+
+        js_code = f"""
+        const fs = require('fs');
+        const html = fs.readFileSync({json.dumps(str(crlf_path))}, 'utf-8');
+        const scriptMatch = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const scriptContent = scriptMatch[1];
+
+        let downloadedHtml = '';
+        global.Blob = class {{ constructor(parts) {{ this.content = parts.join(''); }} }};
+        global.URL = {{ createObjectURL: b => {{ downloadedHtml = b.content; return 'blob:mock'; }}, revokeObjectURL: () => {{}} }};
+        global.window = {{ addEventListener: () => {{}}, removeEventListener: () => {{}} }};
+        global.location = {{ href: '', search: '', hash: '' }};
+        global.localStorage = {{ getItem: () => null, setItem: () => {{}}, removeItem: () => {{}} }};
+        global.requestAnimationFrame = cb => cb();
+        global.clearTimeout = () => {{}};
+        global.setTimeout = () => {{}};
+        const dummyElem = {{ options: [], style: {{}}, addEventListener: () => {{}}, removeEventListener: () => {{}}, querySelectorAll: () => [], classList: {{ add: () => {{}}, remove: () => {{}}, toggle: () => {{}} }}, setAttribute: () => {{}}, getAttribute: () => null, insertBefore: () => {{}}, appendChild: () => ({{}}), removeChild: () => ({{}}), click: () => ({{}}), getBoundingClientRect: () => ({{ width: 1000, height: 800, left: 0, top: 0, right: 1000, bottom: 800 }}), getBBox: () => ({{ width: 100, height: 20, x: 0, y: 0 }}) }};
+        let docTitle = 'proposed_test';
+        global.document = {{
+          get title() {{ return docTitle; }},
+          set title(v) {{ docTitle = v; }},
+          body: dummyElem,
+          documentElement: {{ outerHTML: html }},
+          getElementById: () => dummyElem,
+          querySelectorAll: () => [],
+          addEventListener: () => {{}},
+          createElement: () => dummyElem,
+          createElementNS: () => dummyElem
+        }};
+        const vm = require('vm');
+        const toasts = [];
+        global.showToast = msg => toasts.push(msg);
+
+        const ctx = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, Blob: global.Blob, URL: global.URL, console, showToast: global.showToast, toasts }});
+        vm.runInContext(scriptContent, ctx);
+        vm.runInContext("addProposedTable('xss_tbl', '</script><script>alert(1)</script>', '', 'Test Group');", ctx);
+        vm.runInContext("exportUpdatedHTML();", ctx);
+
+        // Load the exported HTML script content in a fresh VM context to verify execution & GROUPS reload
+        const newScriptMatch = downloadedHtml.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const newScript = newScriptMatch ? newScriptMatch[1] : '';
+        const newCtx = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console, showToast: global.showToast, toasts }});
+        vm.runInContext(newScript, newCtx);
+
+        const restoredGroups = vm.runInContext("GROUPS", newCtx);
+        const restoredXssTable = vm.runInContext("DATA.tables['xss_tbl']", newCtx);
+
+        console.log(JSON.stringify({{
+          hasXssTable: downloadedHtml.includes('xss_tbl'),
+          restoredGroupTitle: (restoredGroups[0] || {{}}).title,
+          restoredTableLogical: (restoredXssTable || {{}}).logical_name,
+        }}));
+        """
+        proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
+        res = json.loads(proc.stdout.strip())
+        self.assertTrue(res['hasXssTable'])
+        self.assertEqual(res['restoredGroupTitle'], 'Test Group')
+        self.assertEqual(res['restoredTableLogical'], '</script><script>alert(1)</script>')
 
     def test_startup_does_not_write_empty_persisted_config(self):
         js_code = f"""

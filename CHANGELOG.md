@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Windows: generated HTML is written with LF, and Download Updated HTML
+  survives CRLF input.** The diagram was written through `Path.write_text()`,
+  whose text mode translates every `\n` to the platform default — so a
+  Windows-generated file came out with CRLF line endings while every other
+  platform produced LF. `generateUpdatedHTMLSource()` re-embeds `DATA`,
+  `NOTES` and `GROUPS` with regexes that required a semicolon followed
+  immediately by LF, so against CRLF content not one of the three matched and
+  the exported file silently kept the *original* data. Generated HTML is now
+  written with `newline=''` so output is byte-identical across platforms, and
+  the three export regexes accept `;\r?\n`. Browsers normalise CRLF to LF when
+  parsing, so the export itself was only reachable this way outside a browser,
+  but the mismatch broke the Windows test job.
 - **Viewer: Escape key and background clicks now close only the top-most modal (B4).**
   Previously, pressing Escape with a proposed table/column dialog or note modal open over
   the Data Dictionary grid would close the underlying `#schema-grid-modal` instead of the

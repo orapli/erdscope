@@ -11550,9 +11550,13 @@ function generateUpdatedHTMLSource() {
   markConfigClean();
   let htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
   try {
-    htmlContent = htmlContent.replace(/(?:const|let|var) DATA = [\s\S]*?;\n/m, `const DATA = ${safeJsonForScript(DATA)};\n`);
-    htmlContent = htmlContent.replace(/(?:const|let|var) NOTES = [\s\S]*?;\n/m, `const NOTES = ${safeJsonForScript(NOTES)};\n`);
-    htmlContent = htmlContent.replace(/(?:const|let|var) GROUPS = [\s\S]*?;\n/m, `const GROUPS = ${safeJsonForScript(GROUPS)};\n`);
+    // `;\r?\n` (not just `;\n`) — document.documentElement.outerHTML can carry
+    // CRLF line endings if the page itself was served/saved with them, and a
+    // bare `;\n` never matches inside a CRLF run (every \n is preceded by \r),
+    // silently leaving the ORIGINAL DATA/NOTES/GROUPS in the exported file.
+    htmlContent = htmlContent.replace(/(?:const|let|var) DATA = [\s\S]*?;\r?\n/m, `const DATA = ${safeJsonForScript(DATA)};\n`);
+    htmlContent = htmlContent.replace(/(?:const|let|var) NOTES = [\s\S]*?;\r?\n/m, `const NOTES = ${safeJsonForScript(NOTES)};\n`);
+    htmlContent = htmlContent.replace(/(?:const|let|var) GROUPS = [\s\S]*?;\r?\n/m, `const GROUPS = ${safeJsonForScript(GROUPS)};\n`);
     htmlContent = htmlContent.replace(/let isConfigDirty = true;/g, 'let isConfigDirty = false;');
   } catch(e) {
     console.warn('Could not replace embedded variables during HTML export:', e);
@@ -16420,7 +16424,15 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
 
         out_path = getattr(args, 'output', 'erd.html')
         out = Path(out_path)
-        out.write_text(html, encoding='utf-8')
+        # newline='' keeps line endings as-is (LF) instead of letting Python's
+        # text-mode writer translate them to the platform default. On Windows
+        # that translation would emit CRLF, and generateUpdatedHTMLSource() in
+        # viewer.html matches `;\n` when re-embedding DATA/NOTES/GROUPS on
+        # export — CRLF would silently break that regex. write_text() doesn't
+        # accept newline= until Python 3.10, and this project's floor is 3.9,
+        # so open() is used explicitly here instead.
+        with out.open('w', encoding='utf-8', newline='') as f:
+            f.write(html)
         print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
 
     if emit_json_doc is not None:

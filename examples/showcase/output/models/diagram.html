@@ -7044,9 +7044,13 @@ function generateUpdatedHTMLSource() {
   markConfigClean();
   let htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
   try {
-    htmlContent = htmlContent.replace(/(?:const|let|var) DATA = [\s\S]*?;\n/m, `const DATA = ${safeJsonForScript(DATA)};\n`);
-    htmlContent = htmlContent.replace(/(?:const|let|var) NOTES = [\s\S]*?;\n/m, `const NOTES = ${safeJsonForScript(NOTES)};\n`);
-    htmlContent = htmlContent.replace(/(?:const|let|var) GROUPS = [\s\S]*?;\n/m, `const GROUPS = ${safeJsonForScript(GROUPS)};\n`);
+    // `;\r?\n` (not just `;\n`) — document.documentElement.outerHTML can carry
+    // CRLF line endings if the page itself was served/saved with them, and a
+    // bare `;\n` never matches inside a CRLF run (every \n is preceded by \r),
+    // silently leaving the ORIGINAL DATA/NOTES/GROUPS in the exported file.
+    htmlContent = htmlContent.replace(/(?:const|let|var) DATA = [\s\S]*?;\r?\n/m, `const DATA = ${safeJsonForScript(DATA)};\n`);
+    htmlContent = htmlContent.replace(/(?:const|let|var) NOTES = [\s\S]*?;\r?\n/m, `const NOTES = ${safeJsonForScript(NOTES)};\n`);
+    htmlContent = htmlContent.replace(/(?:const|let|var) GROUPS = [\s\S]*?;\r?\n/m, `const GROUPS = ${safeJsonForScript(GROUPS)};\n`);
     htmlContent = htmlContent.replace(/let isConfigDirty = true;/g, 'let isConfigDirty = false;');
   } catch(e) {
     console.warn('Could not replace embedded variables during HTML export:', e);
