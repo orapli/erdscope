@@ -5106,10 +5106,11 @@ body.dark .modal-tab-btn.active {
   background: #0f172a;
   color: #f8fafc;
 }
-.modal-ctrls {
+.modal-ctrls, .modal-hdr-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .modal-search-wrapper {
   position: relative;
@@ -5680,10 +5681,10 @@ body.dark .badge-proposed {
       </p>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         <button class="diag-btn" id="btn-unsaved-download" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px">
-          ⬇ Save & Download Config JSON
+          ⬇ Download Config JSON
         </button>
         <button class="diag-btn" id="btn-unsaved-html" style="background:#059669;color:#fff;border:none;padding:8px 16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px">
-          📄 Save & Download Updated HTML
+          📄 Download Updated HTML
         </button>
         <button class="diag-btn" id="btn-unsaved-copy" style="padding:8px 16px">
           📋 Copy Config JSON
@@ -11377,6 +11378,8 @@ function restorePersistedConfigOnLoad() {
 
 function resetPersistedConfig() {
   try {
+    isConfigDirty = false;
+    updateConfigDirtyUI();
     localStorage.removeItem(LS('persisted_config'));
     localStorage.removeItem(LS('draft_config'));
     showToast('Reset to base schema — please reload the page to restore original state ✓');
@@ -11404,7 +11407,7 @@ function updateConfigDirtyUI() {
     badge.textContent = '⚠️ Unexported changes';
   } else {
     badge.classList.add('clean');
-    badge.textContent = '✓ Config Saved';
+    badge.textContent = '✓ Changes exported';
     if (typeof setTimeout !== 'undefined') {
       setTimeout(() => {
         if (!isConfigDirty) badge.classList.add('hidden');
