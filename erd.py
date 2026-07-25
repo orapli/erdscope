@@ -5554,7 +5554,7 @@ body.dark .badge-proposed {
             </div>
           </div>
           <div class="tb-popup-sep"></div>
-          <div class="tb-popup-caption">Export — copy or download</div>
+          <div class="tb-popup-caption">Diagram</div>
           <div class="tb-export-row">
             <span class="tb-export-fmt">PNG</span>
             <button class="diag-btn" id="btn-export" title="Falls back to a file download if the browser can't write images to the clipboard">Copy</button>
@@ -5565,6 +5565,8 @@ body.dark .badge-proposed {
             <button class="diag-btn" id="btn-export-svg-copy">Copy</button>
             <button class="diag-btn" id="btn-export-svg">Download</button>
           </div>
+          <div class="tb-popup-sep"></div>
+          <div class="tb-popup-caption">Schema markup</div>
           <div class="tb-export-row">
             <span class="tb-export-fmt">Mermaid</span>
             <button class="diag-btn" id="btn-export-mmd" title="Covers displayed tables; paste into READMEs/PRs">Copy</button>
@@ -5580,14 +5582,17 @@ body.dark .badge-proposed {
             <button class="diag-btn" id="btn-export-dbml" title="Covers displayed tables; paste into dbdiagram.io">Copy</button>
             <button class="diag-btn" id="btn-export-dbml-download">Download</button>
           </div>
+          <div class="tb-popup-sep"></div>
+          <div class="tb-popup-caption">Save proposed changes</div>
           <div class="tb-export-row">
-            <span class="tb-export-fmt">Config</span>
+            <span class="tb-export-fmt" style="font-size:11px">Config JSON</span>
             <button class="diag-btn" id="btn-export-config-copy" title="Copy current schema config (with notes and groups) as JSON">Copy</button>
             <button class="diag-btn" id="btn-export-config-download" title="Download current schema config as JSON file">Download</button>
           </div>
           <div class="tb-export-row">
-            <span class="tb-export-fmt">HTML</span>
-            <button class="diag-btn" id="btn-export-html-download" title="Download updated self-contained HTML file with all changes embedded" style="grid-column: span 2; font-weight:600; background:#059669; color:#fff; border:none">📄 Download Updated HTML</button>
+            <span class="tb-export-fmt" style="font-size:11px">Updated HTML</span>
+            <button class="diag-btn" id="btn-export-html-copy" title="Copy updated self-contained HTML source code to clipboard">Copy</button>
+            <button class="diag-btn" id="btn-export-html-download" title="Download updated self-contained HTML file with all changes embedded">Download</button>
           </div>
         </div>
       </div>
@@ -5694,7 +5699,7 @@ body.dark .badge-proposed {
 <div id="proposed-table-modal" class="modal-backdrop hidden">
   <div class="modal-dialog" style="max-width:500px;height:auto">
     <div class="modal-hdr">
-      <span class="modal-title-text">+ Add Proposed Table (ToBe)</span>
+      <span class="modal-title-text">+ Add Proposed Table</span>
       <button class="modal-close" id="btn-prop-table-close">✕</button>
     </div>
     <div class="modal-bdy" style="padding:16px;display:flex;flex-direction:column;gap:12px">
@@ -5708,7 +5713,7 @@ body.dark .badge-proposed {
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
         <label style="font-size:12px;font-weight:600">Comment (Optional)</label>
-        <textarea id="prop-table-comment" rows="2" placeholder="ToBe table comment..." style="padding:6px;border:1px solid #cbd5e1;border-radius:4px;font-family:inherit"></textarea>
+        <textarea id="prop-table-comment" rows="2" placeholder="Proposed table comment..." style="padding:6px;border:1px solid #cbd5e1;border-radius:4px;font-family:inherit"></textarea>
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
         <label style="font-size:12px;font-weight:600">Group Name (Optional)</label>
@@ -5725,7 +5730,7 @@ body.dark .badge-proposed {
 <div id="proposed-column-modal" class="modal-backdrop hidden">
   <div class="modal-dialog" style="max-width:500px;height:auto">
     <div class="modal-hdr">
-      <span class="modal-title-text">+ Add Proposed Column (ToBe)</span>
+      <span class="modal-title-text">+ Add Proposed Column</span>
       <button class="modal-close" id="btn-prop-col-close">✕</button>
     </div>
     <div class="modal-bdy" style="padding:16px;display:flex;flex-direction:column;gap:12px">
@@ -11512,7 +11517,7 @@ function safeJsonForScript(obj) {
     .replace(/\//g, '\\u002f');
 }
 
-function exportUpdatedHTML() {
+function generateUpdatedHTMLSource() {
   if (typeof closeUnsavedConfigModal === 'function') closeUnsavedConfigModal();
   markConfigClean();
   let htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
@@ -11524,7 +11529,11 @@ function exportUpdatedHTML() {
   } catch(e) {
     console.warn('Could not replace embedded variables during HTML export:', e);
   }
+  return htmlContent;
+}
 
+function exportUpdatedHTML() {
+  const htmlContent = generateUpdatedHTMLSource();
   const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -11538,7 +11547,19 @@ function exportUpdatedHTML() {
   showToast('Downloaded Updated HTML ✓');
 }
 
+function copyUpdatedHTML() {
+  const htmlContent = generateUpdatedHTMLSource();
+  const fallback = () => {
+    exportUpdatedHTML();
+    showToast('Clipboard unavailable — downloaded Updated HTML file instead ✓');
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(htmlContent).then(() => showToast('Copied Updated HTML source to clipboard ✓')).catch(fallback);
+  } else fallback();
+}
+
 document.getElementById('btn-export-html-download')?.addEventListener('click', exportUpdatedHTML);
+document.getElementById('btn-export-html-copy')?.addEventListener('click', copyUpdatedHTML);
 
 function updateNoteFormFields() {
   const scope = document.getElementById('note-edit-scope')?.value || 'table';
