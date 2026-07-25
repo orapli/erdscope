@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DynamicMapped` are to-many; a scalar `Mapped["User"]` is to-one). An
   explicit type argument or `nullable=` keyword still wins over the
   annotation.
+- **Viewer: newly created overlaps are called out.** Align and Distribute are
+  never refused for putting tables on top of each other — left-aligning a row
+  stacks it, the same as in any drawing tool — but a covered table hides real
+  content and there is no z-order control to recover it. When one of these
+  operations creates an overlap that wasn't there before, the toast now says
+  how many tables overlap and those tables flash on the canvas; undo reverts
+  it. Overlaps that already existed are not re-reported.
 
 ### Fixed
 

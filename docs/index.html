@@ -4089,9 +4089,49 @@ function afterManualReposition(){
   updateEdgeHighlight();
 }
 
+// Displayed-table pairs that overlap right now and involve one of `moved` —
+// the only pairs a reposition of `moved` can create or clear. Keys are the
+// two names sorted and joined, so a before/after pair of sets can be diffed
+// directly (and a moved-vs-moved pair recorded from both ends collapses).
+function overlapPairsWith(moved){
+  const out=new Set(), all=getDisplayTables();
+  moved.forEach(a=>{
+    const pa=nodePos[a]; if(!pa) return;
+    const sa=nodeSize[a]||calcSize(a);
+    all.forEach(b=>{
+      if(a===b) return;
+      const pb=nodePos[b]; if(!pb) return;
+      const sb=nodeSize[b]||calcSize(b);
+      if(Math.abs(pa.x-pb.x)<(sa.w+sb.w)/2 && Math.abs(pa.y-pb.y)<(sa.h+sb.h)/2)
+        out.add(a<b ? `${a}\u0000${b}` : `${b}\u0000${a}`);
+    });
+  });
+  return out;
+}
+
+// Align/Distribute do exactly what they promise, and — as in every design
+// tool — that can legitimately land tables on top of each other (aligning a
+// row's left edges stacks it). So the operation is never refused for
+// overlapping; unlike Distribute's impossible case, nothing about the
+// contract is broken. But an ER node hides real content when covered and
+// there is no z-order control to dig it back out, so an overlap this
+// operation just created is named in the toast and flashed on the canvas
+// instead of happening silently. Overlaps that were already there are not
+// reported — they aren't news, and re-reporting them would train the user
+// to ignore the message.
+function reportRepositionOverlaps(msg, moved, before){
+  const fresh=[...overlapPairsWith(moved)].filter(k=>!before.has(k));
+  if(!fresh.length){ showToast(msg); return; }
+  const names=new Set();
+  fresh.forEach(k=>k.split('\u0000').forEach(n=>names.add(n)));
+  names.forEach(flashNode);
+  showToast(`${msg} — ${names.size} now overlap (Undo to revert)`);
+}
+
 function alignSelection(mode){
   const ts=selectedPositioned();
   if(ts.length<2) return;
+  const overlapsBefore=overlapPairsWith(ts);
   pushUndoSnapshot();
   const boxes=ts.map(t=>{
     const p=nodePos[t], s=nodeSize[t]||calcSize(t);
@@ -4117,7 +4157,7 @@ function alignSelection(mode){
     boxes.forEach(b=>{ nodePos[b.t].y=cy; });
   }
   afterManualReposition();
-  showToast(`Aligned ${ts.length} tables`);
+  reportRepositionOverlaps(`Aligned ${ts.length} tables`, ts, overlapsBefore);
 }
 
 // keeps the two outermost members fixed, equalizes the edge-to-edge gaps
@@ -4140,6 +4180,9 @@ function distributeSelection(axis){
   // breaking the contract. Do nothing instead — no move, no undo entry.
   if(totalSize>totalSpan){ showToast('Not enough space to distribute without overlap'); return; }
   const gap=(totalSpan-totalSize)/(items.length-1);
+  // equalizing the gaps can still slide a member onto an unselected table
+  // off to the side, even though the selection itself now fits
+  const overlapsBefore=overlapPairsWith(ts);
   pushUndoSnapshot();
   let edge=first.c-first.half;
   items.forEach(it=>{
@@ -4147,7 +4190,7 @@ function distributeSelection(axis){
     edge+=it.half*2+gap;
   });
   afterManualReposition();
-  showToast(`Distributed ${ts.length} tables`);
+  reportRepositionOverlaps(`Distributed ${ts.length} tables`, ts, overlapsBefore);
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────

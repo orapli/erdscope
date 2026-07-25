@@ -1641,6 +1641,83 @@ class TestClientJS(unittest.TestCase):
                            'the gaps must be real spacing, not the packed-flush 0/0 that the '
                            'old clamping behavior produced')
 
+    def _toast_text(self):
+        return self.page.evaluate("document.getElementById('toast').textContent")
+
+    def test_align_that_creates_an_overlap_still_aligns_but_says_so(self):
+        # policy (backlog A2): align/distribute are never refused for
+        # overlapping — stacking a row by its left edges is what every design
+        # tool does — but a *newly* created overlap is named and flashed
+        # rather than left silent, since a covered ER node hides real content
+        for name in ('posts', 'comments'):
+            self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])
+        # same y, different x, parked well clear of the other fixture nodes so
+        # the only new overlap is the one the align itself creates
+        self.page.evaluate('''() => {
+            nodePos.posts.x = 0; nodePos.posts.y = -3000;
+            nodePos.comments.x = 400; nodePos.comments.y = -3000;
+            renderDiagram();
+        }''')
+        self.page.locator('[data-align="left"]').click()
+
+        boxes = self.page.evaluate('''() => ['posts','comments'].map(t => {
+            const p = nodePos[t], s = nodeSize[t];
+            return {x0: p.x - s.w/2, y: p.y};
+        })''')
+        self.assertAlmostEqual(boxes[0]['x0'], boxes[1]['x0'], places=3,
+                                msg='the align itself must still happen')
+        self.assertEqual(self._toast_text(), 'Aligned 2 tables — 2 now overlap (Undo to revert)')
+        self.assertEqual(
+            self.page.evaluate(
+                "[...document.querySelectorAll('.er-node.flash')].map(n => n.dataset.name).sort()"),
+            ['comments', 'posts'], 'both overlapping nodes should flash')
+
+    def test_align_without_overlap_reports_nothing_extra(self):
+        for name in ('posts', 'comments'):
+            self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])
+        # far apart vertically: left-aligning them cannot overlap anything
+        self.page.evaluate('''() => {
+            nodePos.posts.x = 0; nodePos.posts.y = 0;
+            nodePos.comments.x = 400; nodePos.comments.y = 2000;
+            renderDiagram();
+        }''')
+        self.page.locator('[data-align="left"]').click()
+        self.assertEqual(self._toast_text(), 'Aligned 2 tables')
+        self.assertEqual(
+            self.page.evaluate("document.querySelectorAll('.er-node.flash').length"), 0)
+
+    def test_a_pre_existing_overlap_is_not_reported_as_new(self):
+        # users/likes are parked on top of each other before the align, and
+        # the align doesn't touch them — re-reporting that would train the
+        # user to ignore the message
+        for name in ('posts', 'comments'):
+            self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])
+        self.page.evaluate('''() => {
+            nodePos.users.x = 3000; nodePos.users.y = 3000;
+            nodePos.likes.x = 3000; nodePos.likes.y = 3000;
+            nodePos.posts.x = 0; nodePos.posts.y = 0;
+            nodePos.comments.x = 400; nodePos.comments.y = 2000;
+            renderDiagram();
+        }''')
+        self.page.locator('[data-align="left"]').click()
+        self.assertEqual(self._toast_text(), 'Aligned 2 tables')
+
+    def test_align_onto_an_unselected_table_is_reported(self):
+        # the overlap doesn't have to be between two selected tables: an
+        # aligned table landing on an unrelated one counts too
+        for name in ('posts', 'comments'):
+            self.page.click(f'[data-name="{name}"]', modifiers=['Shift'])
+        self.page.evaluate('''() => {
+            nodePos.posts.x = 0; nodePos.posts.y = 0;
+            nodePos.comments.x = 400; nodePos.comments.y = 1000;
+            // parked exactly where comments will land once left-aligned
+            nodePos.users.x = 0 - (nodeSize.posts.w - nodeSize.comments.w)/2;
+            nodePos.users.y = 1000;
+            renderDiagram();
+        }''')
+        self.page.locator('[data-align="left"]').click()
+        self.assertIn('now overlap', self._toast_text())
+
     def test_distribute_leaves_both_outermost_tables_where_they_were(self):
         # the UI tooltip and the manual both promise the two extreme tables
         # stay fixed and only the gaps between them change — assert *both*
