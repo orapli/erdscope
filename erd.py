@@ -5540,7 +5540,7 @@ body.dark .badge-proposed {
       <div class="tb-sep"></div>
       <div class="tb-group" id="export-group">
         <button class="diag-btn" id="btn-export-toggle" title="Export the diagram" aria-haspopup="true">⬇ Export</button>
-        <span id="config-dirty-badge" class="config-dirty-badge hidden" title="Unsaved Config / ToBe changes exist. Click to manage or Export Config JSON to save for --config.">⚠️ Unsaved Config</span>
+        <span id="config-dirty-badge" class="config-dirty-badge hidden" title="Unexported proposed changes exist (auto-saved locally). Click to export Config JSON or Updated HTML.">⚠️ Unexported changes</span>
         <div id="export-menu" class="tb-popup">
           <div class="tb-popup-caption">Image options</div>
           <label class="tb-popup-check"><input type="checkbox" id="export-opt-labels" checked> Join-table labels (⇢)</label>
@@ -5664,12 +5664,12 @@ body.dark .badge-proposed {
 <div id="unsaved-config-modal" class="modal-backdrop hidden">
   <div class="modal-dialog" style="max-width:480px;height:auto">
     <div class="modal-hdr">
-      <span class="modal-title-text">⚠️ Unsaved Config / ToBe Changes</span>
+      <span class="modal-title-text">⚠️ Unexported Proposed Changes</span>
       <button class="modal-close" id="btn-unsaved-close" title="Close modal">✕</button>
     </div>
     <div class="modal-bdy" style="padding:16px;display:flex;flex-direction:column;gap:12px">
       <p style="font-size:13px;line-height:1.5;margin:0;color:#334155">
-        You have unexported Config / ToBe changes. If you leave without downloading, your changes will not be saved for future CLI <code>--config</code> runs.
+        Proposed changes are auto-saved in your browser. Export Config JSON or Download Updated HTML to share or use with CLI <code>--config</code> / <code>--diff</code>.
       </p>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         <button class="diag-btn" id="btn-unsaved-download" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px">
@@ -11356,7 +11356,7 @@ function updateConfigDirtyUI() {
   if (!badge) return;
   if (isConfigDirty) {
     badge.classList.remove('hidden', 'clean');
-    badge.textContent = '⚠️ Unsaved Config';
+    badge.textContent = '⚠️ Unexported changes';
   } else {
     badge.classList.add('clean');
     badge.textContent = '✓ Config Saved';
