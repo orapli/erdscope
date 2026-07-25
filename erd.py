@@ -5019,6 +5019,232 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
   #center-pane{box-shadow:none!important;background:#fff!important;background-image:none!important}
   body{background:#fff}
 }
+/* ── Schema Grid Modal & Table Styling ── */
+.modal-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(3px);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-backdrop.hidden {
+  display: none!important;
+}
+.modal-dialog {
+  width: 96vw;
+  max-width: 1600px;
+  height: 90vh;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: 0 20px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #0f172a;
+}
+body.dark .modal-dialog {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f8fafc;
+}
+.modal-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+body.dark .modal-hdr {
+  background: #1e293b;
+  border-color: #334155;
+}
+.modal-title-area {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.modal-title-text {
+  font-weight: 700;
+  font-size: 15px;
+}
+.modal-tabs {
+  display: flex;
+  background: #e2e8f0;
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+body.dark .modal-tabs {
+  background: #334155;
+}
+.modal-tab-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  border-radius: 4px;
+  cursor: pointer;
+}
+body.dark .modal-tab-btn {
+  color: #94a3b8;
+}
+.modal-tab-btn.active {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+body.dark .modal-tab-btn.active {
+  background: #0f172a;
+  color: #f8fafc;
+}
+.modal-ctrls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.modal-search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.modal-search-wrapper input {
+  padding: 4px 24px 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 12px;
+  width: 200px;
+  background: #ffffff;
+  color: #0f172a;
+}
+body.dark .modal-search-wrapper input {
+  background: #0f172a;
+  border-color: #475569;
+  color: #f8fafc;
+}
+.modal-search-wrapper button {
+  position: absolute;
+  right: 4px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+.modal-close {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px 8px;
+}
+body.dark .modal-close {
+  color: #94a3b8;
+}
+.modal-bdy {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px;
+}
+.schema-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+.schema-grid-table th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  padding: 8px 10px;
+  border-bottom: 2px solid #cbd5e1;
+  font-weight: 600;
+  z-index: 1;
+}
+body.dark .schema-grid-table th {
+  background: #1e293b;
+  border-color: #475569;
+}
+.schema-grid-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+body.dark .schema-grid-table td {
+  border-color: #334155;
+}
+.schema-grid-table tr:hover td {
+  background: #f8fafc;
+}
+body.dark .schema-grid-table tr:hover td {
+  background: #1e293b;
+}
+.grid-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-right: 4px;
+}
+.grid-badge-pk { background: #fee2e2; color: #dc2626; }
+.grid-badge-fk { background: #e0e7ff; color: #4338ca; }
+.grid-badge-uq { background: #fef3c7; color: #d97706; }
+.grid-badge-idx { background: #f1f5f9; color: #475569; }
+.grid-badge-group { background: #ccfbf1; color: #0f766e; }
+.grid-badge-notes { background: #dcfce7; color: #15803d; }
+body.dark .grid-badge-pk { background: #7f1d1d; color: #fca5a5; }
+body.dark .grid-badge-fk { background: #3730a3; color: #c7d2fe; }
+body.dark .grid-badge-uq { background: #78350f; color: #fde68a; }
+body.dark .grid-badge-idx { background: #334155; color: #cbd5e1; }
+body.dark .grid-badge-group { background: #134e4a; color: #99f6e4; }
+body.dark .grid-badge-notes { background: #14532d; color: #86efac; }
+.grid-table-link {
+  color: #2563eb;
+  cursor: pointer;
+  font-weight: 600;
+
+  text-decoration: none;
+}
+.grid-table-link:hover {
+  text-decoration: underline;
+}
+body.dark .grid-table-link {
+  color: #60a5fa;
+}
+.grid-note-text {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #15803d;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  max-width: 360px;
+  margin-top: 2px;
+}
+body.dark .grid-note-text {
+  color: #86efac;
+  background: #052e16;
+  border-color: #14532d;
+}
+.grid-key-detail {
+  font-size: 11px;
+  color: #475569;
+  margin-top: 2px;
+}
+body.dark .grid-key-detail {
+  color: #94a3b8;
+}
 </style>
 </head>
 <body>
@@ -5055,6 +5281,7 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
       <button id="btn-all">All</button>
       <button id="btn-none">None</button>
       <button id="btn-unfocus">Exit focus</button>
+      <button id="btn-grid-modal" class="diag-btn" title="Open Data Dictionary (Schema Grid)">📋 Grid</button>
     </div>
     <div id="search-box">
       <input type="text" id="search" placeholder="Search tables / columns…">
@@ -5230,6 +5457,43 @@ body.dark .divider:hover,body.dark .divider.dragging{background:#1d4ed8}
   <div id="right-pane">
     <div class="pane-title"><button class="collapse-btn" id="collapse-right" title="Collapse right pane">▶</button><span>Details</span></div>
     <div id="table-details"><div class="empty-state">Click a table<br>to see its details</div></div>
+  </div>
+</div>
+
+<div id="schema-grid-modal" class="modal-backdrop hidden">
+  <div class="modal-dialog">
+    <div class="modal-hdr">
+      <div class="modal-title-area">
+        <span class="modal-title-text">Data Dictionary</span>
+        <div class="modal-tabs" id="grid-tab-buttons">
+          <button class="modal-tab-btn active" id="tab-btn-tables" data-tab="tables">Tables (<span id="grid-cnt-tables">0</span>)</button>
+          <button class="modal-tab-btn" id="tab-btn-columns" data-tab="columns">Columns (<span id="grid-cnt-cols">0</span>)</button>
+        </div>
+      </div>
+      <div class="modal-ctrls">
+        <div class="modal-tabs" id="grid-mode-buttons">
+          <button class="modal-tab-btn" id="btn-grid-mode-compact" data-gmode="compact" title="Compact view with badges">Compact</button>
+          <button class="modal-tab-btn active" id="btn-grid-mode-detailed" data-gmode="detailed" title="Detailed view with expanded Keys and Note text">Detailed</button>
+        </div>
+        <div class="modal-search-wrapper">
+          <select id="grid-search-scope" title="Filter target scope" style="border:1px solid #cbd5e1;border-radius:4px 0 0 4px;font-size:12px;padding:4px 6px;background:#f8fafc;color:#0f172a;border-right:none">
+            <option value="all">All Fields</option>
+            <option value="table">Table Name</option>
+            <option value="column">Column Name</option>
+          </select>
+          <input type="text" id="grid-search-input" placeholder="Search filter..." style="border-radius:0 4px 4px 0" />
+          <button id="grid-search-clear" title="Clear filter">✕</button>
+        </div>
+        <label id="grid-search-exact-label" style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer;user-select:none" title="Exact match mode">
+          <input type="checkbox" id="grid-search-exact" /> Exact
+        </label>
+        <button class="diag-btn" id="btn-grid-copy" title="Copy active view data to clipboard as TSV for Excel">📋 Copy TSV</button>
+        <button class="diag-btn" id="btn-grid-csv" title="Download active view data as CSV file">⬇ CSV</button>
+        <button class="diag-btn" id="btn-grid-newtab" title="Open Data Dictionary in a new browser tab">↗ New Tab</button>
+        <button class="modal-close" id="btn-grid-modal-close" title="Close modal (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="modal-bdy" id="schema-grid-container"></div>
   </div>
 </div>
 
@@ -7981,6 +8245,15 @@ function locateTable(name){
   flashNode(name);
 }
 
+function focusGridTable(tblName){
+  if(!tblName || !DATA.tables[tblName]) return;
+  if(hiddenTables.has(tblName) || !getDisplayTables().includes(tblName)){
+    addTables([tblName]);
+  }
+  locateTable(tblName);
+}
+window.focusGridTable = focusGridTable;
+
 function flashNode(name){
   const el=document.querySelector(`.er-node[data-name="${CSS.escape(name)}"]`);
   if(!el) return;
@@ -8490,6 +8763,9 @@ function noteText(n){
 function notesForTable(t){
   return NOTES.filter(n =>
     (n.scope==='table' && n.table===t) || (n.scope==='relation' && n.source_table===t));
+}
+function notesForColumn(t, colName){
+  return NOTES.filter(n => n.scope==='relation' && n.source_table===t && n.foreign_key===colName);
 }
 function renderGlobalNotes(){
   const box=document.getElementById('legend-notes');
@@ -9938,6 +10214,700 @@ document.getElementById('word-search').addEventListener('keydown', e=>{
   if(!hiddenTables.has(m) && !getDisplayTables().includes(m)) addTables([m]); // add hidden targets before locating
   locateTable(m);
 });
+
+// ── Schema Grid Component & Modal ─────────────────────────────────────────
+class SchemaGrid {
+  constructor(containerEl) {
+    this.container = containerEl;
+    this.activeTab = 'tables'; // 'tables' | 'columns'
+    this.displayMode = 'detailed'; // 'compact' | 'detailed'
+    this.filterQuery = '';
+    this.filterScope = 'all'; // 'all' | 'table' | 'column'
+    this.exactMatch = false;
+  }
+
+  setTab(tab) {
+    if (this.activeTab !== tab) {
+      this.activeTab = tab;
+      this.render();
+    }
+  }
+
+  setDisplayMode(mode) {
+    if (this.displayMode !== mode) {
+      this.displayMode = mode;
+      this.render();
+    }
+  }
+
+  setFilter(query, scope = this.filterScope, exact = this.exactMatch) {
+    this.filterQuery = (query || '').trim();
+    this.filterScope = scope;
+    this.exactMatch = !!exact;
+    this.render();
+  }
+
+  matchFields(fields) {
+    if (!this.filterQuery) return true;
+    const q = this.filterQuery.toLowerCase();
+    const flat = (fields || []).flat(Infinity).filter(v => v !== null && v !== undefined && v !== '');
+    if (this.exactMatch) {
+      return flat.some(f => String(f).trim().toLowerCase() === q);
+    }
+    return flat.some(f => String(f).toLowerCase().includes(q));
+  }
+
+  getTableGroupsMap() {
+    const map = {};
+    (GROUPS || []).forEach(g => {
+      const gName = g.title || g.id || '';
+      (g.tables || []).forEach(tblName => {
+        if (!map[tblName]) map[tblName] = [];
+        map[tblName].push(gName);
+      });
+    });
+    return map;
+  }
+
+  getFilteredTableRows() {
+    const grpMap = this.getTableGroupsMap();
+    const rows = [];
+
+    const tableNames = Object.keys(DATA.tables || {}).sort();
+    tableNames.forEach(name => {
+      const t = DATA.tables[name];
+      const groups = grpMap[name] || [];
+      const cols = t.columns || [];
+
+      const pkCols = cols.filter(c => c.primary).map(c => c.name);
+      if (!pkCols.length && t.pk_columns) pkCols.push(...t.pk_columns);
+
+      const fkCols = new Set();
+      cols.forEach(c => {
+        if (isFkCol(name, c.name)) fkCols.add(c.name);
+      });
+      if (t.fk_columns) t.fk_columns.forEach(fk => fkCols.add(fk));
+      (t.associations || []).forEach(a => {
+        if (a.foreign_key) fkCols.add(a.foreign_key);
+      });
+      const fkCount = fkCols.size;
+
+      const fkDetails = [];
+      (t.associations || []).forEach(a => {
+        if (a.foreign_key) {
+          const targetStr = a.target_key ? `${a.target}.${a.target_key}` : a.target;
+          fkDetails.push(`${a.foreign_key} -> ${targetStr}`);
+        }
+      });
+      if (!fkDetails.length && t.fk_columns) {
+        t.fk_columns.forEach(fk => fkDetails.push(fk));
+      }
+
+      const idxDetails = (t.indexes || []).map(idx => {
+        const colsStr = (idx.columns || []).length ? ` (${(idx.columns || []).join(', ')})` : '';
+        const prefix = idx.unique ? 'UQ: ' : '';
+        return `${prefix}${idx.name || 'unnamed'}${colsStr}`;
+      });
+
+      const nList = notesForTable(name);
+      const hasNotes = nList.length > 0;
+      const noteTextVal = nList.map(n => noteText(n)).join('\n\n');
+      const groupStr = groups.join(', ');
+
+      let isMatch = false;
+      if (!this.filterQuery) {
+        isMatch = true;
+      } else if (this.filterScope === 'table') {
+        isMatch = this.matchFields([name, t.logical_name]);
+      } else if (this.filterScope === 'column') {
+        isMatch = cols.some(c => this.matchFields([c.name, c.logical_name]));
+      } else {
+        const colFields = cols.flatMap(c => {
+          const colNotesList = notesForColumn(name, c.name);
+          const colNoteText = colNotesList.map(n => noteText(n)).join(' ');
+          return [c.name, c.logical_name, c.type, c.nullable ? 'NULL' : 'NOT NULL', c.default, c.comment, colNoteText];
+        });
+        const allFields = [
+          name, t.logical_name, t.comment, groupStr,
+          pkCols, fkDetails, idxDetails, noteTextVal,
+          colFields
+        ];
+        isMatch = this.matchFields(allFields);
+      }
+
+      if (isMatch) {
+        rows.push({
+          name,
+          logical_name: t.logical_name || '',
+          comment: t.comment || '',
+          columnCount: cols.length,
+          pkCount: pkCols.length,
+          fkCount,
+          idxCount: idxDetails.length,
+          pkCols,
+          fkDetails,
+          idxDetails,
+          groups: groupStr,
+          hasNotes,
+          noteText: noteTextVal
+        });
+      }
+    });
+
+    return rows;
+  }
+
+  getFilteredColumnRows() {
+    const rows = [];
+
+    const tableNames = Object.keys(DATA.tables || {}).sort();
+    tableNames.forEach(tblName => {
+      const t = DATA.tables[tblName];
+      const cols = t.columns || [];
+      const indexes = t.indexes || [];
+
+      cols.forEach(c => {
+        const isPk = !!c.primary;
+        const isFk = isFkCol(tblName, c.name);
+        const isUq = indexes.some(idx => idx.unique && (idx.columns || []).includes(c.name));
+        const isIdx = indexes.some(idx => !idx.unique && (idx.columns || []).includes(c.name));
+
+        const colNotesList = notesForColumn(tblName, c.name);
+        const hasNotes = colNotesList.length > 0;
+        const noteTextVal = colNotesList.map(n => noteText(n)).join('\n\n');
+
+        const badges = [];
+        if (isPk) badges.push('PK');
+        if (isFk) badges.push('FK');
+        if (isUq) badges.push('UQ');
+        else if (isIdx) badges.push('IDX');
+
+        const keyDetails = [];
+        if (isPk) keyDetails.push('PK');
+        if (isFk) {
+          const assocs = (t.associations || []).filter(a => a.foreign_key === c.name);
+          if (assocs.length) {
+            assocs.forEach(a => {
+              const targetStr = a.target_key ? `${a.target}.${a.target_key}` : a.target;
+              keyDetails.push(`FK (-> ${targetStr})`);
+            });
+          } else {
+            keyDetails.push('FK');
+          }
+        }
+        indexes.forEach(idx => {
+          if ((idx.columns || []).includes(c.name)) {
+            const prefix = idx.unique ? 'UQ' : 'IDX';
+            const colsStr = (idx.columns || []).length > 1 ? ` (${(idx.columns || []).join(', ')})` : '';
+            keyDetails.push(`${prefix} (${idx.name || 'unnamed'}${colsStr})`);
+          }
+        });
+
+        let isMatch = false;
+        if (!this.filterQuery) {
+          isMatch = true;
+        } else if (this.filterScope === 'table') {
+          isMatch = this.matchFields([tblName, t.logical_name]);
+        } else if (this.filterScope === 'column') {
+          isMatch = this.matchFields([c.name, c.logical_name]);
+        } else {
+          const allFields = [
+            tblName, t.logical_name,
+            c.name, c.logical_name, c.type, c.nullable ? 'NULL' : 'NOT NULL',
+            c.default !== undefined && c.default !== null ? String(c.default) : '',
+            c.comment, keyDetails, noteTextVal
+          ];
+          isMatch = this.matchFields(allFields);
+        }
+
+        if (isMatch) {
+          rows.push({
+            tableName: tblName,
+            name: c.name,
+            logical_name: c.logical_name || '',
+            type: c.type || '',
+            nullable: c.nullable ? 'NULL' : 'NOT NULL',
+            badges,
+            keyDetails,
+            defaultVal: c.default !== undefined && c.default !== null ? String(c.default) : '',
+            comment: c.comment || '',
+            hasNotes,
+            noteText: noteTextVal
+          });
+        }
+      });
+    });
+
+    return rows;
+  }
+
+  render() {
+    if (!this.container) return;
+    const tableRows = this.getFilteredTableRows();
+    const columnRows = this.getFilteredColumnRows();
+
+    const cntTablesEl = document.getElementById('grid-cnt-tables');
+    const cntColsEl = document.getElementById('grid-cnt-cols');
+    if (cntTablesEl) cntTablesEl.textContent = tableRows.length;
+    if (cntColsEl) cntColsEl.textContent = columnRows.length;
+
+    const isDetailed = this.displayMode === 'detailed';
+
+    if (this.activeTab === 'tables') {
+      let html = `<table class="schema-grid-table">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Table Name</th>
+            <th>Logical Name</th>
+            <th>Comment</th>
+            <th style="text-align:right">Cols</th>
+            ${isDetailed ? '<th>Primary Keys</th><th>Foreign Keys</th><th>Indexes</th>' : '<th style="text-align:right">PK</th><th style="text-align:right">FK</th><th style="text-align:right">Idx</th>'}
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>`;
+      if (!tableRows.length) {
+        const scopeLabel = this.filterScope === 'table' ? 'Table Name' : this.filterScope === 'column' ? 'Column Name' : 'All Fields';
+        const queryInfo = this.filterQuery ? ` for scope "${esc(scopeLabel)}" matching "${esc(this.filterQuery)}"` : '';
+        html += `<tr><td colspan="9" style="text-align:center;padding:24px;color:#94a3b8">No matching tables found${queryInfo}</td></tr>`;
+      } else {
+        tableRows.forEach(r => {
+          const grpHtml = r.groups ? `<span class="grid-badge grid-badge-group">${esc(r.groups)}</span>` : '<span style="color:#94a3b8">-</span>';
+          let notesHtml = '<span style="color:#94a3b8">-</span>';
+          if (r.hasNotes) {
+            notesHtml = isDetailed
+              ? `<div class="grid-note-text">${esc(r.noteText)}</div>`
+              : `<span class="grid-badge grid-badge-notes" title="${esc(r.noteText)}">✓ Note</span>`;
+          }
+
+          let keysHtml = '';
+          if (isDetailed) {
+            const pkStr = r.pkCols.length ? `<span class="grid-badge grid-badge-pk">${esc(r.pkCols.join(', '))}</span>` : '<span style="color:#94a3b8">-</span>';
+            const fkStr = r.fkDetails.length ? r.fkDetails.map(f => `<span class="grid-badge grid-badge-fk" style="display:inline-block;margin:1px">${esc(f)}</span>`).join(' ') : '<span style="color:#94a3b8">-</span>';
+            const idxStr = r.idxDetails.length ? r.idxDetails.map(i => `<span class="grid-badge grid-badge-idx" style="display:inline-block;margin:1px">${esc(i)}</span>`).join(' ') : '<span style="color:#94a3b8">-</span>';
+            keysHtml = `<td>${pkStr}</td><td>${fkStr}</td><td>${idxStr}</td>`;
+          } else {
+            keysHtml = `<td style="text-align:right">${r.pkCount ? `<span class="grid-badge grid-badge-pk">${r.pkCount}</span>` : '0'}</td>
+              <td style="text-align:right">${r.fkCount ? `<span class="grid-badge grid-badge-fk">${r.fkCount}</span>` : '0'}</td>
+              <td style="text-align:right">${r.idxCount ? `<span class="grid-badge grid-badge-idx">${r.idxCount}</span>` : '0'}</td>`;
+          }
+
+          html += `<tr>
+            <td>${grpHtml}</td>
+            <td><a class="grid-table-link" data-goto-table="${esc(r.name)}">${esc(r.name)}</a></td>
+            <td>${esc(r.logical_name || '-')}</td>
+            <td>${esc(r.comment || '-')}</td>
+            <td style="text-align:right;font-weight:600">${r.columnCount}</td>
+            ${keysHtml}
+            <td>${notesHtml}</td>
+          </tr>`;
+        });
+      }
+      html += `</tbody></table>`;
+      this.container.innerHTML = html;
+    } else {
+      let html = `<table class="schema-grid-table">
+        <thead>
+          <tr>
+            <th>Table</th>
+            <th>Column Name</th>
+            <th>Logical Name</th>
+            <th>Type</th>
+            <th>Nullable</th>
+            <th>Key</th>
+            <th>Default</th>
+            <th>Comment</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>`;
+      if (!columnRows.length) {
+        const scopeLabel = this.filterScope === 'table' ? 'Table Name' : this.filterScope === 'column' ? 'Column Name' : 'All Fields';
+        const queryInfo = this.filterQuery ? ` for scope "${esc(scopeLabel)}" matching "${esc(this.filterQuery)}"` : '';
+        html += `<tr><td colspan="9" style="text-align:center;padding:24px;color:#94a3b8">No matching columns found${queryInfo}</td></tr>`;
+      } else {
+        columnRows.forEach(r => {
+          let badgeHtml = '<span style="color:#94a3b8">-</span>';
+          if (isDetailed && r.keyDetails.length) {
+            badgeHtml = r.keyDetails.map(kd => {
+              const cls = kd.startsWith('PK') ? 'grid-badge-pk' : kd.startsWith('FK') ? 'grid-badge-fk' : kd.startsWith('UQ') ? 'grid-badge-uq' : 'grid-badge-idx';
+              return `<span class="grid-badge ${cls}" style="display:inline-block;margin:1px">${esc(kd)}</span>`;
+            }).join(' ');
+          } else if (r.badges.length) {
+            badgeHtml = r.badges.map(b => {
+              const cls = b === 'PK' ? 'grid-badge-pk' : b === 'FK' ? 'grid-badge-fk' : b === 'UQ' ? 'grid-badge-uq' : 'grid-badge-idx';
+              return `<span class="grid-badge ${cls}">${b}</span>`;
+            }).join('');
+          }
+
+          let notesHtml = '<span style="color:#94a3b8">-</span>';
+          if (r.hasNotes) {
+            notesHtml = isDetailed
+              ? `<div class="grid-note-text">${esc(r.noteText)}</div>`
+              : `<span class="grid-badge grid-badge-notes" title="${esc(r.noteText)}">✓ Note</span>`;
+          }
+
+          html += `<tr>
+            <td><a class="grid-table-link" data-goto-table="${esc(r.tableName)}">${esc(r.tableName)}</a></td>
+            <td style="font-weight:600">${esc(r.name)}</td>
+            <td>${esc(r.logical_name || '-')}</td>
+            <td><code>${esc(r.type || '-')}</code></td>
+            <td><span style="color:${r.nullable === 'NULL' ? '#64748b' : '#059669'};font-size:11px">${r.nullable}</span></td>
+            <td>${badgeHtml}</td>
+            <td><code>${esc(r.defaultVal || '-')}</code></td>
+            <td>${esc(r.comment || '-')}</td>
+            <td>${notesHtml}</td>
+          </tr>`;
+        });
+      }
+      html += `</tbody></table>`;
+      this.container.innerHTML = html;
+    }
+
+    this.container.querySelectorAll('[data-goto-table]').forEach(el => {
+      el.addEventListener('click', e => {
+        const tblName = e.currentTarget.getAttribute('data-goto-table');
+        if (!tblName) return;
+        if (typeof closeSchemaGridModal === 'function') {
+          closeSchemaGridModal();
+          if (typeof focusTable === 'function') focusTable(tblName);
+        } else if (window.opener && !window.opener.closed) {
+          try {
+            if (typeof window.opener.closeSchemaGridModal === 'function') {
+              window.opener.closeSchemaGridModal();
+            }
+            if (typeof window.opener.focusTable === 'function') {
+              window.opener.focusTable(tblName);
+            }
+            window.opener.focus();
+          } catch (err) {
+            console.warn('Could not focus table in opener window:', err);
+          }
+        }
+      });
+    });
+  }
+
+  toTSV() {
+    if (this.activeTab === 'tables') {
+      const rows = this.getFilteredTableRows();
+      const header = ['Group', 'Table Name', 'Logical Name', 'Comment', 'Columns', 'PKs', 'FKs', 'Indexes', 'Notes'];
+      const lines = [header.join('\t')];
+      rows.forEach(r => {
+        lines.push([
+          r.groups, r.name, r.logical_name, r.comment, r.columnCount,
+          r.pkCols.join(', '), r.fkDetails.join(', '), r.idxDetails.join(', '),
+          r.hasNotes ? (r.noteText || 'YES') : ''
+        ].map(v => String(v).replace(/[\r\n\t]/g, ' ')).join('\t'));
+      });
+      return lines.join('\n');
+    } else {
+      const rows = this.getFilteredColumnRows();
+      const header = ['Table Name', 'Column Name', 'Logical Name', 'Type', 'Nullable', 'Keys', 'Default', 'Comment', 'Notes'];
+      const lines = [header.join('\t')];
+      rows.forEach(r => {
+        lines.push([
+          r.tableName, r.name, r.logical_name, r.type, r.nullable,
+          r.keyDetails.join('; ') || r.badges.join(','),
+          r.defaultVal, r.comment, r.hasNotes ? (r.noteText || 'YES') : ''
+        ].map(v => String(v).replace(/[\r\n\t]/g, ' ')).join('\t')); // 🔴 join('\t')
+      });
+      return lines.join('\n');
+    }
+  }
+
+  toCSV() {
+    const escapeCsv = v => {
+      const s = String(v ?? '').replace(/"/g, '""');
+      return `"${s}"`;
+    };
+
+    if (this.activeTab === 'tables') {
+      const rows = this.getFilteredTableRows();
+      const header = ['Group', 'Table Name', 'Logical Name', 'Comment', 'Columns', 'PKs', 'FKs', 'Indexes', 'Notes'];
+      const lines = [header.map(escapeCsv).join(',')];
+      rows.forEach(r => {
+        lines.push([
+          r.groups, r.name, r.logical_name, r.comment, r.columnCount,
+          r.pkCols.join(', '), r.fkDetails.join(', '), r.idxDetails.join(', '),
+          r.hasNotes ? (r.noteText || 'YES') : ''
+        ].map(escapeCsv).join(','));
+      });
+      return lines.join('\r\n');
+    } else {
+      const rows = this.getFilteredColumnRows();
+      const header = ['Table Name', 'Column Name', 'Logical Name', 'Type', 'Nullable', 'Keys', 'Default', 'Comment', 'Notes'];
+      const lines = [header.map(escapeCsv).join(',')];
+      rows.forEach(r => {
+        lines.push([
+          r.tableName, r.name, r.logical_name, r.type, r.nullable,
+          r.keyDetails.join('; ') || r.badges.join(','),
+          r.defaultVal, r.comment, r.hasNotes ? (r.noteText || 'YES') : ''
+        ].map(escapeCsv).join(','));
+      });
+      return lines.join('\r\n');
+    }
+  }
+}
+
+let schemaGrid = null;
+
+function openSchemaGridModal() {
+  const modal = document.getElementById('schema-grid-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const container = document.getElementById('schema-grid-container');
+  if (!schemaGrid) {
+    schemaGrid = new SchemaGrid(container);
+  }
+  schemaGrid.render();
+  const searchInput = document.getElementById('grid-search-input');
+  if (searchInput) searchInput.focus();
+}
+
+function closeSchemaGridModal() {
+  const modal = document.getElementById('schema-grid-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+document.getElementById('btn-grid-modal')?.addEventListener('click', openSchemaGridModal);
+document.getElementById('btn-grid-modal-close')?.addEventListener('click', closeSchemaGridModal);
+
+document.getElementById('schema-grid-modal')?.addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeSchemaGridModal();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('schema-grid-modal');
+    if (modal && !modal.classList.contains('hidden')) {
+      closeSchemaGridModal();
+      e.stopPropagation();
+    }
+  }
+});
+
+document.querySelectorAll('#grid-tab-buttons .modal-tab-btn').forEach(btn => {
+  btn.addEventListener('click', e => {
+    document.querySelectorAll('#grid-tab-buttons .modal-tab-btn').forEach(b => b.classList.remove('active'));
+    e.currentTarget.classList.add('active');
+    const tab = e.currentTarget.getAttribute('data-tab');
+    if (schemaGrid) schemaGrid.setTab(tab);
+  });
+});
+
+document.querySelectorAll('#grid-mode-buttons .modal-tab-btn').forEach(btn => {
+  btn.addEventListener('click', e => {
+    document.querySelectorAll('#grid-mode-buttons .modal-tab-btn').forEach(b => b.classList.remove('active'));
+    e.currentTarget.classList.add('active');
+    const mode = e.currentTarget.getAttribute('data-gmode');
+    if (schemaGrid) schemaGrid.setDisplayMode(mode);
+  });
+});
+
+function updateGridFilterFromUI() {
+  if (!schemaGrid) return;
+  const q = document.getElementById('grid-search-input')?.value || '';
+  const scope = document.getElementById('grid-search-scope')?.value || 'all';
+  const exact = !!document.getElementById('grid-search-exact')?.checked;
+  schemaGrid.setFilter(q, scope, exact);
+}
+
+const gridSearchInput = document.getElementById('grid-search-input');
+if (gridSearchInput) {
+  gridSearchInput.addEventListener('input', updateGridFilterFromUI);
+}
+document.getElementById('grid-search-scope')?.addEventListener('change', updateGridFilterFromUI);
+document.getElementById('grid-search-exact')?.addEventListener('change', updateGridFilterFromUI);
+
+document.getElementById('grid-search-clear')?.addEventListener('click', () => {
+  if (gridSearchInput) {
+    gridSearchInput.value = '';
+    updateGridFilterFromUI();
+    gridSearchInput.focus();
+  }
+});
+
+document.getElementById('btn-grid-copy')?.addEventListener('click', () => {
+  if (!schemaGrid) return;
+  const tsv = schemaGrid.toTSV();
+  const fallback = () => showToast('TSV ready to copy');
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(tsv).then(() => showToast('Copied grid data to clipboard ✓')).catch(fallback);
+  } else fallback();
+});
+
+document.getElementById('btn-grid-csv')?.addEventListener('click', () => {
+  if (!schemaGrid) return;
+  const csv = schemaGrid.toCSV();
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `schema_grid_${schemaGrid.activeTab}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Downloaded CSV ✓');
+});
+
+function safeJsonForScript(obj) {
+  return JSON.stringify(obj || {})
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\//g, '\\u002f');
+}
+
+function openSchemaGridInNewTab() {
+  closeSchemaGridModal();
+  const win = window.open('', '_blank');
+  if (!win) {
+    showToast('Pop-up blocked. Please allow pop-ups for this site.');
+    return;
+  }
+  const pageTitle = (document.title || 'Data Dictionary') + ' - Data Dictionary';
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${esc(pageTitle)}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 16px 24px; background: #f8fafc; color: #0f172a; }
+    body.dark { background: #0f172a; color: #f8fafc; }
+    .page-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 16px; flex-wrap: wrap; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }
+    .title-area { display: flex; align-items: center; gap: 24px; }
+    .page-hdr h1 { margin: 0; font-size: 20px; font-weight: 700; }
+    .modal-tabs { display: flex; background: #e2e8f0; border-radius: 6px; padding: 2px; gap: 2px; }
+    body.dark .modal-tabs { background: #334155; }
+    .modal-tab-btn { border: none; background: transparent; padding: 4px 10px; font-size: 12px; font-weight: 600; color: #64748b; border-radius: 4px; cursor: pointer; }
+    body.dark .modal-tab-btn { color: #94a3b8; }
+    .modal-tab-btn.active { background: #ffffff; color: #0f172a; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    body.dark .modal-tab-btn.active { background: #0f172a; color: #f8fafc; }
+    .ctrls { display: flex; align-items: center; gap: 12px; }
+    .modal-search-wrapper { position: relative; display: flex; align-items: center; }
+    .modal-search-wrapper input { padding: 6px 28px 6px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px; width: 240px; background: #ffffff; color: #0f172a; }
+    body.dark .modal-search-wrapper input { background: #0f172a; border-color: #475569; color: #f8fafc; }
+    .modal-search-wrapper button { position: absolute; right: 6px; border: none; background: transparent; color: #94a3b8; cursor: pointer; }
+    .diag-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #334155; padding: 6px 12px; font-size: 13px; font-weight: 500; border-radius: 4px; cursor: pointer; }
+    .diag-btn:hover { background: #f1f5f9; }
+    body.dark .diag-btn { background: #1e293b; border-color: #475569; color: #e2e8f0; }
+    body.dark .diag-btn:hover { background: #334155; }
+    .schema-grid-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+    .schema-grid-table th { position: sticky; top: 0; background: #f1f5f9; padding: 10px 12px; border-bottom: 2px solid #cbd5e1; font-weight: 600; z-index: 1; }
+    body.dark .schema-grid-table th { background: #1e293b; border-color: #475569; }
+    .schema-grid-table td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    body.dark .schema-grid-table td { border-color: #334155; }
+    .schema-grid-table tr:hover td { background: #f8fafc; }
+    body.dark .schema-grid-table tr:hover td { background: #1e293b; }
+    .grid-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 700; margin-right: 4px; }
+    .grid-badge-pk { background: #fee2e2; color: #dc2626; }
+    .grid-badge-fk { background: #e0e7ff; color: #4338ca; }
+    .grid-badge-uq { background: #fef3c7; color: #d97706; }
+    .grid-badge-idx { background: #f1f5f9; color: #475569; }
+    .grid-badge-group { background: #ccfbf1; color: #0f766e; }
+    .grid-badge-notes { background: #dcfce7; color: #15803d; }
+    .grid-note-text { font-size: 12px; line-height: 1.4; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 6px 10px; white-space: pre-wrap; max-width: 400px; margin-top: 2px; }
+    body.dark .grid-note-text { color: #86efac; background: #052e16; border-color: #14532d; }
+    .grid-table-link { color: #2563eb; font-weight: 600; text-decoration: none; cursor: pointer; }
+    body.dark .grid-table-link { color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <div class="page-hdr">
+    <div class="title-area">
+      <h1>${esc(pageTitle)}</h1>
+      <div class="modal-tabs" id="grid-tab-buttons">
+        <button class="modal-tab-btn active" id="tab-btn-tables" data-tab="tables">Tables (<span id="grid-cnt-tables">0</span>)</button>
+        <button class="modal-tab-btn" id="tab-btn-columns" data-tab="columns">Columns (<span id="grid-cnt-cols">0</span>)</button>
+      </div>
+    </div>
+    <div class="ctrls">
+      <div class="modal-tabs" id="grid-mode-buttons">
+        <button class="modal-tab-btn" id="btn-grid-mode-compact" data-gmode="compact" title="Compact view">Compact</button>
+        <button class="modal-tab-btn active" id="btn-grid-mode-detailed" data-gmode="detailed" title="Detailed view">Detailed</button>
+      </div>
+      <div class="modal-search-wrapper">
+        <select id="grid-search-scope" title="Filter target scope" style="border:1px solid #cbd5e1;border-radius:4px 0 0 4px;font-size:12px;padding:4px 6px;background:#f8fafc;color:#0f172a;border-right:none">
+          <option value="all">All Fields</option>
+          <option value="table">Table Name</option>
+          <option value="column">Column Name</option>
+        </select>
+        <input type="text" id="grid-search-input" placeholder="Search filter..." style="border-radius:0 4px 4px 0" />
+        <button id="grid-search-clear" title="Clear filter">✕</button>
+      </div>
+      <label id="grid-search-exact-label" style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer;user-select:none" title="Exact match mode">
+        <input type="checkbox" id="grid-search-exact" /> Exact
+      </label>
+      <button class="diag-btn" id="btn-grid-copy">📋 Copy TSV</button>
+      <button class="diag-btn" id="btn-grid-csv">⬇ CSV</button>
+    </div>
+  </div>
+  <div id="newtab-grid-container"></div>
+  <script>
+    const DATA = ${safeJsonForScript(DATA)};
+    const NOTES = ${safeJsonForScript(NOTES)};
+    const GROUPS = ${safeJsonForScript(GROUPS)};
+    function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function noteText(n){return [n.title,n.text,...(n.links||[]).map(l=>l.label),n.table,n.target,n.source_table].filter(Boolean).join(' ');}
+    function notesForTable(t){return NOTES.filter(n=>(n.scope==='table'&&n.table===t)||(n.scope==='relation'&&n.source_table===t));}
+    function notesForColumn(t,c){return NOTES.filter(n=>n.scope==='relation'&&n.source_table===t&&n.foreign_key===c);}
+    function isFkCol(t,c){const tbl=DATA.tables[t];if(!tbl)return false;if((tbl.fk_columns||[]).includes(c))return true;return (tbl.associations||[]).some(a=>a.foreign_key===c);}
+    ${SchemaGrid.toString()}
+    const grid = new SchemaGrid(document.getElementById('newtab-grid-container'));
+    grid.render();
+    document.querySelectorAll('#grid-tab-buttons .modal-tab-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        document.querySelectorAll('#grid-tab-buttons .modal-tab-btn').forEach(b => b.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        grid.setTab(e.currentTarget.getAttribute('data-tab'));
+      });
+    });
+    document.querySelectorAll('#grid-mode-buttons .modal-tab-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        document.querySelectorAll('#grid-mode-buttons .modal-tab-btn').forEach(b => b.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        grid.setDisplayMode(e.currentTarget.getAttribute('data-gmode'));
+      });
+    });
+    function updateGridFilterFromUI() {
+      const q = document.getElementById('grid-search-input')?.value || '';
+      const scope = document.getElementById('grid-search-scope')?.value || 'all';
+      const exact = !!document.getElementById('grid-search-exact')?.checked;
+      grid.setFilter(q, scope, exact);
+    }
+    const input = document.getElementById('grid-search-input');
+    input.addEventListener('input', updateGridFilterFromUI);
+    document.getElementById('grid-search-scope').addEventListener('change', updateGridFilterFromUI);
+    document.getElementById('grid-search-exact').addEventListener('change', updateGridFilterFromUI);
+    document.getElementById('grid-search-clear').addEventListener('click', () => { input.value = ''; updateGridFilterFromUI(); input.focus(); });
+    document.getElementById('btn-grid-copy').addEventListener('click', () => {
+      const tsv = grid.toTSV();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(tsv).then(() => alert('Copied grid data to clipboard ✓')).catch(err => {
+          alert('Failed to copy TSV to clipboard.');
+          console.log(tsv);
+        });
+      } else {
+        alert('Clipboard API not available. TSV printed to browser console.');
+        console.log(tsv);
+      }
+    });
+    document.getElementById('btn-grid-csv').addEventListener('click', () => {
+      const blob = new Blob(['\\uFEFF' + grid.toCSV()], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = \`schema_grid_\${grid.activeTab}.csv\`; a.click();
+    });
+  <\/script>
+</body>
+</html>`;
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+
+document.getElementById('btn-grid-newtab')?.addEventListener('click', openSchemaGridInNewTab);
 
 // ── Init ───────────────────────────────────────────────────────────────────
 loadState();

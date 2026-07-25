@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Viewer: Data Dictionary / Schema Grid view & Standalone New Tab.** Added an
+  interactive modal grid and standalone new-tab viewer accessible via the toolbar
+  `📋 Grid` button and `↗ New Tab`. Features a decoupled `SchemaGrid` component
+  offering a **Tables** tab and a **Columns** tab with **Compact** and **Detailed**
+  view modes. Includes advanced target scope filtering (All Fields, Table Name,
+  Column Name) and Field Exact Match mode, real-time filtering, single-click
+  table jump, **📋 Copy TSV** for Excel, and **⬇ CSV** file download.
 - **CLI: `--no-html` flag.** Skip generating the HTML diagram file when only
   generating `--emit-*` snapshots, DBML exports, or Excel workbooks in CI/CD.
 - **Viewer: DBML export.** The toolbar Export menu now includes Copy and

@@ -6096,5 +6096,163 @@ class TestEdgeRouting(unittest.TestCase):
             page.close()
 
 
+def _build_html_grid_fixture():
+    tables = erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
+    groups_cfg = [
+        {'id': 'content', 'title': 'Content', 'tables': ['posts', 'comments'], 'color': '#0d9488'},
+    ]
+    notes_cfg = [
+        {'id': 'n-table', 'target': {'type': 'table', 'table': 'users'},
+         'title': 'User retention', 'text': 'Do not delete without archiving first.'},
+        {'id': 'n-rel', 'target': {'type': 'relation', 'source_table': 'posts',
+                                   'target_table': 'users', 'foreign_key': 'user_id'},
+         'text': 'Posts survive user anonymization.'},
+    ]
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'grid_e2e_fixture', groups=groups_cfg, notes=notes_cfg, groups_label='test')
+    return out
+
+
+class TestSchemaGridModal(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not HAVE_PLAYWRIGHT:
+            raise unittest.SkipTest('playwright not installed')
+        cls.html_path = _build_html_grid_fixture()
+        try:
+            cls.pw = sync_playwright().start()
+            cls.browser = cls.pw.chromium.launch(headless=True)
+        except Exception as e:
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_grid_modal_open_and_close(self):
+        modal = self.page.locator('#schema-grid-modal')
+        self.assertTrue(modal.is_hidden())
+        self.page.click('#btn-grid-modal')
+        self.assertFalse(modal.is_hidden())
+        self.page.click('#btn-grid-modal-close')
+        self.assertTrue(modal.is_hidden())
+
+    def test_grid_modal_tabs_and_rows(self):
+        self.page.click('#btn-grid-modal')
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '5')
+        self.page.click('#tab-btn-columns')
+        cols_cnt = int(self.page.inner_text('#grid-cnt-cols'))
+        self.assertGreater(cols_cnt, 5)
+
+    def test_grid_modal_data_contracts_and_badges(self):
+        self.page.click('#btn-grid-modal')
+        # Check Group title 'Content' badge
+        group_badges = self.page.eval_on_selector_all('.grid-badge-group', 'els => els.map(e => e.innerText)')
+        self.assertIn('Content', group_badges)
+
+        # Check Notes in default Detailed mode (.grid-note-text)
+        note_texts = self.page.eval_on_selector_all('.grid-note-text', 'els => els.map(e => e.innerText)')
+        self.assertTrue(any('User retention' in t for t in note_texts))
+
+        # Switch to Compact mode and check Notes badge (.grid-badge-notes)
+        self.page.click('#btn-grid-mode-compact')
+        notes_badges = self.page.eval_on_selector_all('.grid-badge-notes', 'els => els.map(e => e.title)')
+        self.assertTrue(any('User retention' in t for t in notes_badges))
+        self.assertTrue(any('Posts survive' in t for t in notes_badges))
+
+        # Switch to columns tab and check PK / FK badges
+        self.page.click('#tab-btn-columns')
+        pk_badges = self.page.eval_on_selector_all('.grid-badge-pk', 'els => els.map(e => e.innerText)')
+        fk_badges = self.page.eval_on_selector_all('.grid-badge-fk', 'els => els.map(e => e.innerText)')
+        self.assertIn('PK', pk_badges)
+        self.assertIn('FK', fk_badges)
+
+        # Relation note ('Posts survive') must be attached ONLY to posts.user_id, NOT posts.id or users.id
+        posts_user_id_has_note = self.page.evaluate('''() => {
+            const rows = schemaGrid.getFilteredColumnRows();
+            const col = rows.find(r => r.tableName === 'posts' && r.name === 'user_id');
+            const other = rows.find(r => r.tableName === 'posts' && r.name === 'id');
+            return { userIdHasNote: col ? col.hasNotes : false, idHasNote: other ? other.hasNotes : false };
+        }''')
+        self.assertTrue(posts_user_id_has_note['userIdHasNote'])
+        self.assertFalse(posts_user_id_has_note['idHasNote'])
+
+    def test_grid_modal_tsv_csv_export_content(self):
+        self.page.click('#btn-grid-modal')
+        # Verify TSV output for Tables tab
+        tsv_tables = self.page.evaluate('schemaGrid.toTSV()')
+        self.assertIn('Group\tTable Name\tLogical Name\tComment', tsv_tables)
+        self.assertIn('Content\tposts', tsv_tables)
+        self.assertIn('User retention', tsv_tables)
+
+        # Verify CSV output for Tables tab
+        csv_tables = self.page.evaluate('schemaGrid.toCSV()')
+        self.assertIn('"Group","Table Name","Logical Name"', csv_tables)
+        self.assertIn('"Content","posts"', csv_tables)
+
+        # Switch to Columns tab and verify TSV / CSV
+        self.page.click('#tab-btn-columns')
+        tsv_cols = self.page.evaluate('schemaGrid.toTSV()')
+        self.assertIn('Table Name\tColumn Name\tLogical Name\tType', tsv_cols)
+        self.assertIn('posts\tuser_id', tsv_cols)
+        self.assertIn('FK', tsv_cols)
+
+        csv_cols = self.page.evaluate('schemaGrid.toCSV()')
+        self.assertIn('"Table Name","Column Name","Logical Name"', csv_cols)
+        self.assertIn('"posts","user_id"', csv_cols)
+
+    def test_grid_modal_filter(self):
+        self.page.click('#btn-grid-modal')
+        self.page.fill('#grid-search-input', 'users')
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '1')
+        self.page.click('#grid-search-clear')
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '5')
+
+    def test_grid_modal_advanced_filter_scope_and_exact_match(self):
+        self.page.click('#btn-grid-modal')
+
+        # 1. Scope: Table Name filter
+        self.page.select_option('#grid-search-scope', 'table')
+        self.page.fill('#grid-search-input', 'posts')
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '1')
+        
+        # 'user_id' is a column name, should return 0 tables under Table Name scope
+        self.page.fill('#grid-search-input', 'user_id')
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '0')
+
+        # 2. Scope: Column Name filter (searching 'user_id' returns tables containing user_id column, e.g. posts)
+        self.page.select_option('#grid-search-scope', 'column')
+        self.assertGreater(int(self.page.inner_text('#grid-cnt-tables')), 0)
+
+        # 3. Exact Match test
+        self.page.select_option('#grid-search-scope', 'all')
+        self.page.check('#grid-search-exact')
+        self.page.fill('#grid-search-input', 'user')  # partial match, exact should be 0
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '0')
+
+        self.page.fill('#grid-search-input', 'users')  # exact field match for table 'users'
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '1')
+
+    def test_grid_modal_table_link_navigates(self):
+        self.page.click('#btn-grid-modal')
+        self.page.click('[data-goto-table="posts"]')
+        self.assertTrue(self.page.locator('#schema-grid-modal').is_hidden())
+        selected = self.page.evaluate('[...selectedTables]')
+        self.assertEqual(selected, ['posts'])
+
+
 if __name__ == '__main__':
     unittest.main()
