@@ -210,13 +210,15 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         
         const restoredGroups = vm.runInContext("GROUPS", newCtx);
         const restoredXssTable = vm.runInContext("DATA.tables['xss_tbl']", newCtx);
+        const restoredDirtyState = vm.runInContext("isConfigDirty", newCtx);
         
         console.log(JSON.stringify({{
           hasXssTable: downloadedHtml.includes('xss_tbl'),
           safeScriptTag: !downloadedHtml.includes('</script><script>alert(1)</script>'),
           escapedScriptTag: downloadedHtml.includes('\\u003c\\u002fscript\\u003e'),
           restoredGroupTitle: (restoredGroups[0] || {{}}).title,
-          restoredTableLogical: (restoredXssTable || {{}}).logical_name
+          restoredTableLogical: (restoredXssTable || {{}}).logical_name,
+          restoredDirtyState
         }}));
         """
         proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
@@ -227,6 +229,7 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         self.assertTrue(res['escapedScriptTag'], "Exported HTML should escape script tags using safeJsonForScript")
         self.assertEqual(res['restoredGroupTitle'], 'Test Group')
         self.assertEqual(res['restoredTableLogical'], '</script><script>alert(1)</script>')
+        self.assertFalse(res['restoredDirtyState'], "Newly opened exported HTML should be in a clean state (isConfigDirty = false)")
 
 
 if __name__ == '__main__':

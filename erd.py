@@ -11473,12 +11473,14 @@ function safeJsonForScript(obj) {
 }
 
 function exportUpdatedHTML() {
+  if (typeof closeUnsavedConfigModal === 'function') closeUnsavedConfigModal();
   markConfigClean();
   let htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
   try {
     htmlContent = htmlContent.replace(/(?:const|let|var) DATA = [\s\S]*?;\n/m, `const DATA = ${safeJsonForScript(DATA)};\n`);
     htmlContent = htmlContent.replace(/(?:const|let|var) NOTES = [\s\S]*?;\n/m, `const NOTES = ${safeJsonForScript(NOTES)};\n`);
     htmlContent = htmlContent.replace(/(?:const|let|var) GROUPS = [\s\S]*?;\n/m, `const GROUPS = ${safeJsonForScript(GROUPS)};\n`);
+    htmlContent = htmlContent.replace(/let isConfigDirty = true;/g, 'let isConfigDirty = false;');
   } catch(e) {
     console.warn('Could not replace embedded variables during HTML export:', e);
   }
@@ -12055,6 +12057,7 @@ if(location.hash.startsWith('#v=')){
   }catch(e){ console.warn('Failed to load the shared view:', e); }
 }
 restorePersistedConfigOnLoad();
+markConfigClean();
 renderGlobalNotes();
 renderTableList();
 renderDiagram();
