@@ -11465,13 +11465,20 @@ document.getElementById('btn-export-config-download')?.addEventListener('click',
   showToast('Downloaded config JSON ✓');
 });
 
+function safeJsonForScript(obj) {
+  return JSON.stringify(obj || {})
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\//g, '\\u002f');
+}
+
 function exportUpdatedHTML() {
   markConfigClean();
   let htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
   try {
-    htmlContent = htmlContent.replace(/const DATA = [\s\S]*?;\n/m, `const DATA = ${JSON.stringify(DATA, null, 2)};\n`);
-    htmlContent = htmlContent.replace(/const NOTES = [\s\S]*?;\n/m, `const NOTES = ${JSON.stringify(NOTES, null, 2)};\n`);
-    htmlContent = htmlContent.replace(/let GROUPS = [\s\S]*?;\n/m, `let GROUPS = ${JSON.stringify(GROUPS, null, 2)};\n`);
+    htmlContent = htmlContent.replace(/(?:const|let|var) DATA = [\s\S]*?;\n/m, `const DATA = ${safeJsonForScript(DATA)};\n`);
+    htmlContent = htmlContent.replace(/(?:const|let|var) NOTES = [\s\S]*?;\n/m, `const NOTES = ${safeJsonForScript(NOTES)};\n`);
+    htmlContent = htmlContent.replace(/(?:const|let|var) GROUPS = [\s\S]*?;\n/m, `const GROUPS = ${safeJsonForScript(GROUPS)};\n`);
   } catch(e) {
     console.warn('Could not replace embedded variables during HTML export:', e);
   }

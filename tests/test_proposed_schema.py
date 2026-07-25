@@ -199,15 +199,34 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         
         const ctx = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, Blob: global.Blob, URL: global.URL, console, showToast: global.showToast, toasts }});
         vm.runInContext(scriptContent, ctx);
-        vm.runInContext("addProposedTable('standalone_table', '独立テーブル', '', '');", ctx);
+        vm.runInContext("addProposedTable('xss_tbl', '</script><script>alert(1)</script>', '', 'Test Group');", ctx);
         vm.runInContext("exportUpdatedHTML();", ctx);
         
-        console.log(JSON.stringify({{ hasDownloadedHtml: downloadedHtml.includes('standalone_table') }}));
+        // Load the exported HTML script content in a fresh VM context to verify execution & GROUPS reload
+        const newScriptMatch = downloadedHtml.match(/<script>([\\s\\S]*?)<\\/script>/);
+        const newScript = newScriptMatch ? newScriptMatch[1] : '';
+        const newCtx = vm.createContext({{ document: global.document, window: global.window, location: global.location, localStorage: global.localStorage, requestAnimationFrame: global.requestAnimationFrame, clearTimeout: global.clearTimeout, setTimeout: global.setTimeout, console, showToast: global.showToast, toasts }});
+        vm.runInContext(newScript, newCtx);
+        
+        const restoredGroups = vm.runInContext("GROUPS", newCtx);
+        const restoredXssTable = vm.runInContext("DATA.tables['xss_tbl']", newCtx);
+        
+        console.log(JSON.stringify({{
+          hasXssTable: downloadedHtml.includes('xss_tbl'),
+          safeScriptTag: !downloadedHtml.includes('</script><script>alert(1)</script>'),
+          escapedScriptTag: downloadedHtml.includes('\\u003c\\u002fscript\\u003e'),
+          restoredGroupTitle: (restoredGroups[0] || {{}}).title,
+          restoredTableLogical: (restoredXssTable || {{}}).logical_name
+        }}));
         """
         proc = subprocess.run(['node', '-e', js_code], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, f"Node.js execution failed: {proc.stderr}")
         res = json.loads(proc.stdout.strip())
-        self.assertTrue(res['hasDownloadedHtml'])
+        self.assertTrue(res['hasXssTable'])
+        self.assertTrue(res['safeScriptTag'], "Exported HTML contains raw unescaped script tag (XSS vulnerability)")
+        self.assertTrue(res['escapedScriptTag'], "Exported HTML should escape script tags using safeJsonForScript")
+        self.assertEqual(res['restoredGroupTitle'], 'Test Group')
+        self.assertEqual(res['restoredTableLogical'], '</script><script>alert(1)</script>')
 
 
 if __name__ == '__main__':
