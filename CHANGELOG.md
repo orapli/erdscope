@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Viewer: the legend no longer swallows clicks meant for the diagram.** The
+  legend panel floats over the canvas — at a 1600px viewport it spans roughly
+  753x527 and covers real tables — and had no `pointer-events` rule, so every
+  click, drag and rubber-band select inside that rectangle stopped at the
+  panel instead of reaching the node underneath. The panel is now
+  `pointer-events:none`, with the collapse header, its toggle, and the global
+  design-note links and entries re-enabling `pointer-events:auto` explicitly.
+
 ## [0.12.0] - 2026-07-26
 
 ### Added
