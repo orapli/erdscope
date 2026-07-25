@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Viewer: Escape key and background clicks now close only the top-most modal (B4).**
+  Previously, pressing Escape with a proposed table/column dialog or note modal open over
+  the Data Dictionary grid would close the underlying `#schema-grid-modal` instead of the
+  topmost dialog, leaving the dialog orphaned on the canvas with no keyboard way to close
+  it. Escape and background clicks (`.modal-backdrop`) are now unified across all 5 modals
+  (`schema-grid-modal`, `unsaved-config-modal`, `proposed-table-modal`, `proposed-column-modal`,
+  `note-edit-modal`) to target only the top-most open modal and stop event propagation.
 - **Viewer: the legend no longer swallows clicks meant for the diagram.** The
   legend panel floats over the canvas — at a 1600px viewport it spans roughly
   753x527 and covers real tables — and had no `pointer-events` rule, so every

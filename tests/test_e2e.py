@@ -6302,5 +6302,138 @@ class TestSchemaGridModal(unittest.TestCase):
         })
 
 
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestModalEscapeAndBackgroundClick(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.html_path = _build_html_grid_fixture()
+        try:
+            cls.pw = sync_playwright().start()
+            cls.browser = cls.pw.chromium.launch(headless=True)
+        except Exception as e:
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_stacked_modals_escape_closes_only_top_modal_3_patterns(self):
+        # Pattern 1: Grid modal + Proposed Table modal
+        self.page.click('#btn-grid-modal')
+        self.assertFalse(self.page.locator('#schema-grid-modal').is_hidden())
+        self.page.click('#btn-grid-add-table')
+        self.assertFalse(self.page.locator('#proposed-table-modal').is_hidden())
+
+        # First Escape: closes top modal (#proposed-table-modal), bottom (#schema-grid-modal) remains open
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.locator('#proposed-table-modal').is_hidden())
+        self.assertFalse(self.page.locator('#schema-grid-modal').is_hidden())
+
+        # Second Escape: closes bottom modal (#schema-grid-modal)
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.locator('#schema-grid-modal').is_hidden())
+
+        # Pattern 2: Grid modal + Proposed Column modal
+        self.page.click('#btn-grid-modal')
+        self.page.click('#btn-grid-add-col')
+        self.assertFalse(self.page.locator('#proposed-column-modal').is_hidden())
+        self.assertFalse(self.page.locator('#schema-grid-modal').is_hidden())
+
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.locator('#proposed-column-modal').is_hidden())
+        self.assertFalse(self.page.locator('#schema-grid-modal').is_hidden())
+
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.locator('#schema-grid-modal').is_hidden())
+
+        # Pattern 3: Grid modal + Unsaved Config modal (stacked)
+        self.page.click('#btn-grid-modal')
+        self.assertFalse(self.page.locator('#schema-grid-modal').is_hidden())
+        self.page.evaluate('openUnsavedConfigModal()')
+        self.assertFalse(self.page.locator('#unsaved-config-modal').is_hidden())
+
+        # First Escape: closes top modal (#unsaved-config-modal), bottom (#schema-grid-modal) remains open
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.locator('#unsaved-config-modal').is_hidden())
+        self.assertFalse(self.page.locator('#schema-grid-modal').is_hidden())
+
+        # Second Escape: closes bottom modal (#schema-grid-modal)
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.locator('#schema-grid-modal').is_hidden())
+
+    def test_all_5_modals_close_on_background_click(self):
+        # Uses real browser coordinate clicks (position={x: 5, y: 5}) to exercise real hit testing
+        # 1. schema-grid-modal
+        self.page.click('#btn-grid-modal')
+        self.assertFalse(self.page.locator('#schema-grid-modal').is_hidden())
+        self.page.click('#schema-grid-modal', position={'x': 5, 'y': 5})
+        self.assertTrue(self.page.locator('#schema-grid-modal').is_hidden())
+
+        # 2. unsaved-config-modal
+        self.page.evaluate('openUnsavedConfigModal()')
+        self.assertFalse(self.page.locator('#unsaved-config-modal').is_hidden())
+        self.page.click('#unsaved-config-modal', position={'x': 5, 'y': 5})
+        self.assertTrue(self.page.locator('#unsaved-config-modal').is_hidden())
+
+        # 3. proposed-table-modal
+        self.page.click('#btn-grid-modal')
+        self.page.click('#btn-grid-add-table')
+        self.assertFalse(self.page.locator('#proposed-table-modal').is_hidden())
+        self.page.click('#proposed-table-modal', position={'x': 5, 'y': 5})
+        self.assertTrue(self.page.locator('#proposed-table-modal').is_hidden())
+        self.page.click('#btn-grid-modal-close')
+
+        # 4. proposed-column-modal
+        self.page.click('#btn-grid-modal')
+        self.page.click('#btn-grid-add-col')
+        self.assertFalse(self.page.locator('#proposed-column-modal').is_hidden())
+        self.page.click('#proposed-column-modal', position={'x': 5, 'y': 5})
+        self.assertTrue(self.page.locator('#proposed-column-modal').is_hidden())
+        self.page.click('#btn-grid-modal-close')
+
+        # 5. note-edit-modal
+        self.page.evaluate('openNoteModal({scope: "global", text: "hello"})')
+        self.assertFalse(self.page.locator('#note-edit-modal').is_hidden())
+        self.page.click('#note-edit-modal', position={'x': 5, 'y': 5})
+        self.assertTrue(self.page.locator('#note-edit-modal').is_hidden())
+
+    def test_escape_with_no_modals_open_preserves_priority_chain(self):
+        # 1. Double click node to enter focus mode -> Escape exits focus mode
+        self.page.dblclick('[data-name="users"]')
+        self.assertTrue(self.page.evaluate('document.body.classList.contains("focus-mode")'))
+        self.page.keyboard.press('Escape')
+        self.assertFalse(self.page.evaluate('document.body.classList.contains("focus-mode")'))
+
+        # 2. Word search input focused -> Escape clears search / unfocuses
+        self.page.focus('#word-search')
+        self.page.fill('#word-search', 'users')
+        self.page.keyboard.press('Escape')
+        self.assertEqual(self.page.input_value('#word-search'), '')
+
+    def test_proposed_modal_input_cleared_on_escape_and_reopen(self):
+        self.page.click('#btn-grid-modal')
+        self.page.click('#btn-grid-add-table')
+        self.page.fill('#prop-table-name', 'draft_table_name')
+        self.page.fill('#prop-table-logical', 'draft_logical')
+
+        # Escape closes without confirmation
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.locator('#proposed-table-modal').is_hidden())
+
+        # Reopen clears all fields
+        self.page.click('#btn-grid-add-table')
+        self.assertEqual(self.page.input_value('#prop-table-name'), '')
+        self.assertEqual(self.page.input_value('#prop-table-logical'), '')
+
+
 if __name__ == '__main__':
     unittest.main()
