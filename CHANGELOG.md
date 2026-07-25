@@ -9,12 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Viewer: Proposed Schema Editing (ToBe) & Unsaved Config Guard (E3).** Added in-browser
-  creation of proposed ToBe tables (`+ Proposed Table`) and columns (`+ Proposed Column`)
-  in the **SchemaGrid** view. Introduced a real-time `⚠️ Unsaved Config` status badge,
-  `beforeunload` navigation guard, and an interactive `#unsaved-config-modal` prompting
-  users to download or copy Config JSON before leaving, ensuring zero accidental data loss
-  for future CLI `--config` and `--diff` runs.
+- **Viewer: Proposed Schema Editing (ToBe), Auto-Restore & Self-Contained HTML Export (E3).**
+  Added in-browser creation of proposed ToBe tables (`+ Proposed Table`) and columns (`+ Proposed Column`)
+  in the **SchemaGrid** view. Introduced a real-time `⚠️ Unsaved Config` status badge, LocalStorage F5 reload
+  auto-restore (`restorePersistedConfigOnLoad`), and **`📄 Download Updated HTML`** in both the Export menu
+  and `#unsaved-config-modal`. Users can now download a fully updated, self-contained HTML file containing all
+  in-browser schema and note modifications, or export Config JSON for future CLI `--config` & `--diff` runs.
 - **Viewer: Auto-tidy Undo/Redo Integration (A3).** Recorded position and Auto-tidy
   toggle state snapshots upon clicking the `Auto-tidy` button. Performing Undo (`Ctrl+Z`)
   now seamlessly restores the manual layout coordinates and toggles Auto-tidy back OFF.

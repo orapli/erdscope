@@ -5585,6 +5585,10 @@ body.dark .badge-proposed {
             <button class="diag-btn" id="btn-export-config-copy" title="Copy current schema config (with notes and groups) as JSON">Copy</button>
             <button class="diag-btn" id="btn-export-config-download" title="Download current schema config as JSON file">Download</button>
           </div>
+          <div class="tb-export-row">
+            <span class="tb-export-fmt">HTML</span>
+            <button class="diag-btn" id="btn-export-html-download" title="Download updated self-contained HTML file with all changes embedded" style="grid-column: span 2; font-weight:600; background:#059669; color:#fff; border:none">📄 Download Updated HTML</button>
+          </div>
         </div>
       </div>
       <div class="tb-sep"></div>
@@ -5670,6 +5674,9 @@ body.dark .badge-proposed {
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         <button class="diag-btn" id="btn-unsaved-download" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px">
           ⬇ Save & Download Config JSON
+        </button>
+        <button class="diag-btn" id="btn-unsaved-html" style="background:#059669;color:#fff;border:none;padding:8px 16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px">
+          📄 Save & Download Updated HTML
         </button>
         <button class="diag-btn" id="btn-unsaved-copy" style="padding:8px 16px">
           📋 Copy Config JSON
@@ -11458,6 +11465,32 @@ document.getElementById('btn-export-config-download')?.addEventListener('click',
   showToast('Downloaded config JSON ✓');
 });
 
+function exportUpdatedHTML() {
+  markConfigClean();
+  let htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+  try {
+    htmlContent = htmlContent.replace(/const DATA = [\s\S]*?;\n/m, `const DATA = ${JSON.stringify(DATA, null, 2)};\n`);
+    htmlContent = htmlContent.replace(/const NOTES = [\s\S]*?;\n/m, `const NOTES = ${JSON.stringify(NOTES, null, 2)};\n`);
+    htmlContent = htmlContent.replace(/let GROUPS = [\s\S]*?;\n/m, `let GROUPS = ${JSON.stringify(GROUPS, null, 2)};\n`);
+  } catch(e) {
+    console.warn('Could not replace embedded variables during HTML export:', e);
+  }
+
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const fileName = (document.title || 'diagram').replace(/[^a-zA-Z0-9_\-\.\u3000-\u30fe\u4e00-\u9fa5]/g, '_');
+  a.download = fileName.endsWith('.html') ? fileName.replace(/\.html$/, '.updated.html') : (fileName + '.updated.html');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Downloaded Updated HTML ✓');
+}
+
+document.getElementById('btn-export-html-download')?.addEventListener('click', exportUpdatedHTML);
+
 function updateNoteFormFields() {
   const scope = document.getElementById('note-edit-scope')?.value || 'table';
   const grpTable = document.getElementById('note-target-table-group');
@@ -11783,6 +11816,10 @@ document.getElementById('config-dirty-badge')?.addEventListener('click', openUns
 document.getElementById('btn-unsaved-close')?.addEventListener('click', closeUnsavedConfigModal);
 document.getElementById('btn-unsaved-download')?.addEventListener('click', () => {
   document.getElementById('btn-export-config-download')?.click();
+  closeUnsavedConfigModal();
+});
+document.getElementById('btn-unsaved-html')?.addEventListener('click', () => {
+  exportUpdatedHTML();
   closeUnsavedConfigModal();
 });
 document.getElementById('btn-unsaved-copy')?.addEventListener('click', () => {
