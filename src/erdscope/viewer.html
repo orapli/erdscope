@@ -1176,7 +1176,7 @@ body.dark .badge-proposed {
           📋 Copy Config JSON
         </button>
         <button class="diag-btn" id="btn-unsaved-discard" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;padding:8px 16px">
-          Discard & Close
+          Discard & Reset Changes
         </button>
       </div>
     </div>
@@ -7330,9 +7330,8 @@ document.getElementById('btn-unsaved-copy')?.addEventListener('click', () => {
   closeUnsavedConfigModal();
 });
 document.getElementById('btn-unsaved-discard')?.addEventListener('click', () => {
-  markConfigClean();
   closeUnsavedConfigModal();
-  showToast('Discarded unsaved config changes');
+  resetPersistedConfig();
 });
 
 function refreshAllNoteViews() {
