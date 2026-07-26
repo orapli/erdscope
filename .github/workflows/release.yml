@@ -39,8 +39,14 @@ jobs:
       actions: read
     steps:
       - name: CI must have succeeded for this commit
+        # This step deliberately runs before actions/checkout (see below), so
+        # there is no .git directory here and `gh` cannot infer the repo from
+        # a git remote the way it normally would. GH_REPO tells it explicitly.
+        # Do not drop this or move the step after checkout "to simplify" it —
+        # the whole point is rejecting a red commit before fetching anything.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -eu
           run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=1" -q '.workflow_runs[0].id')
