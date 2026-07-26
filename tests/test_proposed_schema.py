@@ -31,6 +31,7 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
                                 only=None, exclude=None, infer_fk=False)
         erd._finish(tables, args, 'proposed_test')
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_proposed_table_and_column_export_config_json(self):
         js_code = f"""
         const fs = require('fs');
@@ -108,6 +109,7 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         self.assertEqual(nick_col['logical_name'], 'ニックネーム')
         self.assertEqual(nick_col['type'], 'varchar(255)')
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_persisted_config_restores_on_reload(self):
         js_code = f"""
         const fs = require('fs');
@@ -165,6 +167,7 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         self.assertEqual(res['name'], 'persisted_table')
         self.assertEqual(res['logical_name'], '永続テーブル')
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_export_updated_html(self):
         js_code = f"""
         const fs = require('fs');
@@ -306,6 +309,7 @@ class TestProposedSchemaAndUnsavedConfig(unittest.TestCase):
         self.assertEqual(res['restoredGroupTitle'], 'Test Group')
         self.assertEqual(res['restoredTableLogical'], '</script><script>alert(1)</script>')
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_startup_does_not_write_empty_persisted_config(self):
         js_code = f"""
         const fs = require('fs');

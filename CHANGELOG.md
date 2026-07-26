@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Viewer: the Data Dictionary filter now defaults to the Table Name scope.**
+  The default was `All Fields`, which searches each table's FK detail strings
+  (`user_id -> users.id`) among everything else — so typing the name of a hub
+  table matched that table *and every table holding a foreign key into it*. On
+  the review fixture, `users` returned 5 of 5 tables, which on screen is
+  indistinguishable from the filter having done nothing, and it degraded worst
+  for exactly the tables people search for most. `All Fields` and `Column Name`
+  are unchanged and still one click away in the scope selector.
+
 ### Fixed
 
+- **Tests: the Node-dependent viewer tests skip instead of erroring.** Ten
+  tests across the notes, proposed-schema and schema-grid suites shell out to
+  `node` to exercise the viewer's JavaScript, with no guard — so an
+  environment without Node failed them with `FileNotFoundError` rather than
+  skipping, which sits badly with a project that advertises a zero-dependency
+  test path. They are now guarded on `shutil.which('node')`.
 - **Windows: generated HTML is written with LF, and Download Updated HTML
   survives CRLF input.** The diagram was written through `Path.write_text()`,
   whose text mode translates every `\n` to the platform default — so a

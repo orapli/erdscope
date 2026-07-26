@@ -1151,7 +1151,7 @@ body.dark .badge-proposed {
         <div class="modal-search-wrapper">
           <select id="grid-search-scope" title="Filter target scope" style="border:1px solid #cbd5e1;border-radius:4px 0 0 4px;font-size:12px;padding:4px 6px;background:#f8fafc;color:#0f172a;border-right:none">
             <option value="all">All Fields</option>
-            <option value="table">Table Name</option>
+            <option value="table" selected>Table Name</option>
             <option value="column">Column Name</option>
           </select>
           <input type="text" id="grid-search-input" placeholder="Search filter..." style="border-radius:0 4px 4px 0" />
@@ -6109,7 +6109,7 @@ class SchemaGrid {
     this.activeTab = 'tables'; // 'tables' | 'columns'
     this.displayMode = 'detailed'; // 'compact' | 'detailed'
     this.filterQuery = '';
-    this.filterScope = 'all'; // 'all' | 'table' | 'column'
+    this.filterScope = 'table'; // 'all' | 'table' | 'column' — a hub table name under 'all' matches every table that references it, which reads as "no filtering happened"
     this.exactMatch = false;
   }
 
@@ -7517,7 +7517,7 @@ function openSchemaGridInNewTab() {
       <div class="modal-search-wrapper">
         <select id="grid-search-scope" title="Filter target scope" style="border:1px solid #cbd5e1;border-radius:4px 0 0 4px;font-size:12px;padding:4px 6px;background:#f8fafc;color:#0f172a;border-right:none">
           <option value="all">All Fields</option>
-          <option value="table">Table Name</option>
+          <option value="table" selected>Table Name</option>
           <option value="column">Column Name</option>
         </select>
         <input type="text" id="grid-search-input" placeholder="Search filter..." style="border-radius:0 4px 4px 0" />

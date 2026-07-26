@@ -16,6 +16,7 @@ Run from the repository root:
 import importlib.util
 import json
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -608,6 +609,7 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         self.assertIn('note-target-rel-table-group', self.html)
         self.assertIn('note-target-fk-group', self.html)
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_config_export_roundtrip_validates_against_python_config_validator(self):
         import subprocess
         js_code = f"""
@@ -649,6 +651,7 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         self.assertEqual(resolved[0]['scope'], 'table')
         self.assertEqual(resolved[0]['table'], 'users')
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_config_export_preserves_explicit_null_foreign_key_and_through(self):
         import subprocess
         # Generate with valid relation note so _finish resolves it cleanly
@@ -706,6 +709,7 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         self.assertIn('through', note_target)
         self.assertIsNone(note_target['through'])
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_save_note_from_modal_validates_table_existence(self):
         import subprocess, json
         js_code = f"""
@@ -843,6 +847,7 @@ class TestNoteEditorAndConfigExportUIContract(unittest.TestCase):
         self.assertTrue(res['table_valid']['isModalHidden'])
         self.assertEqual(res['table_valid']['lastToast'], 'Saved note ✓')
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_auto_tidy_toggle_records_undo_snapshot(self):
         import subprocess, json
         js_code = f"""

@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import shutil
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -71,6 +72,7 @@ class TestSchemaGridContract(unittest.TestCase):
         # Must use esc(...) helper instead of non-existent escapeHtml(...)
         self.assertNotIn('escapeHtml(', self.html)
 
+    @unittest.skipUnless(shutil.which('node'), 'node not available')
     def test_schema_grid_e2_batch_note_editing_contracts(self):
         import subprocess, json
         self.assertIn('saveGridNote', self.html)
