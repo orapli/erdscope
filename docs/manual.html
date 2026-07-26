@@ -991,6 +991,9 @@ not the CLI that produced it. Try each control against the
 <a href="#viewer-names">Logical names</a>
 <a href="#viewer-views">Named views &amp; share links</a>
 <a href="#viewer-edges">Edge types</a>
+<a href="#viewer-grid">Data Dictionary</a>
+<a href="#viewer-notes-live">Editing notes in the browser</a>
+<a href="#viewer-tobe">Proposed schema (ToBe)</a>
 <a href="#viewer-shortcuts">Keyboard shortcuts</a>
 <a href="#viewer-dark">Dark mode</a>
 <a href="#viewer-print">Print</a>
@@ -1143,6 +1146,94 @@ exploration</a>).</p>
 <img class="shot" loading="lazy" src="img/edges.png" alt="The payments Associations list with all three badges at once: DB FK on belongs_to :order, manual on belongs_to :shipment, and inferred on belongs_to :coupon">
 <p class="cap"><code>payments</code>&#39; Associations — a real FK constraint (<span class="badge badge-dbfk">DB FK</span>), a config-file relation (<span class="badge badge-manual">manual</span>), and a name-based guess (<span class="badge badge-inf">inferred</span>) side by side in one list.</p>
 
+<h3 id="viewer-grid">Data Dictionary (Schema Grid) <a class="anchor-link" href="#viewer-grid">#</a></h3>
+<p>The diagram is the right view for tracing relationships, but a plain, scrollable table is
+often faster for auditing every column at once or handing a schema to someone who would rather
+read a spreadsheet. The left pane's <span class="btn-example">📋 Grid</span> button opens
+exactly that: a full-screen <strong>Data Dictionary</strong> modal covering the whole schema,
+independent of whatever the diagram behind it currently has focused, hidden, or excluded.</p>
+<p>Two tabs switch what one row represents, each with a live count: <code>Tables (n)</code> and
+<code>Columns (n)</code>. A separate toggle controls how much of each row is shown:
+<code>Compact</code> packs keys and notes into small badges; <code>Detailed</code> (the
+default) expands them into full text — primary/foreign key targets, index definitions, and note
+bodies inline.</p>
+<p>A scope selector narrows the filter box to <code>All Fields</code>, <code>Table Name</code>,
+or <code>Column Name</code>, plus an <code>Exact match</code> toggle. <strong><code>Table
+Name</code> is the default scope</strong> — changed from <code>All Fields</code> in 0.12.1,
+because <code>All Fields</code> also searches every table's foreign-key detail strings (e.g.
+<code>user_id -&gt; users.id</code>). That meant typing a hub table's name, like
+<code>users</code>, matched that table <em>and every table with a foreign key into it</em> — on
+a small schema, easily "every table," which reads exactly like no filter had been applied at
+all. <code>All Fields</code> is still one click away in the scope selector, and it is the right
+choice when you deliberately want everything related to a name, not just the table or column
+itself.</p>
+<p>Every export button below the controls acts on the <strong>active view</strong> — whichever
+tab and filter are currently showing: <span class="btn-example">📋 TSV</span> / <span
+class="btn-example">⬇ TSV</span> and <span class="btn-example">📋 CSV</span> / <span
+class="btn-example">⬇ CSV</span> copy or download it, TSV being the one that pastes cleanly into
+Excel. <span class="btn-example">Open read-only view ↗</span> opens the same Data Dictionary — a
+snapshot of the schema as it stands right now, including anything you have added below — as a
+standalone, read-only page in a new tab; hand that to someone you don't want editing the
+schema.</p>
+<img class="shot" loading="lazy" src="img/grid.png" alt="Data Dictionary modal open on the Tables tab in Detailed mode, filtered by Table Name to 'order': the three matching tables (order_coupons, order_items, orders) with Primary Keys, Foreign Keys, and Indexes expanded into full text, and the orders row's table note shown with its inline Edit/Advanced-edit icons">
+<p class="cap">The Data Dictionary's Tables tab, Detailed mode, filtered to <code>order</code> by
+<code>Table Name</code> — the default scope as of 0.12.1.</p>
+
+<h3 id="viewer-notes-live">Editing notes in the browser <a class="anchor-link" href="#viewer-notes-live">#</a></h3>
+<p><a href="#notes">Notes</a> above describes authoring notes in the config file. You don't have
+to round-trip through a file for a quick one: notes are editable directly in the running
+viewer, from three places — the right pane's <span class="btn-example">＋ Add Note</span>
+button under a table's Notes section, the Data Dictionary grid's <code>+ Note</code> button on
+any table or column row that doesn't have one yet, and, on an existing note wherever it renders
+(right pane, the Associations list, the legend for a <code>global</code> note, or the grid), a
+<code>✏️ Edit</code> / <code>🗑 Delete</code> pair right next to it.</p>
+<p>The grid offers two editing depths for the same note. The pencil (<code>✏️</code>) opens a
+small inline textarea right in the cell — <span class="btn-example">Save</span> / <span
+class="btn-example">Cancel</span>, plus a <span class="btn-example">Modal...</span> escape
+hatch — good for a quick wording fix; saving with the text emptied deletes the note. The gear
+(<code>⚙️</code>) opens the same full <strong>note editor</strong> the right pane's ＋ Add Note
+button uses: a <code>Scope</code> dropdown (<code>Table</code> / <code>Relation</code> /
+<code>Global</code>) that swaps in the matching target fields, plus <code>Title</code> and
+<code>Note Content</code>. Switching Scope to <code>Global</code> is currently the only way to
+create a diagram-wide note from the browser — there is no dedicated "add global note"
+button.</p>
+<div class="note"><strong>Links don't round-trip through this editor</strong>
+The browser note editor has no field for a note's <code>links</code>: config-authored links on
+a note you edit here are left untouched, but you cannot add or change one without editing the
+config file directly and re-running erdscope.</div>
+
+<h3 id="viewer-tobe">Proposed schema (ToBe) <a class="anchor-link" href="#viewer-tobe">#</a></h3>
+<p>Everything else in the viewer describes what's actually there — the diagram, the grid, and
+notes are all read from the merged AsIs schema. The Data Dictionary's <span
+class="btn-example">+ Proposed Table</span> and <span class="btn-example">+ Proposed
+Column</span> buttons are the one place you can sketch what <em>isn't</em> there yet — a ToBe
+change, drafted straight in the browser, before anyone touches a migration or the config
+file.</p>
+<p><span class="btn-example">+ Proposed Table</span> asks for a physical name (required), and
+optionally a logical name, comment, and group; it is added with a single proposed
+<code>id</code> primary-key column so it renders like any other table. <span
+class="btn-example">+ Proposed Column</span> asks for a target table and column name
+(required), and optionally a logical name, data type (defaults to <code>varchar(255)</code>),
+nullability, and comment. Both take effect immediately: the new table or column shows up in the
+diagram, the table list, and the grid right away — the diagram canvas itself draws a proposed
+table exactly like any other, since it is now simply another entry in the live schema you're
+looking at. Only the grid marks it as not-yet-real, with a <code>PROPOSED</code> badge next to
+its name.</p>
+<img class="shot" loading="lazy" src="img/proposed.png" alt="Data Dictionary Columns tab showing a newly added status_code column on the orders table marked with a yellow PROPOSED badge next to its column name">
+<p class="cap">A proposed column, added via <span class="btn-example">+ Proposed Column</span> —
+the <code>PROPOSED</code> badge in the grid is the only place this schema marks it as
+not-yet-real.</p>
+<div class="warn"><strong>A proposed entry doesn't know when you've actually built it</strong>
+Nothing in the exported config marks an entry as "proposed" versus real, and config merges as
+the highest-priority layer. So once you add the column to the real database, this config entry
+keeps overriding what the database now reports — <strong>delete the proposed entry from the
+config yourself</strong> once it lands, or a stale ToBe column silently masks the real one
+indefinitely. Exporting Config JSON for a table with any proposed column compounds this: it
+writes that table's <em>entire</em> column list, not just the new one, and fills in any column
+with no known type as <code>varchar(255)</code> — so a later real-schema change to those columns
+is masked the same way until the config is pruned. See <a href="#viewer-save-changes">Config
+JSON &amp; Updated HTML</a> below for what gets exported and why.</div>
+
 <h3 id="viewer-shortcuts">Keyboard shortcuts <a class="anchor-link" href="#viewer-shortcuts">#</a></h3>
 <p>This is the complete list — there's no shortcut for zoom, save, or export. The toolbar's
 <span class="btn-example">?</span> button shows a condensed version of it right inside the
@@ -1181,6 +1272,7 @@ just saving a file.</p>
 <a href="#excel-template">Excel workbook</a>
 <a href="#emit-json">JSON snapshot</a>
 <a href="#emit-config">Config export</a>
+<a href="#viewer-save-changes">Save proposed changes (viewer)</a>
 <a href="#diff">Schema diff / drift gate</a>
 <a href="#emit-digest">Markdown digest for LLMs/agents</a>
 <a href="#emit-dbml">DBML export</a>
@@ -1330,6 +1422,40 @@ string always comes back as the same string. One thing level1 can't preserve eit
 empty-string column default (<code>DEFAULT ''</code>) and no default at all look identical to
 every provider on read, so neither survives the round trip — the same limit <code>--diff</code>
 cannot detect.</p>
+
+<h3 id="viewer-save-changes">Save proposed changes from the viewer: Config JSON &amp; Updated HTML</h3>
+<p>Everything from <a href="#viewer-notes-live">Editing notes in the browser</a> and <a
+href="#viewer-tobe">Proposed schema (ToBe)</a> is auto-saved to your browser's LocalStorage as
+you go, and restored the next time you open this same generated HTML file — but LocalStorage
+never leaves your browser. To turn those edits into a file you can commit, attach, or feed back
+into the CLI, use the toolbar's <span class="btn-example">⬇ Export</span> menu's <strong>Save
+proposed changes</strong> section, or the status indicator that sits next to the Export button
+at all times: <code>✓ Changes exported</code> (green) when nothing is pending, or <code>⚠️
+Unexported changes</code> (amber) as soon as you edit a note or add a proposed table/column.</p>
+<p>Clicking that indicator, in either state, opens a small modal with four actions: <span
+class="btn-example">⬇ Download Config JSON</span>, <span class="btn-example">📄 Download
+Updated HTML</span>, <span class="btn-example">📋 Copy Config JSON</span>, and <span
+class="btn-example">Discard &amp; Reset Changes</span> (reloads the page and wipes both the
+pending edit and anything already persisted). The same two formats, as Copy/Download pairs,
+are also reachable directly from the Export menu without going through that modal. Once you
+export, the indicator switches back to <code>✓ Changes exported</code>.</p>
+<p><strong>Why two formats:</strong> Config JSON is a normal <a href="#config-file">config
+file</a> — the notes, groups, and any proposed tables/columns you've added — meant to feed back
+into the CLI with <code>--config</code> (to re-apply your edits on the next run) or
+<code>--diff</code> (to gate CI on them). It's the same shape <a
+href="#emit-config"><code>--emit-config</code></a> produces, scoped to just the tables you
+touched in the browser rather than the whole schema. Updated HTML is the opposite: a new,
+self-contained copy of this same viewer with every edit already embedded, for handing to
+someone who just wants to open a file and look — no CLI, no config, nothing to re-run.</p>
+<div class="warn"><strong>A proposed entry doesn't disappear once it's real, and its export
+isn't scoped to just itself</strong>
+Config has no "this was proposed" marker, and config merges as the highest-priority layer, so
+once you build a proposed column in the real database, this file keeps overriding what the
+database now reports until you delete the entry by hand. And exporting Config JSON for a table
+with any proposed column writes that table's <em>entire</em> column list, not just the new one
+— filling in a missing type as <code>varchar(255)</code> — so a later real-schema change to
+those columns is masked the same way until the config is pruned. See <a
+href="#viewer-tobe">Proposed schema (ToBe)</a> above.</div>
 
 <h3 id="diff">Schema diff / drift gate</h3>
 <p><code>--diff SNAPSHOT.json</code> compares this run against a previously-saved

@@ -313,9 +313,53 @@ def shot_darkmode(browser):
     ctx.close()
 
 
+def shot_grid(browser):
+    """Data Dictionary (Schema Grid): Tables tab, Detailed mode (the default),
+    filtered by the default 'Table Name' scope to 'order' so only 'orders'
+    survives — Primary Keys/Foreign Keys/Indexes render as full badges/text
+    in Detailed mode rather than the Compact mode's bare counts."""
+    ctx, page = new_page(browser)
+    page.locator('#btn-grid-modal').click()
+    page.wait_for_selector('#schema-grid-modal:not(.hidden)')
+    page.locator('#grid-search-input').click()
+    page.locator('#grid-search-input').type('order')
+    page.wait_for_timeout(300)
+    clip = clip_of(page, ['.modal-hdr', '.schema-grid-table'], pad=10)
+    page.screenshot(path=str(IMG_DIR / 'grid.png'), clip=clip)
+    ctx.close()
+
+
+def shot_proposed(browser):
+    """Proposed schema (ToBe): a proposed column ('status_code') added to
+    'orders' via the Data Dictionary's '+ Proposed Column' button, shown in
+    the grid's Columns tab with the yellow PROPOSED badge next to its name
+    — the only place a proposed entry is visually marked as not-yet-real."""
+    ctx, page = new_page(browser)
+    page.locator('#btn-grid-modal').click()
+    page.wait_for_selector('#schema-grid-modal:not(.hidden)')
+    page.locator('#btn-grid-add-col').click()
+    page.wait_for_selector('#proposed-column-modal:not(.hidden)')
+    page.locator('#prop-col-table-sel').select_option('orders')
+    page.locator('#prop-col-name').fill('status_code')
+    page.locator('#prop-col-comment').fill('Proposed order status code')
+    page.locator('#btn-prop-col-save').click()
+    page.wait_for_timeout(300)
+    page.locator('#tab-btn-columns').click()
+    page.wait_for_timeout(200)
+    # default scope is 'Table Name', which wouldn't match a column name —
+    # switch to 'Column Name' before filtering for the new column.
+    page.locator('#grid-search-scope').select_option('column')
+    page.locator('#grid-search-input').click()
+    page.locator('#grid-search-input').type('status_code')
+    page.wait_for_timeout(300)
+    clip = clip_of(page, ['.modal-hdr', '.schema-grid-table'], pad=10)
+    page.screenshot(path=str(IMG_DIR / 'proposed.png'), clip=clip)
+    ctx.close()
+
+
 SHOTS = [shot_focus, shot_highlight, shot_multiselect, shot_export, shot_hiding,
          shot_notes, shot_groups, shot_edges, shot_colmodes, shot_logical_names,
-         shot_views, shot_darkmode]
+         shot_views, shot_darkmode, shot_grid, shot_proposed]
 
 
 def main():

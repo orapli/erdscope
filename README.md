@@ -145,6 +145,12 @@ for reviews, audits, onboarding, and documentation deliverables.
 - Save named views and share a link to the current view.
 - Export the current canvas as PNG or SVG, or print it cleanly.
 - Switch to dark mode; everything runs locally in the generated HTML.
+- Browse a searchable, exportable Data Dictionary — every table or column as one plain
+  table, copy/download as TSV or CSV.
+- Edit notes right in the browser, inline or in a full editor, instead of only through the
+  config file.
+- Sketch proposed ("ToBe") tables and columns, then export them as Config JSON
+  (round-trips via `--config`/`--diff`) or a self-contained Updated HTML.
 
 Try these interactions in the **[live demo](https://orapli.github.io/erdscope/)**, or use
 the illustrated **[viewer guide](https://orapli.github.io/erdscope/manual.html#viewer-guide)**.
@@ -184,7 +190,7 @@ explicit CLI argument wins.
 | `--models PATH` | Override config `models` with Rails, Prisma, Django, SQLAlchemy, or Laravel input; repeatable |
 | `--excel FILE.xlsx` | Also generate a table-definition workbook (includes Notes/Groups sheets when configured) |
 | `--emit-json FILE.json` | Also write a canonical JSON schema snapshot with a content fingerprint (`-` for stdout) |
-| `--emit-config FILE.yml\|.json` | Also write the schema as a config-authoring file, re-importable via `--config` (`-` for stdout, always JSON) |
+| `--emit-config FILE.yml\|.json` | Also write the schema as a config-authoring file, re-importable via `--config` (`-` for stdout, always JSON) — the viewer's own "Download Config JSON" export ([viewer guide](https://orapli.github.io/erdscope/manual.html#viewer-save-changes)) writes the same shape |
 | `--diff SNAPSHOT.json` | Compare this run against a saved `--emit-json` snapshot and exit 0/1/2 instead of generating output (CI drift gate) |
 | `--emit-digest FILE.md` | Also write a token-efficient Markdown digest of the schema, with design notes, for LLMs/agents (`-` for stdout; `--digest-verbose` adds nullable/default/sql_type) |
 | `--emit-dbml FILE.dbml` | Also write a minimal DBML export of the schema — tables/columns/indexes/single-column-FK relations/table comments (`-` for stdout; no notes/groups/`TableGroup`) |

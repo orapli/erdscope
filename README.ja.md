@@ -146,6 +146,12 @@ HTMLは自己完結型で、Excelテンプレートを使ってワークブッ�
 - 名前付きビューを保存し、現在の表示状態をリンクで共有できます。
 - 現在のキャンバスをPNGまたはSVGで書き出し、印刷できます。
 - ダークモードへ切り替えられ、すべての処理は生成したHTML内でローカルに動作します。
+- 検索・書き出し可能なデータディクショナリを閲覧できます — テーブルまたはカラムを1枚のプレーンな
+  表として、TSVまたはCSVでコピー/ダウンロードできます。
+- 設定ファイルを経由せずとも、ブラウザ上でノートを直接編集できます（インライン編集または
+  フルエディタ）。
+- 提案（ToBe）テーブル・カラムを下書きし、Config JSON（`--config`/`--diff`で再取込可能）または
+  自己完結のUpdated HTMLとして書き出せます。
 
 **[ライブデモ](https://orapli.github.io/erdscope/)**で操作を試すか、図入りの
 **[ビューアーガイド](https://orapli.github.io/erdscope/manual.ja.html#viewer-guide)**をご覧ください。
@@ -185,7 +191,7 @@ python3 erd.py demo
 | `--models PATH` | 設定ファイルの`models`をRails、Prisma、Django、SQLAlchemy、Laravel入力で上書き。複数指定可能 |
 | `--excel FILE.xlsx` | テーブル定義のExcelワークブックも生成する（notes/groups設定時はNotes/Groupsシートも含む） |
 | `--emit-json FILE.json` | スキーマの正規JSONスナップショット（内容フィンガープリント付き）も書き出す（`-`で標準出力） |
-| `--emit-config FILE.yml\|.json` | スキーマを設定ファイル形式でも書き出す。`--config`で再取込可能（`-`で標準出力、常にJSON） |
+| `--emit-config FILE.yml\|.json` | スキーマを設定ファイル形式でも書き出す。`--config`で再取込可能（`-`で標準出力、常にJSON）— ビューアの「Download Config JSON」（[ビューアガイド](https://orapli.github.io/erdscope/manual.ja.html#viewer-save-changes)）も同じ形式を書き出す |
 | `--diff SNAPSHOT.json` | 保存済みの`--emit-json`スナップショットと比較し、出力を生成する代わりに0/1/2で終了する（CIドリフトゲート） |
 | `--emit-digest FILE.md` | 設計メモ付きの、LLM/エージェント向けトークン効率の良いMarkdownダイジェストも書き出す（`-`で標準出力、`--digest-verbose`でnullable/default/sql_typeを追加） |
 | `--emit-dbml FILE.dbml` | スキーマの最小限のDBMLエクスポートも書き出す — テーブル/カラム/インデックス/単一カラムFKのリレーション/テーブルコメント（`-`で標準出力、notes/groups/`TableGroup`は含まない） |

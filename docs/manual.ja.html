@@ -977,6 +977,9 @@ CLI については触れません。読みながら<a href="https://orapli.gith
 <a href="#viewer-names">論理名</a>
 <a href="#viewer-views">名前付きビューと共有</a>
 <a href="#viewer-edges">エッジの種類</a>
+<a href="#viewer-grid">データディクショナリ</a>
+<a href="#viewer-notes-live">ブラウザでのメモ編集</a>
+<a href="#viewer-tobe">提案スキーマ（ToBe）</a>
 <a href="#viewer-shortcuts">キーボードショートカット</a>
 <a href="#viewer-dark">ダークモード</a>
 <a href="#viewer-print">印刷</a>
@@ -1128,6 +1131,89 @@ Auto-expand をオフにした後も画面に残っている（KEPT）テーブ�
 <img class="shot" loading="lazy" src="img/edges.png" alt="payments の詳細パネルの Associations 一覧。belongs_to :order に DB FK バッジ、belongs_to :shipment に manual バッジ、belongs_to :coupon に inferred バッジが付いている">
 <p class="cap"><code>payments</code> の Associations — 実 FK 制約（<span class="badge badge-dbfk">DB FK</span>）、設定ファイル由来（<span class="badge badge-manual">manual</span>）、名前ベース推測（<span class="badge badge-inf">inferred</span>）の3種類のバッジが1つの一覧に並んだ状態。</p>
 
+<h3 id="viewer-grid">データディクショナリ（Schema Grid） <a class="anchor-link" href="#viewer-grid">#</a></h3>
+<p>図はリレーションを辿るのに向いていますが、全カラムを一度に見渡したいときや、スキーマを
+スプレッドシートで読みたい相手に渡すときは、ただのスクロール可能な表のほうが速いことがよくあります。
+左ペインの <span class="btn-example">📋 Grid</span> ボタンはまさにそれを開きます — スキーマ全体を
+覆うフルスクリーンの<strong>データディクショナリ</strong>モーダルで、背後の図が現在フォーカス中か、
+非表示にしているか、除外しているかとは無関係に動作します。</p>
+<p>2つのタブが1行が何を表すかを切り替え、それぞれライブのカウントを持ちます:
+<code>Tables (n)</code> と <code>Columns (n)</code>。別のトグルが各行の表示量を制御します:
+<code>Compact</code> はキーとメモを小さなバッジに詰め込み、<code>Detailed</code>（デフォルト）は
+それらを完全なテキストへ展開します — 主キー/外部キーの参照先、インデックス定義、メモ本文をその場で
+表示します。</p>
+<p>スコープセレクタはフィルタボックスの対象を <code>All Fields</code>・<code>Table Name</code>・
+<code>Column Name</code> のいずれかに絞り込み、加えて <code>Exact match</code> トグルがあります。
+<strong><code>Table Name</code> がデフォルトのスコープ</strong>です — 0.12.1 で <code>All
+Fields</code> から変更されました。理由は、<code>All Fields</code> が各テーブルの外部キー詳細文字列
+（例: <code>user_id -&gt; users.id</code>）も検索対象にしていたためです。そのため、ハブとなる
+テーブル名（例: <code>users</code>）を入力すると、そのテーブル<em>と、そこへ外部キーを持つすべての
+テーブル</em>が一致してしまい、小規模なスキーマでは容易に「すべてのテーブル」になり、フィルタを
+かけていないのと見分けがつきませんでした。<code>All Fields</code> はスコープセレクタからワンクリックで
+選べるままなので、テーブルやカラムそのものだけでなく名前に関連するものすべてを意図的に見たいときは、
+こちらが正しい選択です。</p>
+<p>コントロール下の各エクスポートボタンは<strong>現在表示中のビュー</strong> — 今どのタブ・どの
+フィルタが表示されているか — に対して動作します: <span class="btn-example">📋 TSV</span> / <span
+class="btn-example">⬇ TSV</span> と <span class="btn-example">📋 CSV</span> / <span
+class="btn-example">⬇ CSV</span> はそれをコピーまたはダウンロードします。Excel にきれいに貼り付け
+られるのは TSV です。<span class="btn-example">Open read-only view ↗</span> は同じデータディクショナリ
+— 今この瞬間のスキーマのスナップショットで、下記で追加した内容も含みます — を、独立した読み取り専用の
+ページとして新しいタブで開きます。スキーマを編集させたくない相手に渡すのに向いています。</p>
+<img class="shot" loading="lazy" src="img/grid.png" alt="Data Dictionary モーダルが Tables タブ・Detailed モードで開き、Table Name で 'order' に絞り込まれた状態。一致した3テーブル（order_coupons・order_items・orders）の Primary Keys・Foreign Keys・Indexes が完全なテキストに展開され、orders 行のテーブルメモにインラインの Edit/Advanced edit アイコンが添えられている">
+<p class="cap">データディクショナリの Tables タブ、Detailed モードで <code>Table Name</code> により
+<code>order</code> に絞り込んだ状態 — 0.12.1 以降のデフォルトスコープ。</p>
+
+<h3 id="viewer-notes-live">ブラウザでのメモ編集 <a class="anchor-link" href="#viewer-notes-live">#</a></h3>
+<p>上記の<a href="#notes">設計メモ（Notes）</a>は設定ファイルでのメモの書き方を説明しています。
+ちょっとした修正のためだけに設定ファイルを経由する必要はありません — メモは実行中のビューア内で直接
+編集できます。編集の入り口は3つあります: 右ペインのテーブルの Notes セクションにある <span
+class="btn-example">＋ Add Note</span> ボタン、データディクショナリのグリッドでまだメモのない
+テーブル/カラム行にある <code>+ Note</code> ボタン、そして既存のメモがどこに表示されていても
+（右ペイン、Associations 一覧、<code>global</code> メモ用の凡例、グリッド）その隣に付く
+<code>✏️ Edit</code> / <code>🗑 Delete</code> の組です。</p>
+<p>グリッドは同じメモに対して2段階の編集深度を用意しています。鉛筆（<code>✏️</code>）はセル内に
+小さなインラインのテキストエリアを開きます — <span class="btn-example">Save</span> / <span
+class="btn-example">Cancel</span> に加えて <span class="btn-example">Modal...</span> という
+エスケープハッチもあります。ちょっとした文言修正に向いており、テキストを空にして保存するとメモは
+削除されます。歯車（<code>⚙️</code>）は、右ペインの ＋ Add Note ボタンと同じフル機能の
+<strong>メモエディタ</strong>を開きます: <code>Scope</code> ドロップダウン（<code>Table</code> /
+<code>Relation</code> / <code>Global</code>）が対応する対象フィールドに切り替わり、加えて
+<code>Title</code> と <code>Note Content</code> があります。Scope を <code>Global</code> に
+切り替えるのが、現時点でブラウザから図全体のメモを作成する唯一の方法です — 専用の
+「グローバルメモを追加」ボタンはありません。</p>
+<div class="note"><strong>リンクはこのエディタを往復できません</strong>
+ブラウザのメモエディタには、メモの <code>links</code> 用の入力欄がありません。設定ファイルで
+付けたリンクをここで編集しても消えはしませんが、設定ファイルを直接編集して erdscope を再実行しない
+限り、リンクを追加・変更することはできません。</div>
+
+<h3 id="viewer-tobe">提案スキーマ（ToBe） <a class="anchor-link" href="#viewer-tobe">#</a></h3>
+<p>ビューアの他の部分はすべて「実際にそこにあるもの」を扱います — 図もグリッドもメモも、マージ済みの
+AsIs スキーマから読まれます。データディクショナリの <span class="btn-example">+ Proposed
+Table</span> と <span class="btn-example">+ Proposed Column</span> ボタンだけは、<em>まだ
+存在しないもの</em> — 誰もマイグレーションや設定ファイルに触れる前に、ブラウザ上で直接下書きする
+ToBe の変更 — をスケッチできる唯一の場所です。</p>
+<p><span class="btn-example">+ Proposed Table</span> は物理名（必須）、任意で論理名・コメント・
+グループを尋ねます。追加されたテーブルには提案扱いの <code>id</code> 主キーカラムが1つ付き、他の
+テーブルと同じように描画されます。<span class="btn-example">+ Proposed Column</span> は対象
+テーブルとカラム名（必須）、任意で論理名・データ型（デフォルト <code>varchar(255)</code>）・
+NULL 許可・コメントを尋ねます。どちらも即座に反映されます: 新しいテーブルやカラムはすぐに図・
+テーブル一覧・グリッドに現れます — 図のキャンバス自体は提案テーブルを他のテーブルとまったく同じ
+ように描画します。今やそれは、見ている実行中のスキーマの単なる1エントリだからです。まだ実在しない
+ことを示すのはグリッドだけで、名前の隣に <code>PROPOSED</code> バッジが付きます。</p>
+<img class="shot" loading="lazy" src="img/proposed.png" alt="Data Dictionary の Columns タブ。orders テーブルに新しく追加された status_code カラムのカラム名の隣に、黄色い PROPOSED バッジが表示されている">
+<p class="cap"><span class="btn-example">+ Proposed Column</span> で追加した提案カラム — グリッドの
+<code>PROPOSED</code> バッジだけが、このスキーマの中でまだ実在しないことを示す唯一の印です。</p>
+<div class="warn"><strong>提案エントリは、実装済みになったことを知らない</strong>
+エクスポートされる設定には「提案かどうか」を示すマーカーが一切なく、しかも設定は最優先レイヤーとして
+マージされます。そのため、実際にそのカラムをデータベースに追加したあとも、この設定エントリは
+データベースが今報告している内容を上書きし続けます — <strong>反映されたら提案エントリを自分で
+設定から削除してください</strong>。さもないと、古い ToBe カラムが実物を静かにマスクし続けます。
+Config JSON のエクスポートはこれをさらに悪化させます: 提案カラムを1つでも含むテーブルは、その
+テーブルの<em>全カラム一覧</em>を書き出します（新しいカラムだけではありません）。型が不明なカラムには
+<code>varchar(255)</code> が補われます — そのため、実データベース側でそれらのカラムを後から変更しても、
+設定を刈り込むまで同じように隠され続けます。詳細は下記の<a href="#viewer-save-changes">Config JSON
+と Updated HTML</a>を参照してください。</div>
+
 <h3 id="viewer-shortcuts">キーボードショートカット <a class="anchor-link" href="#viewer-shortcuts">#</a></h3>
 <p>これが全リストです — ズーム、保存、エクスポートにショートカットはありません。ツールバーの
 <span class="btn-example">?</span> ボタンから、このショートカット一覧の簡易版と、マウス操作の説明、
@@ -1165,6 +1251,7 @@ Auto-expand をオフにした後も画面に残っている（KEPT）テーブ�
 <a href="#excel-template">Excel ワークブック</a>
 <a href="#emit-json">JSON スナップショット</a>
 <a href="#emit-config">設定ファイルエクスポート</a>
+<a href="#viewer-save-changes">変更の保存（ビューア）</a>
 <a href="#diff">スキーマ diff / drift ゲート</a>
 <a href="#emit-digest">LLM/エージェント向け Markdown ダイジェスト</a>
 <a href="#emit-dbml">DBML エクスポート</a>
@@ -1326,6 +1413,40 @@ association は常に <code>manual</code> として表示されます。複合�
 これにより、文字列は常に同じ文字列として戻ってきます。level1 がどちらの経路でも保てないものが1つあります:
 空文字のカラムデフォルト（<code>DEFAULT ''</code>）と「デフォルト無し」は、どのプロバイダでも読み取り時に
 区別できないため、どちらも往復で残りません — <code>--diff</code> が検出できないのと同じ限界です。</p>
+
+<h3 id="viewer-save-changes">ビューアからの変更保存：Config JSON と Updated HTML</h3>
+<p><a href="#viewer-notes-live">ブラウザでのメモ編集</a>と<a href="#viewer-tobe">提案スキーマ
+（ToBe）</a>で行った変更はすべて、作業しているそばからブラウザの LocalStorage に自動保存され、
+同じ生成済み HTML ファイルを次に開いたときに復元されます — ただし LocalStorage はブラウザの外に
+出ることはありません。コミットしたり、添付したり、CLI に戻したりできるファイルにするには、
+ツールバーの <span class="btn-example">⬇ Export</span> メニューの<strong>Save proposed
+changes</strong>セクションを使うか、Export ボタンの隣に常時表示されているステータス表示を
+クリックしてください — 保留中の変更がなければ緑の <code>✓ Changes exported</code>、メモを
+編集するか提案テーブル/カラムを追加した直後は琥珀色の <code>⚠️ Unexported changes</code>に
+なります。</p>
+<p>どちらの状態でもこの表示をクリックすると、4つのアクションを持つ小さなモーダルが開きます: <span
+class="btn-example">⬇ Download Config JSON</span>、<span class="btn-example">📄 Download
+Updated HTML</span>、<span class="btn-example">📋 Copy Config JSON</span>、そして <span
+class="btn-example">Discard &amp; Reset Changes</span>（ページを再読み込みし、未エクスポートの
+変更とすでに永続化された変更の両方を消去します）。同じ2つの形式は、このモーダルを介さずに
+Export メニューの Copy/Download ペアからも直接利用できます。エクスポートすると、表示は
+<code>✓ Changes exported</code> に戻ります。</p>
+<p><strong>2つの形式がある理由:</strong> Config JSON は通常の<a href="#config-file">設定
+ファイル</a>です — メモ、グループ、ブラウザで追加した提案テーブル/カラムを含みます — CLI に
+<code>--config</code>（次回実行時に変更を再適用するため）または <code>--diff</code>（CI で
+差分をゲートするため）で戻すことを想定しています。これは<a
+href="#emit-config"><code>--emit-config</code></a> が生成するのと同じ形ですが、スキーマ全体
+ではなくブラウザで触れたテーブルだけに絞られています。Updated HTML はその逆です — 変更がすべて
+埋め込み済みの、この同じビューアの新しい自己完結コピーで、CLI も設定ファイルも再実行も不要で、
+ファイルを開いて見るだけでよい相手に渡すためのものです。</p>
+<div class="warn"><strong>提案エントリは実装後も消えず、エクスポートも自分自身だけに絞られない</strong>
+設定には「これは提案だった」というマーカーがなく、設定は最優先レイヤーとしてマージされるため、
+実際にそのカラムをデータベースに追加したあとも、このファイルはデータベースが今報告している内容を
+手動で削除するまで上書きし続けます。さらに、提案カラムを1つでも含むテーブルの Config JSON
+エクスポートは、そのテーブルの<em>全カラム一覧</em>を書き出します（新しいカラムだけではありません）
+— 型が不明なカラムには <code>varchar(255)</code> が補われます。そのため、実データベース側の
+後からの変更も、設定を刈り込むまで同じようにマスクされます。上記の<a
+href="#viewer-tobe">提案スキーマ（ToBe）</a>を参照してください。</div>
 
 <h3 id="diff">スキーマ diff / drift ゲート</h3>
 <p><code>--diff SNAPSHOT.json</code> は、このrunを以前保存した <code>--emit-json</code>
