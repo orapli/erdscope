@@ -356,6 +356,23 @@ def serialize_for_viewer(tables):
                 a.update(legacy_flags_for(prov))
     return out
 
+def _write_text_lf(path, text):
+    r"""Write `text` to `path` as UTF-8 with LF line endings, regardless of
+    platform. Every artifact written here (HTML, JSON, config, digest, DBML,
+    Mermaid, PlantUML) is either byte-compared against a committed file
+    (docs/index.html, examples/showcase/output/**) or re-parsed by a regex
+    that assumes LF (generateUpdatedHTMLSource() in viewer.html matches `;\n`
+    when re-embedding DATA/NOTES/GROUPS on export). Path.write_text() opens in
+    text mode, which on Windows translates every '\n' to '\r\n' — that would
+    both break the drift checks and silently corrupt the export regex.
+    newline='' disables that translation, so the file gets exactly the LF
+    bytes already in `text`. write_text() only grew a newline= parameter in
+    Python 3.10, and this project's floor is 3.9 (pyproject: requires-python
+    = ">=3.9"), so open() is used explicitly instead of
+    path.write_text(text, encoding='utf-8', newline='')."""
+    with path.open('w', encoding='utf-8', newline='') as f:
+        f.write(text)
+
 def _finish(tables, args, title_name, notes=None, notes_label='config',
             groups=None, groups_label='config'):
     """Shared tail: FK inference, notes resolution, --only/--exclude filtering,
@@ -621,57 +638,50 @@ def _finish(tables, args, title_name, notes=None, notes_label='config',
 
         out_path = getattr(args, 'output', 'erd.html')
         out = Path(out_path)
-        # newline='' keeps line endings as-is (LF) instead of letting Python's
-        # text-mode writer translate them to the platform default. On Windows
-        # that translation would emit CRLF, and generateUpdatedHTMLSource() in
-        # viewer.html matches `;\n` when re-embedding DATA/NOTES/GROUPS on
-        # export — CRLF would silently break that regex. write_text() doesn't
-        # accept newline= until Python 3.10, and this project's floor is 3.9,
-        # so open() is used explicitly here instead.
-        with out.open('w', encoding='utf-8', newline='') as f:
-            f.write(html)
+        # See _write_text_lf() for why this isn't out.write_text(...).
+        _write_text_lf(out, html)
         print(f'Generated: {out} ({out.stat().st_size // 1024} KB)', file=sys.stderr)
 
     if emit_json_doc is not None:
         if args.emit_json == '-':
             sys.stdout.write(emit_json_doc)
         else:
-            Path(args.emit_json).write_text(emit_json_doc, encoding='utf-8')
+            _write_text_lf(Path(args.emit_json), emit_json_doc)
             print(f'Generated: {args.emit_json}', file=sys.stderr)
 
     if emit_config_text is not None:
         if emit_config_val == '-':
             sys.stdout.write(emit_config_text)
         else:
-            Path(emit_config_val).write_text(emit_config_text, encoding='utf-8')
+            _write_text_lf(Path(emit_config_val), emit_config_text)
             print(f'Generated: {emit_config_val}', file=sys.stderr)
 
     if emit_digest_text is not None:
         if emit_digest_val == '-':
             sys.stdout.write(emit_digest_text)
         else:
-            Path(emit_digest_val).write_text(emit_digest_text, encoding='utf-8')
+            _write_text_lf(Path(emit_digest_val), emit_digest_text)
             print(f'Generated: {emit_digest_val}', file=sys.stderr)
 
     if emit_dbml_text is not None:
         if emit_dbml_val == '-':
             sys.stdout.write(emit_dbml_text)
         else:
-            Path(emit_dbml_val).write_text(emit_dbml_text, encoding='utf-8')
+            _write_text_lf(Path(emit_dbml_val), emit_dbml_text)
             print(f'Generated: {emit_dbml_val}', file=sys.stderr)
 
     if emit_mermaid_text is not None:
         if emit_mermaid_val == '-':
             sys.stdout.write(emit_mermaid_text)
         else:
-            Path(emit_mermaid_val).write_text(emit_mermaid_text, encoding='utf-8')
+            _write_text_lf(Path(emit_mermaid_val), emit_mermaid_text)
             print(f'Generated: {emit_mermaid_val}', file=sys.stderr)
 
     if emit_plantuml_text is not None:
         if emit_plantuml_val == '-':
             sys.stdout.write(emit_plantuml_text)
         else:
-            Path(emit_plantuml_val).write_text(emit_plantuml_text, encoding='utf-8')
+            _write_text_lf(Path(emit_plantuml_val), emit_plantuml_text)
             print(f'Generated: {emit_plantuml_val}', file=sys.stderr)
 
     if getattr(args, 'excel', None):

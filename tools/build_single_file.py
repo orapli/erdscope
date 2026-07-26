@@ -100,7 +100,14 @@ def main():
                      'python3 tools/build_single_file.py')
         print('erd.py is up to date with src/erdscope/')
         return
-    TARGET.write_text(out, encoding='utf-8')
+    # newline='' keeps the LF endings already in `out` as-is. write_text()
+    # opens in text mode and would translate them to the platform default —
+    # CRLF on Windows — which would make the committed erd.py fail the
+    # byte-for-byte --check above on the very next run. write_text() only
+    # grew a newline= parameter in Python 3.10, and this project's floor is
+    # 3.9, so open() is used explicitly instead.
+    with TARGET.open('w', encoding='utf-8', newline='') as f:
+        f.write(out)
     print(f'Wrote {TARGET} ({len(out)} bytes)')
 
 

@@ -26,18 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   environment without Node failed them with `FileNotFoundError` rather than
   skipping, which sits badly with a project that advertises a zero-dependency
   test path. They are now guarded on `shutil.which('node')`.
-- **Windows: generated HTML is written with LF, and Download Updated HTML
-  survives CRLF input.** The diagram was written through `Path.write_text()`,
-  whose text mode translates every `\n` to the platform default — so a
-  Windows-generated file came out with CRLF line endings while every other
-  platform produced LF. `generateUpdatedHTMLSource()` re-embeds `DATA`,
-  `NOTES` and `GROUPS` with regexes that required a semicolon followed
-  immediately by LF, so against CRLF content not one of the three matched and
-  the exported file silently kept the *original* data. Generated HTML is now
-  written with `newline=''` so output is byte-identical across platforms, and
-  the three export regexes accept `;\r?\n`. Browsers normalise CRLF to LF when
-  parsing, so the export itself was only reachable this way outside a browser,
-  but the mismatch broke the Windows test job.
+- **Windows: every generated text file is written with LF, and Download
+  Updated HTML survives CRLF input.** Output went through
+  `Path.write_text()`, whose text mode translates each `\n` to the platform
+  default — so on Windows the HTML diagram and all six `--emit-*` artifacts
+  (JSON, config, digest, DBML, Mermaid, PlantUML) came out with CRLF line
+  endings while every other platform produced LF. That mattered twice.
+  `generateUpdatedHTMLSource()` re-embeds `DATA`, `NOTES` and `GROUPS` with
+  regexes requiring a semicolon followed immediately by LF, so against CRLF
+  content not one of the three matched and the exported file silently kept
+  the *original* data; and the drift checks, which compare committed
+  artifacts byte for byte, could not hold across platforms. All of these
+  writes now go through one helper that forces LF, the three export regexes
+  accept `;\r?\n`, and a `.gitattributes` stops Git handing Windows a CRLF
+  copy of the committed files. Browsers normalise CRLF to LF while parsing,
+  so the broken export was only reachable outside a browser.
 - **Viewer: Escape key and background clicks now close only the top-most modal (B4).**
   Previously, pressing Escape with a proposed table/column dialog or note modal open over
   the Data Dictionary grid would close the underlying `#schema-grid-modal` instead of the
