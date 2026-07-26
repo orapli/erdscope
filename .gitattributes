@@ -1,0 +1,17 @@
+# This repository commits generated artifacts (erd.py, docs/index.html, the
+# examples/showcase/output tree) and its drift checks compare them to freshly
+# regenerated output BYTE FOR BYTE. That only holds if Git hands every checkout
+# the same bytes that were committed, so line-ending translation has to be off
+# everywhere. Without this file, Git on Windows checks the committed LF files
+# out as CRLF, the generator writes LF (cli.py forces newline=''), and the
+# drift checks fail on Windows alone while passing on Linux.
+#
+# No file here needs CRLF — the repository ships no .bat, .cmd or .ps1.
+* text=auto eol=lf
+
+# Compared byte for byte by the showcase drift checks, so never let the text
+# heuristics near them: .xlsx is a ZIP and .db is a SQLite database.
+*.png  binary
+*.svg  text eol=lf
+*.xlsx binary
+*.db   binary
