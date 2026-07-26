@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The viewer's schema-editing features are documented.** Everything added in
+  0.12.0 for working on a schema in the browser shipped with no user-facing
+  description at all — `Data Dictionary`, `Proposed`, `Updated HTML` and
+  `Unexported` returned zero hits across both READMEs and both manuals. The
+  manuals now cover the Data Dictionary (Schema Grid), editing notes in the
+  browser, sketching proposed ToBe tables and columns, and the two ways to
+  save that work — Config JSON to feed back into `--config` / `--diff`, and a
+  self-contained updated HTML file — with screenshots. Two consequences of the
+  current design are stated plainly there: a proposed entry keeps overriding
+  the database after you implement it, because the exported config has no
+  marker distinguishing proposed from real, so those entries have to be pruned
+  by hand; and exporting config for a table with a proposed column writes that
+  table's entire column list, typing anything untyped as `varchar(255)`.
+
+### Fixed
+
+- **The Data Dictionary's inline note editor no longer rewrites the note.** The
+  grid seeded the editor with the string built for *searching* a note, which
+  concatenates the title, link labels and owning table name onto the body so
+  the filter can match on them. Saving stored that back, so opening a note and
+  pressing Save without typing anything replaced a body of `Do not delete
+  without archiving first.` with `User retention Do not delete without
+  archiving first. ADR-7 users` — and repeating it compounded. The editor now
+  reads and writes only the note's own text, the grid cells and TSV/CSV output
+  show the title and body rather than the search string, and searching still
+  matches on the aggregate so filtering by a related table name keeps working.
+- **The standalone read-only Data Dictionary opens again.** `Open read-only
+  view ↗` builds its own document with a small bundle of redeclared helpers,
+  which was missing `ensureNoteId` — so the tab died with a `ReferenceError`
+  as soon as any table or column carried a note, which is to say on virtually
+  every real diagram.
+- **The export-status badge stops claiming credit for work you never did.** It
+  is meant to fade out three seconds after the config goes clean, and the code
+  adds a `hidden` class to do it, but no rule ever matched that class on this
+  element — so a diagram nobody had touched permanently displayed
+  `✓ Changes exported`.
+
 ## [0.12.1] - 2026-07-26
 
 ### Changed

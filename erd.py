@@ -5384,6 +5384,9 @@ body.dark .grid-inline-cancel {
   color: #166534;
   border-color: #86efac;
 }
+.config-dirty-badge.hidden {
+  display: none;
+}
 body.dark .config-dirty-badge {
   background: #78350f;
   color: #fef3c7;
@@ -9125,6 +9128,13 @@ function noteText(n){
   return [n.title, n.text, ...(n.links||[]).map(l=>l.label), n.table, n.target, n.source_table]
     .filter(Boolean).join(' ');
 }
+// Human-facing note text for display and for seeding the inline editor: just
+// the prose a person actually wrote (title + body). Never link labels, table,
+// target, or source_table — those exist in noteText() so search can match on
+// them, not to be shown as the note or re-saved as if they were its body.
+function noteDisplayText(n){
+  return [n.title, n.text].filter(Boolean).join(' — ');
+}
 // Notes attached to table `t`: its own table notes, plus relation notes whose
 // source_table is `t` (the side the note's association lives on — mirrors the
 // right-pane Associations list, which is keyed the same way). Shared by
@@ -10705,6 +10715,7 @@ class SchemaGrid {
       const nList = notesForTable(name);
       const hasNotes = nList.length > 0;
       const noteTextVal = nList.map(n => noteText(n)).join('\n\n');
+      const noteDisplayVal = nList.map(n => noteDisplayText(n)).join('\n\n');
       const groupStr = groups.join(', ');
 
       let isMatch = false;
@@ -10743,6 +10754,7 @@ class SchemaGrid {
           groups: groupStr,
           hasNotes,
           noteText: noteTextVal,
+          noteDisplayText: noteDisplayVal,
           isProposed: !!t.isProposed
         });
       }
@@ -10769,6 +10781,7 @@ class SchemaGrid {
         const colNotesList = notesForColumn(tblName, c.name);
         const hasNotes = colNotesList.length > 0;
         const noteTextVal = colNotesList.map(n => noteText(n)).join('\n\n');
+        const noteDisplayVal = colNotesList.map(n => noteDisplayText(n)).join('\n\n');
 
         const badges = [];
         if (isPk) badges.push('PK');
@@ -10827,6 +10840,7 @@ class SchemaGrid {
             comment: c.comment || '',
             hasNotes,
             noteText: noteTextVal,
+            noteDisplayText: noteDisplayVal,
             isProposed: !!c.isProposed || !!t.isProposed
           });
         }
@@ -10873,7 +10887,7 @@ class SchemaGrid {
           const nList = notesForTable(r.name);
           const existingNote = nList.find(n => n.scope === 'table') || nList[0];
           const nid = existingNote ? ensureNoteId(existingNote) : '';
-          const noteTextVal = r.noteText;
+          const noteTextVal = r.noteDisplayText;
 
           if (r.hasNotes) {
             notesHtml = `
@@ -10962,7 +10976,7 @@ class SchemaGrid {
           const colNotesList = notesForColumn(r.tableName, r.name);
           const existingNote = colNotesList[0] || notesForTable(r.tableName).find(n => n.scope === 'table');
           const nid = existingNote ? ensureNoteId(existingNote) : '';
-          const noteTextVal = r.noteText;
+          const noteTextVal = r.noteDisplayText;
 
           if (r.hasNotes) {
             notesHtml = `
@@ -11052,7 +11066,7 @@ class SchemaGrid {
         }
 
         if (act === 'edit') {
-          const currentText = existingNote ? noteText(existingNote) : '';
+          const currentText = existingNote ? (existingNote.text || '') : '';
           cell.innerHTML = `
             <div class="grid-inline-editor">
               <textarea class="grid-inline-textarea" placeholder="Type note text...">${esc(currentText)}</textarea>
@@ -11119,7 +11133,7 @@ class SchemaGrid {
         lines.push([
           r.groups, r.name, r.logical_name, r.comment, r.columnCount,
           r.pkCols.join(', '), r.fkDetails.join(', '), r.idxDetails.join(', '),
-          r.hasNotes ? (r.noteText || 'YES') : ''
+          r.hasNotes ? (r.noteDisplayText || 'YES') : ''
         ].map(v => String(v).replace(/[\r\n\t]/g, ' ')).join('\t'));
       });
       return lines.join('\n');
@@ -11131,7 +11145,7 @@ class SchemaGrid {
         lines.push([
           r.tableName, r.name, r.logical_name, r.type, r.nullable,
           r.keyDetails.join('; ') || r.badges.join(','),
-          r.defaultVal, r.comment, r.hasNotes ? (r.noteText || 'YES') : ''
+          r.defaultVal, r.comment, r.hasNotes ? (r.noteDisplayText || 'YES') : ''
         ].map(v => String(v).replace(/[\r\n\t]/g, ' ')).join('\t')); // 🔴 join('\t')
       });
       return lines.join('\n');
@@ -11152,7 +11166,7 @@ class SchemaGrid {
         lines.push([
           r.groups, r.name, r.logical_name, r.comment, r.columnCount,
           r.pkCols.join(', '), r.fkDetails.join(', '), r.idxDetails.join(', '),
-          r.hasNotes ? (r.noteText || 'YES') : ''
+          r.hasNotes ? (r.noteDisplayText || 'YES') : ''
         ].map(escapeCsv).join(','));
       });
       return lines.join('\r\n');
@@ -11164,7 +11178,7 @@ class SchemaGrid {
         lines.push([
           r.tableName, r.name, r.logical_name, r.type, r.nullable,
           r.keyDetails.join('; ') || r.badges.join(','),
-          r.defaultVal, r.comment, r.hasNotes ? (r.noteText || 'YES') : ''
+          r.defaultVal, r.comment, r.hasNotes ? (r.noteDisplayText || 'YES') : ''
         ].map(escapeCsv).join(','));
       });
       return lines.join('\r\n');
@@ -12043,6 +12057,8 @@ function openSchemaGridInNewTab() {
     const GROUPS = ${safeJsonForScript(GROUPS)};
     function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
     function noteText(n){return [n.title,n.text,...(n.links||[]).map(l=>l.label),n.table,n.target,n.source_table].filter(Boolean).join(' ');}
+    function noteDisplayText(n){return [n.title,n.text].filter(Boolean).join(' — ');}
+    function ensureNoteId(n){if(!n.id) n.id='note_'+Math.random().toString(36).substr(2,8);return n.id;}
     function notesForTable(t){return NOTES.filter(n=>(n.scope==='table'&&n.table===t)||(n.scope==='relation'&&n.source_table===t));}
     function notesForColumn(t,c){return NOTES.filter(n=>n.scope==='relation'&&n.source_table===t&&n.foreign_key===c);}
     function isFkCol(t,c){const tbl=DATA.tables[t];if(!tbl)return false;if((tbl.fk_columns||[]).includes(c))return true;return (tbl.associations||[]).some(a=>a.foreign_key===c);}

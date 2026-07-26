@@ -6302,6 +6302,169 @@ class TestSchemaGridModal(unittest.TestCase):
         })
 
 
+def _build_html_note_display_bug_fixture():
+    # Regression fixture for the noteText()/noteDisplayText() split. Before
+    # the fix, the Grid's inline note editor seeded itself from noteText() —
+    # the *search* aggregate (title + text + link labels + table/target
+    # names) — and saved that whole blob back as the note's `text`. One
+    # save-without-typing therefore corrupted the note permanently. This note
+    # carries title + text + a link, attached to a table, reproducing the
+    # exact composition measured in the diagnosis:
+    #   BEFORE : "Do not delete without archiving first."
+    #   SEEDED (pre-fix): "User retention Do not delete without archiving
+    #             first. ADR-7 users"
+    tables = erd.mysql_ir(TABLE_ROWS, COL_ROWS, FK_ROWS, INDEX_ROWS)
+    notes_cfg = [
+        {'id': 'n-table', 'target': {'type': 'table', 'table': 'users'},
+         'title': 'User retention', 'text': 'Do not delete without archiving first.',
+         'links': [{'label': 'ADR-7', 'url': 'https://example.com/adr/7'}]},
+    ]
+    args = SimpleNamespace(output='', models=None, excel=None, max_rows=15,
+                            only=None, exclude=None, infer_fk=False)
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp) / 'out.html'
+    args.output = str(out)
+    erd._finish(tables, args, 'note_display_bug_fixture', notes=notes_cfg, notes_label='test')
+    return out
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestNoteDisplayVsSearchSplit(unittest.TestCase):
+    """Bug 1: noteText() is the search aggregate and must stay that way for
+    filtering; display and inline-edit seeding must go through the separate
+    noteDisplayText() helper (or, for the editor, the note's own `text` field
+    directly) so editing a note never round-trips the aggregate back into
+    `text`."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not HAVE_PLAYWRIGHT:
+            raise unittest.SkipTest('playwright not installed')
+        cls.html_path = _build_html_note_display_bug_fixture()
+        try:
+            cls.pw = sync_playwright().start()
+            cls.browser = cls.pw.chromium.launch(headless=True)
+        except Exception as e:
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_inline_editor_save_without_typing_preserves_note_byte_identical(self):
+        original_text = 'Do not delete without archiving first.'
+        self.page.click('#btn-grid-modal')
+        # Open the inline editor for the 'users' table's note cell (Detailed
+        # mode is the default, so the note renders as .grid-note-text).
+        self.page.click('[data-grid-table="users"] .grid-note-text')
+        textarea = self.page.locator('.grid-inline-textarea')
+        # The seed itself must be just note.text, not the search aggregate —
+        # this is the actual corrupting line, so check it before even saving.
+        self.assertEqual(textarea.input_value(), original_text)
+        self.page.click('.grid-inline-save')
+        note = self.page.evaluate(
+            "NOTES.find(n => n.scope === 'table' && n.table === 'users')"
+        )
+        self.assertEqual(note['text'], original_text)
+        self.assertEqual(note['title'], 'User retention')
+        self.assertEqual(note['links'], [{'label': 'ADR-7', 'url': 'https://example.com/adr/7'}])
+
+    def test_grid_note_cell_display_excludes_table_name_and_link_label(self):
+        self.page.click('#btn-grid-modal')
+        cell_text = self.page.inner_text('[data-grid-table="users"] .grid-note-text')
+        self.assertIn('Do not delete without archiving first.', cell_text)
+        self.assertNotIn('users', cell_text)
+        self.assertNotIn('ADR-7', cell_text)
+
+    def test_filter_still_matches_note_via_search_only_aggregate_field(self):
+        # 'ADR-7' is a link label: present in noteText() (used for filtering)
+        # but deliberately excluded from noteDisplayText() (used for
+        # display/editing). This is the regression guard for the split —
+        # without it, someone could "simplify" the filter onto the display
+        # helper and searches on title/link/table/target would silently stop
+        # matching.
+        self.page.click('#btn-grid-modal')
+        self.page.select_option('#grid-search-scope', 'all')
+        self.page.fill('#grid-search-input', 'ADR-7')
+        self.assertEqual(self.page.inner_text('#grid-cnt-tables'), '1')
+
+    def test_standalone_readonly_view_renders_without_js_error(self):
+        # openSchemaGridInNewTab() builds a separate standalone HTML document
+        # with its own re-declared noteText/notesForTable/notesForColumn/
+        # isFkCol, then inlines SchemaGrid.toString(). If SchemaGrid calls a
+        # helper (noteDisplayText) that bundle doesn't also define, the tab
+        # dies with a ReferenceError instead of rendering.
+        self.page.click('#btn-grid-modal')
+        errors = []
+        with self.page.context.expect_page() as new_page_info:
+            self.page.click('#btn-grid-newtab')
+        popup = new_page_info.value
+        popup.on('pageerror', lambda exc: errors.append(str(exc)))
+        popup.wait_for_load_state('domcontentloaded')
+        popup.wait_for_timeout(200)
+        row_count = popup.eval_on_selector_all('.schema-grid-table tbody tr', 'els => els.length')
+        self.assertGreater(row_count, 0)
+        self.assertEqual(errors, [])
+        popup.close()
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
+class TestConfigDirtyBadgeHiding(unittest.TestCase):
+    """Bug 2: updateConfigDirtyUI() adds the `hidden` class to
+    #config-dirty-badge three seconds after the config goes clean, but the
+    only `.hidden` rule in the stylesheet was `.modal-backdrop.hidden` — so
+    the class did nothing and the '✓ Changes exported' badge stayed visible
+    forever, even on a diagram nobody ever touched."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not HAVE_PLAYWRIGHT:
+            raise unittest.SkipTest('playwright not installed')
+        cls.html_path = _build_html()
+        try:
+            cls.pw = sync_playwright().start()
+            cls.browser = cls.pw.chromium.launch(headless=True)
+        except Exception as e:
+            raise unittest.SkipTest(f'Chromium not available: {e}')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def setUp(self):
+        self.page = self.browser.new_page()
+        self.page.goto(self.html_path.as_uri())
+        self.page.wait_for_function('typeof nodePos.users !== "undefined"')
+
+    def tearDown(self):
+        self.page.close()
+
+    def test_badge_hides_after_timer_on_fresh_unedited_load(self):
+        badge = self.page.locator('#config-dirty-badge')
+        # updateConfigDirtyUI() schedules the hide 3000ms after load; give it
+        # comfortable margin.
+        self.page.wait_for_timeout(3300)
+        self.assertTrue(badge.is_hidden())
+
+    def test_badge_becomes_visible_again_once_an_edit_marks_config_dirty(self):
+        badge = self.page.locator('#config-dirty-badge')
+        self.page.wait_for_timeout(3300)
+        self.assertTrue(badge.is_hidden())
+        self.page.evaluate('markConfigDirty()')
+        self.assertTrue(badge.is_visible())
+        self.assertIn('Unexported changes', badge.inner_text())
+
+
 @unittest.skipUnless(HAVE_PLAYWRIGHT, 'playwright not installed')
 class TestModalEscapeAndBackgroundClick(unittest.TestCase):
     @classmethod
