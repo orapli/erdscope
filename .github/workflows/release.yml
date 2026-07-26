@@ -24,14 +24,32 @@ jobs:
 
   # Gate before publish: any v* tag push reaches `build` above, but nothing
   # confirms the tag actually matches what's about to be published, that the
-  # CHANGELOG documents it, or that the built wheel even installs and runs —
-  # so a bad tag (or a forgotten CHANGELOG entry, or a broken wheel) would
-  # otherwise go straight to PyPI. All three checks must pass before `publish`
-  # runs.
+  # CHANGELOG documents it, that the built wheel even installs and runs, or
+  # that CI actually passed for this commit — so a bad tag (or a forgotten
+  # CHANGELOG entry, or a broken wheel, or a red commit) would otherwise go
+  # straight to PyPI. That last one is not hypothetical: 0.12.0 shipped from
+  # a commit whose CI run had already finished as a failure, because nothing
+  # here checked CI status before publishing. All four checks must pass
+  # before `publish` runs.
   verify:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
+      - name: CI must have succeeded for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=1" -q '.workflow_runs[0].id')
+          if [ -z "$run_id" ]; then
+            echo "::error::no CI workflow run found for commit $GITHUB_SHA"
+            exit 1
+          fi
+          gh run watch "$run_id" --exit-status
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
